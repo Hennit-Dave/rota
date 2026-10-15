@@ -1,0 +1,10 @@
+# Graduation brief: kept outside the repo at /Users/blk/Downloads/final-graduation-task (1).pdf.
+# Never commit a copy.
+final-graduation-task*.pdf
+docs/requirements/*.pdf
+
+# OS files
+.DS_Store
+
+# Claude Code personal settings
+.claude/settings.local.json
