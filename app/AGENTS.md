@@ -30,3 +30,27 @@ only in this file.
 
 The client state tool, the offline storage library, and the routing and deep-link library. Don't pick
 them; ask. Directory layout and commands are filled in by the scaffold slice.
+
+## Design source
+
+Figma file: Rota — the approved screens, components and design tokens. Ignore the "Prototype / …"
+frames and the 85:* duplicates. Handoff notes in the file list every screen and its number.
+
+- Foundations (colours, type, spacing): https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=0-1
+- Components (buttons, inputs, nav, status, icons): https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=2-2
+- 03 Authentication: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=8-2
+- 04 Calendar & activity: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=7-2
+- 05 Team: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=8-177
+- 06 Swaps: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=8-292
+- 07 Billing (Stripe test mode): https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=9-2
+- 08 Notifications: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=9-337
+- 09 Settings: https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY/Rota?node-id=9-205
+
+Rules:
+- Build a screen inside the slice that needs it, together with its server endpoint. No screen-only
+  slices with fake data.
+- Reuse the Figma components and variables. Never hard-code a colour, size or font the file defines
+  as a token.
+- Input labels sit above the field, never inside it.
+- If a design and a rules file disagree (for example, a screen that implies the app calculates money),
+  the rules win. Stop and tell Dave.
