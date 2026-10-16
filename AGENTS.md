@@ -130,19 +130,31 @@ expiring trial credits. If something can't be free, say so plainly.**
 6. Dave has been prompted for his own-words `LEARNING-LOG.md` paragraph.
 7. You asked the matching interview question from the spec and said whether his answer would survive.
 
-## Deployment gate — before any feature work
+## Infrastructure gate — before any feature work
 
-Until every box passes, the infrastructure is a plan, not a verified stack:
+Proven locally: API and worker running on Dave's machine against the real cloud services. Until every box
+passes, the infrastructure is a plan, not a verified stack:
 - [ ] Both requirement sources opened and read
-- [ ] API and worker running on the approved provider
+- [ ] API and worker start locally
 - [ ] Both Neon shards connected
 - [ ] A `Queue.add` consumed by a `Worker` on Aiven Valkey
 - [ ] Delayed job and retry
 - [ ] Worker-restart recovery
 - [ ] Queue-loss recovery: delete disposable queued jobs from Valkey; the independent reconciliation
       process restores them from Postgres. A worker restart alone doesn't prove this.
+- [ ] One email from the worker through Resend
+- [ ] Neon, Aiven and Resend confirmed free; spending blocked, not just alerted
+
+## Deployment gate — before read-your-own-writes is marked done, and before submission
+
+Feature work may continue locally while this is open. Nothing is described as deployed until it passes:
+- [ ] Provider approved by Dave and recorded in an ADR
+- [ ] Provider confirmed free; spending blocked, not just alerted
+- [ ] API and worker running on the approved provider
+- [ ] Stop-then-start deploys confirmed: the old API process stops before the new one starts (`data.md`,
+      one-process rule). If the provider can't do this, stop and ask; the read-your-own-writes design changes.
+- [ ] Worker-restart and queue-loss recovery repeated with the deployed worker
 - [ ] One email from the deployed worker through Resend
-- [ ] Resources confirmed free; spending blocked, not just alerted
 
 ## Repo map
 
