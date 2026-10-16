@@ -32,7 +32,13 @@ only in this file.
 - New log fields pass through the shared redaction list.
 - The acceptance tests in each affected rules file are added or updated in the same PR.
 
+## Layout
+
+- `server/src/api/app.ts`: builds the Express app (`createApp()`); no listening, so tests can import it.
+- `server/src/api/main.ts`: reads `PORT`, starts the API process.
+- `server/src/worker/main.ts`: the separate worker process.
+- Toolchain choices: `docs/decisions/0001-server-toolchain.md`. Commands: root `AGENTS.md`, Commands.
+
 ## Pending
 
-The deployment provider (until approved, nothing assumes Northflank or Oracle). Directory layout and
-commands are filled in by the scaffold slice.
+The deployment provider (until approved, nothing assumes Northflank or Oracle).

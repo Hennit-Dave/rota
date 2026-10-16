@@ -12,7 +12,8 @@ If a rule here conflicts with `AGENTS.md`, stop and ask. The tests at the end ar
 ## Request logs
 
 - Structured JSON, one line per request, timestamps in UTC ISO 8601. The logger library is chosen in the
-  scaffold ADR.
+  ADR for the Sentry and request-ID logging slice (build order step 3). Until then the scaffold uses plain
+  `console.log`.
 - **Fields (brief):** request ID, user ID (when authenticated), route, response time, result. Ours: the
   route template (e.g. `/teams/:teamId/shifts`) and `team_id` rather than a raw URL, the status code,
   an error code on failure, and for reads the `db_route` and reason (`data.md`).
