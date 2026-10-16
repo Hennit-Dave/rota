@@ -400,8 +400,9 @@ Check me on these as we go. When we finish a slice that covers one, ask me the q
 
 Propose your own if you disagree, with reasons. My instinct:
 
-1. Minimal scaffold: repo structure, `.env.example`, LICENSE, Conventional Commits, ADR folder, and an Express API and a worker process that both start. Only what the deployment proof needs.
-2. **Deployment proof, before any feature work.** API and worker running on the approved provider; both Neon shards connected; a `Queue.add` consumed by a `Worker` on Valkey; a delayed job and a retry; recovery after a worker restart; **queue-loss recovery** (delete disposable queued jobs from Valkey and show the reconciliation process, running independently of BullMQ, restores them from PostgreSQL); one email sent from the deployed worker through Resend; billing dashboards still at $0. Nothing below starts until this passes.
+1. Minimal scaffold: repo structure, `.env.example`, LICENSE, Conventional Commits, ADR folder, and an Express API and a worker process that both start. Only what the infrastructure proof needs.
+2. **Infrastructure proof, before any feature work.** Run locally against the real cloud services: API and worker start; both Neon shards connected; a `Queue.add` consumed by a `Worker` on Valkey; a delayed job and a retry; recovery after a worker restart; **queue-loss recovery** (delete disposable queued jobs from Valkey and show the reconciliation process, running independently of BullMQ, restores them from PostgreSQL); one email sent from the worker through Resend; Neon, Aiven and Resend confirmed free with spending blocked. Nothing below starts until this passes.
+   **Deployment proof** follows once the provider is approved: API and worker on the provider, stop-then-start deploys confirmed, recovery and one email repeated from the deployed worker. Feature work may continue locally meanwhile, but it must pass before read-your-own-writes (step 5) is marked done and before submission.
 3. Sentry and request-ID logging. Boring, and everything else inherits from them.
 4. Database schema and migrations, with the shard routing decided up front — retrofitting two databases later is painful.
 5. Connection pooling and read/write routing with read-your-own-writes.
