@@ -168,8 +168,20 @@ load-tests/          k6 scripts + written report       .agents/       rules/ and
 
 ## Commands
 
-**Pending until the scaffold slice.** Don't invent scripts.
-Fill in when they exist: install, run app, run API, run worker, migrate, seed, test, lint, load test.
+Server commands run from `server/`. Node 24 (`.nvmrc` at the root). Local values go in a root `.env`, copied
+from `.env.example` (names only); the server scripts read it.
+
+| Task | Command |
+|---|---|
+| Install | `cd server && npm ci` |
+| Typecheck | `npm run typecheck` |
+| Build | `npm run build` |
+| Run API (compiled; build first) | `npm run start:api` |
+| Run worker (compiled; build first) | `npm run start:worker` |
+| Run API / worker with reload | `npm run dev:api` / `npm run dev:worker` |
+
+**Pending until a slice creates them.** Don't invent scripts: run app, migrate, seed, test, lint, load test.
+
 The Android development build (`eas build`, profile pending) **needs a new native build. Warn first.**
 
 ## Read before working on…

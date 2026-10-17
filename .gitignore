@@ -8,3 +8,12 @@ docs/requirements/*.pdf
 
 # Claude Code personal settings
 .claude/settings.local.json
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Local environment files (names live in .env.example)
+.env
+.env.*
+!.env.example
