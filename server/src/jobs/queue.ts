@@ -12,6 +12,14 @@ import { sanitizeError } from './redact.js';
 
 export const WORK_QUEUE_NAME = 'work';
 
+/**
+ * Resolves the queue name for producer and worker.
+ * Uses custom name if provided, otherwise WORK_QUEUE_NAME env var, otherwise default 'work'.
+ */
+export function resolveQueueName(customName?: string): string {
+  return customName || process.env.WORK_QUEUE_NAME || WORK_QUEUE_NAME;
+}
+
 export interface EnqueueOptions {
   payload?: any;
   runAt?: Date;
@@ -24,10 +32,11 @@ let sharedProducerConnection: ReturnType<typeof createProducerConnection> | null
 let sharedProducerQueue: Queue | null = null;
 
 export function createWorkQueue(
-  queueName = process.env.WORK_QUEUE_NAME || WORK_QUEUE_NAME,
+  queueName = resolveQueueName(),
   connection = createProducerConnection(),
 ): Queue {
-  return new Queue(queueName, {
+  const resolved = resolveQueueName(queueName);
+  return new Queue(resolved, {
     connection,
     defaultJobOptions: {
       removeOnComplete: false,
@@ -38,18 +47,30 @@ export function createWorkQueue(
 
 /**
  * Get or create the shared producer queue singleton.
- * Reuses a single producer queue and connection across requests.
+ * Reuses a single producer queue and connection across requests for the same queue name.
+ * Rejects mismatched queue names to prevent silent cross-queue routing.
  */
-export function getProducerQueue(queueName = process.env.WORK_QUEUE_NAME || WORK_QUEUE_NAME): Queue {
-  if (!sharedProducerQueue) {
-    sharedProducerConnection = createProducerConnection();
-    sharedProducerQueue = createWorkQueue(queueName, sharedProducerConnection);
+export function getProducerQueue(
+  queueName?: string,
+  connection?: ReturnType<typeof createProducerConnection>,
+): Queue {
+  const targetName = resolveQueueName(queueName);
+  if (sharedProducerQueue) {
+    if (sharedProducerQueue.name !== targetName) {
+      throw new Error(
+        `Cannot get producer queue '${targetName}': shared producer queue already initialized with name '${sharedProducerQueue.name}'`,
+      );
+    }
+    return sharedProducerQueue;
   }
+  sharedProducerConnection = connection ?? createProducerConnection();
+  sharedProducerQueue = createWorkQueue(targetName, sharedProducerConnection);
   return sharedProducerQueue;
 }
 
 /**
  * Cleanly close the shared producer queue and connection.
+ * Resets the shared singleton state so subsequent calls re-initialize cleanly.
  */
 export async function closeProducerQueue(): Promise<void> {
   if (sharedProducerQueue) {
@@ -57,7 +78,9 @@ export async function closeProducerQueue(): Promise<void> {
     sharedProducerQueue = null;
   }
   if (sharedProducerConnection) {
-    await sharedProducerConnection.quit();
+    if (typeof (sharedProducerConnection as any).quit === 'function') {
+      await (sharedProducerConnection as any).quit();
+    }
     sharedProducerConnection = null;
   }
 }

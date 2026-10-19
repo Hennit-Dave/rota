@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { verifyNoEviction } from './connection.js';
-import { enqueueWorkRow, formatJobId } from './queue.js';
+import {
+  closeProducerQueue,
+  createWorkQueue,
+  enqueueWorkRow,
+  formatJobId,
+  getProducerQueue,
+  resolveQueueName,
+} from './queue.js';
 import {
   formatCheckValkeyError,
   formatJobFailedLog,
@@ -10,7 +18,7 @@ import {
   redactSensitive,
   sanitizeError,
 } from './redact.js';
-import { createWorkProcessor, resolvePrismaClient } from './worker.js';
+import { createWorkProcessor, createWorkWorker, resolvePrismaClient } from './worker.js';
 
 test('verifyNoEviction: verifies noeviction policy and rejects other policies', async () => {
   // Test 1: valid noeviction via INFO memory
@@ -182,4 +190,134 @@ test('logging paths: formatWorkerInitError, formatWorkerError, formatJobFailedLo
   assert.ok(checkValkeyMsg.startsWith('Valkey check failed:'));
   assert.ok(!checkValkeyMsg.includes(valkeySecret), 'check-valkey log must not leak token');
   assert.ok(checkValkeyMsg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'check-valkey log must redact credentials');
+});
+
+function createMockRedis(): any {
+  const ee = new EventEmitter();
+  (ee as any).status = 'ready';
+  (ee as any).options = { maxRetriesPerRequest: null };
+  (ee as any).connect = async () => {};
+  (ee as any).disconnect = async () => {};
+  (ee as any).duplicate = () => createMockRedis();
+  (ee as any).defineCommand = (name: string) => {
+    (ee as any)[name] = async () => [];
+  };
+  (ee as any).info = async () => 'redis_version:7.2.0';
+  (ee as any).quit = async () => 'OK';
+  return ee;
+}
+
+test('producer/worker queue-name agreement: resolves identically by default, via env, and via options', async () => {
+  const origEnv = process.env.WORK_QUEUE_NAME;
+  try {
+    // 1. Default agreement (no env var, no explicit options)
+    delete process.env.WORK_QUEUE_NAME;
+    const defaultResolved = resolveQueueName();
+    assert.equal(defaultResolved, 'work', 'Default queue name must be work');
+
+    const mockRedisProducer = createMockRedis();
+    const mockRedisWorker = createMockRedis();
+    const mockPrisma: any = { $queryRaw: async () => [] };
+
+    const defaultQueue = createWorkQueue(undefined, mockRedisProducer);
+    const defaultWorker = createWorkWorker(mockPrisma, {}, {
+      connection: mockRedisWorker,
+      autorun: false,
+    });
+    try {
+      assert.equal(defaultQueue.name, 'work');
+      assert.equal(defaultWorker.name, 'work');
+      assert.equal(
+        defaultQueue.name,
+        defaultWorker.name,
+        'Default producer and worker queue names must agree',
+      );
+    } finally {
+      await defaultQueue.close();
+      await defaultWorker.close();
+    }
+
+    // 2. Environment override agreement
+    process.env.WORK_QUEUE_NAME = 'custom-env-work';
+    const envResolved = resolveQueueName();
+    assert.equal(envResolved, 'custom-env-work');
+
+    const envQueue = createWorkQueue(undefined, mockRedisProducer);
+    const envWorker = createWorkWorker(mockPrisma, {}, {
+      connection: mockRedisWorker,
+      autorun: false,
+    });
+    try {
+      assert.equal(envQueue.name, 'custom-env-work');
+      assert.equal(envWorker.name, 'custom-env-work');
+      assert.equal(
+        envQueue.name,
+        envWorker.name,
+        'Producer and worker with env override must agree',
+      );
+    } finally {
+      await envQueue.close();
+      await envWorker.close();
+    }
+
+    // 3. Explicit queueName override agreement
+    const explicitQueue = createWorkQueue('explicit-test-q', mockRedisProducer);
+    const explicitWorker = createWorkWorker(mockPrisma, {}, {
+      connection: mockRedisWorker,
+      queueName: 'explicit-test-q',
+      autorun: false,
+    });
+    try {
+      assert.equal(explicitQueue.name, 'explicit-test-q');
+      assert.equal(explicitWorker.name, 'explicit-test-q');
+      assert.equal(
+        explicitQueue.name,
+        explicitWorker.name,
+        'Producer and worker with explicit queue name must agree',
+      );
+    } finally {
+      await explicitQueue.close();
+      await explicitWorker.close();
+    }
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.WORK_QUEUE_NAME = origEnv;
+    } else {
+      delete process.env.WORK_QUEUE_NAME;
+    }
+  }
+});
+
+test('getProducerQueue: reuses same-name singleton, explicitly rejects mismatched names, and resets after shutdown', async () => {
+  await closeProducerQueue();
+
+  const mockRedis1 = createMockRedis();
+  const mockRedis2 = createMockRedis();
+
+  try {
+    // 1. Initial creation with specific name
+    const q1 = getProducerQueue('team-work-queue', mockRedis1);
+    assert.equal(q1.name, 'team-work-queue');
+
+    // 2. Same-name reuse returns the exact same instance
+    const q2 = getProducerQueue('team-work-queue');
+    assert.equal(q1, q2, 'Same-name call must return the exact same queue instance');
+
+    // 3. Different-name rejection: must not silently return a queue with another name
+    assert.throws(
+      () => getProducerQueue('other-queue'),
+      /Cannot get producer queue 'other-queue': shared producer queue already initialized with name 'team-work-queue'/,
+      'Must explicitly reject different queue name while singleton is active',
+    );
+
+    // 4. Reset correctly after shutdown
+    await closeProducerQueue();
+
+    // 5. Subsequent call with different name now succeeds as fresh singleton
+    const q3 = getProducerQueue('other-queue', mockRedis2);
+    assert.equal(q3.name, 'other-queue');
+    assert.notEqual(q1, q3, 'New queue instance after shutdown must be distinct');
+  } finally {
+    await closeProducerQueue();
+  }
 });

@@ -12,7 +12,7 @@ import {
   WORK_MAX_ATTEMPTS,
 } from './config.js';
 import { createWorkerConnection } from './connection.js';
-import { WORK_QUEUE_NAME } from './queue.js';
+import { resolveQueueName, WORK_QUEUE_NAME } from './queue.js';
 import { sanitizeError } from './redact.js';
 
 export class ContentionError extends Error {
@@ -55,6 +55,7 @@ export interface WorkerOptions {
   leaseMs?: number;
   maxAttempts?: number;
   concurrency?: number;
+  autorun?: boolean;
 }
 
 /**
@@ -345,7 +346,7 @@ export function createWorkWorker(
   handlers: Record<string, JobHandler> = {},
   options?: WorkerOptions,
 ): Worker {
-  const queueName = options?.queueName ?? WORK_QUEUE_NAME;
+  const queueName = resolveQueueName(options?.queueName);
   const connection = options?.connection ?? createWorkerConnection();
   const processor = createWorkProcessor(shards, handlers, {
     leaseMs: options?.leaseMs,
@@ -355,6 +356,7 @@ export function createWorkWorker(
   return new Worker(queueName, processor, {
     connection,
     concurrency: options?.concurrency ?? 1,
+    autorun: options?.autorun,
     lockDuration: BULLMQ_LOCK_DURATION_MS,
     stalledInterval: BULLMQ_STALLED_INTERVAL_MS,
     maxStalledCount: BULLMQ_MAX_STALLED_COUNT,
