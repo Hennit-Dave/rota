@@ -288,6 +288,45 @@ test('producer/worker queue-name agreement: resolves identically by default, via
   }
 });
 
+test('createWorkWorker autorun: omitted starts processing, explicit false leaves the worker stopped', async () => {
+  const mockPrisma: any = { $queryRaw: async () => [] };
+
+  // 1. Omitted autorun: normal startup path (as in worker/main.ts) must run.
+  const runningWorker = createWorkWorker(mockPrisma, {}, { connection: createMockRedis() });
+  runningWorker.on('error', () => {});
+  try {
+    assert.equal(runningWorker.opts.autorun, true, 'omitted autorun must resolve to true, not undefined');
+    assert.equal(runningWorker.isRunning(), true, 'worker must be running when autorun is omitted');
+  } finally {
+    await runningWorker.close(true);
+  }
+
+  // 2. Options object present but autorun key absent/undefined behaves the same.
+  const undefinedWorker = createWorkWorker(mockPrisma, {}, {
+    connection: createMockRedis(),
+    autorun: undefined,
+  });
+  undefinedWorker.on('error', () => {});
+  try {
+    assert.equal(undefinedWorker.opts.autorun, true);
+    assert.equal(undefinedWorker.isRunning(), true);
+  } finally {
+    await undefinedWorker.close(true);
+  }
+
+  // 3. Explicit false is preserved for tests.
+  const stoppedWorker = createWorkWorker(mockPrisma, {}, {
+    connection: createMockRedis(),
+    autorun: false,
+  });
+  try {
+    assert.equal(stoppedWorker.opts.autorun, false);
+    assert.equal(stoppedWorker.isRunning(), false, 'worker must stay stopped when autorun is false');
+  } finally {
+    await stoppedWorker.close();
+  }
+});
+
 test('getProducerQueue: reuses same-name singleton, explicitly rejects mismatched names, and resets after shutdown', async () => {
   await closeProducerQueue();
 

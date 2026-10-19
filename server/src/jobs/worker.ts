@@ -356,7 +356,8 @@ export function createWorkWorker(
   return new Worker(queueName, processor, {
     connection,
     concurrency: options?.concurrency ?? 1,
-    autorun: options?.autorun,
+    // An explicit `undefined` would override BullMQ's default of true; only an explicit false stops it.
+    autorun: options?.autorun ?? true,
     lockDuration: BULLMQ_LOCK_DURATION_MS,
     stalledInterval: BULLMQ_STALLED_INTERVAL_MS,
     maxStalledCount: BULLMQ_MAX_STALLED_COUNT,
