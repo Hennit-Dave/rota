@@ -14,3 +14,16 @@ For the server toolchain, I chose TypeScript 6.0.3 instead of TypeScript 7 becau
 Writing this as an ADR means i do not just record what was chosen. I also record why I rejected the other option, so someone reading the project later does not need to repeat the same research.
 Another important part of an ADR is the revisit condition. A technical decision does not always have to stay permanent. In this case, I can reconsider TypeScript 7 when `typescript-eslint` supports the 7.x version and Prisma officially confirms support for it.
 What I understand from this is that an ADR is not just documentation of a choice. It is a record of the reasoning behind the choice and the condition that could make me change it later.
+
+## 2026-10-19 — Database shards, migrations and durable work records (PR #16)
+Rota saves a record of the work in PostgreSQL before adding it to Valkey’s queue. If queueing fails or Valkey loses the job, the pending record remains so the reconciliation process can queue it again. The worker marks the work as done only after successfully processing it.
+A shard is a database that hold one part of app's data, each shards has a teams in the database and those teams has an ID that helps them route functions which help them choose a shard consistently.
+Using the same shard matters to keep it consistent and for it to not look at the wrong places when searching.
+Both shards need the same tables because rota can work with both shards the same way so the structure matches. Rota saves unfinished work in PostgreSQL so that the record remains in PostgreSQL even if valkey loses the job so that unfinished work can be found and queued again.
+
+## 2026-10-19— Background workers, retries, crash recovery and the autorun bug (PR #17)
+Workers holds queued jobs, the worker picks up a job after working on it it becomes successful, however some jobs fails temporarily and that triggers another try after a delay.
+When a worker crashes leaving unfinished work behind another worker can reclaim it after a limited time.
+Before a duplicate job happen the database record is checked first, if it already says done, the job is skipped because the job was successful.
+Logs are record, checking which job retried, failed or finished and it doesnt expose passwords or credentials, this helps fish out issues to know where how to solve the issue
+The worker was created but didn’t start because an unset option overwrote the library’s default of starting automatically. Earlier tests missed this because they disabled startup or used a mock worker. The fix keeps automatic startup enabled unless explicitly turned off, and the new test checks all three cases: omitted, unset and false.
