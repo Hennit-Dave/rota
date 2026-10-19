@@ -161,20 +161,42 @@ test('Item 3: simultaneous claim race - launch both attempts before either compl
 
   try {
     let executionCount = 0;
+    let releaseWinner: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      releaseWinner = resolve;
+    });
+
     const processor = createWorkProcessor(shards, {
       'test-simultaneous-race': async () => {
         executionCount++;
-        // Keep handler running briefly so both promises are concurrently active in flight
-        await new Promise((r) => setTimeout(r, 100));
+        // Hold the winner in handler so loser hits Postgres while claim is live
+        await barrier;
       },
     });
 
     const job1: any = { id: 'race-job-1', data: { rowId: row.id, generation: 1, shard: 'A' } };
     const job2: any = { id: 'race-job-2', data: { rowId: row.id, generation: 1, shard: 'A' } };
 
-    // Launch BOTH before either has completed its claim or finished
+    // Launch BOTH before either has completed its claim
     const p1 = processor(job1, 'tok1');
     const p2 = processor(job2, 'tok2');
+
+    // Wait for the losing attempt to contend and reject before releasing winner
+    try {
+      await Promise.race([
+        p1.catch((err) => {
+          throw err;
+        }),
+        p2.catch((err) => {
+          throw err;
+        }),
+      ]);
+    } catch {
+      // Losing attempt threw ContentionError as expected
+    } finally {
+      // Unblock the winning attempt to complete done
+      releaseWinner!();
+    }
 
     const results = await Promise.allSettled([p1, p2]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
