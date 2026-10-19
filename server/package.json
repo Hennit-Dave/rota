@@ -20,8 +20,13 @@
     "db:status:a": "SHARD=a node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate status",
     "db:status:b": "SHARD=b node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate status",
     "db:parity": "tsx --env-file-if-exists=../.env src/db/parity.ts",
-    "db:generate": "SHARD=a node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js generate",
-    "db:check-pooled": "tsx --env-file-if-exists=../.env src/db/check-pooled.ts"
+    "db:generate": "SHARD=a SHARD_A_DIRECT_URL=postgresql://unused:unused@localhost:5432/unused node ./node_modules/prisma/build/index.js generate",
+    "db:check-pooled": "tsx --env-file-if-exists=../.env src/db/check-pooled.ts",
+    "prebuild": "npm run db:generate",
+    "pretypecheck": "npm run db:generate",
+    "pretest": "npm run db:generate",
+    "predev:api": "npm run db:generate",
+    "predev:worker": "npm run db:generate"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",

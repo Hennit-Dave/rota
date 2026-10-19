@@ -27,6 +27,9 @@ model WorkRow {
   status            WorkStatus @default(pending)
   generation        Int        @default(1)
   executionAttempts Int        @default(0) @map("execution_attempts")
+  // Application code sets these explicitly (ADR 0002); the defaults are only a fallback.
+  // Normal creation: available_at = run_at + 2 minutes. Enqueue failure: available_at = now().
+  // The worker enforces run_at (claims need run_at <= now()); available_at is the sweep eligibility time.
   runAt             DateTime   @default(now()) @map("run_at") @db.Timestamptz(6)
   availableAt       DateTime   @default(now()) @map("available_at") @db.Timestamptz(6)
   claimToken        String?    @map("claim_token") @db.Uuid

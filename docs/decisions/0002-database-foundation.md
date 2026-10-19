@@ -24,7 +24,7 @@ a shard function every process agrees on. These choices are hard to change once 
   **8.23.1** (already pulled in by the adapter; declared so the parity script does not rely on a transitive
   dependency).
 - Migrations run through each shard's **direct (unpooled)** URL, selected by `SHARD=a|b` in
-  `server/prisma.config.ts`, with no default shard. Runtime will use the pooled `-pooler` URLs. If channel
+  `server/prisma.config.ts`, with no default shard. Runtime uses the pooled `-pooler` URLs. If channel
   binding or pooled prepared statements fail, work **stops and is reported**; runtime traffic is never
   silently switched to direct URLs.
 - First migration `init_work_rows` creates the `work_rows` table and `work_status` enum on **both**
@@ -43,11 +43,21 @@ a shard function every process agrees on. These choices are hard to change once 
   pending rows past `available_at`; `(status, claim_expires_at)` serves recovery of claimed rows whose
   lease expired. Both are the two sweep queries in `jobs.md`; without them each sweep scans the table,
   and each sweep wakes Neon.
-- **`run_at` and `available_at` default to `now()`.** A row for immediate work needs no caller
-  arithmetic, and a row can never exist with a null time the sweep cannot compare. The default does not
-  weaken scheduling: **the worker still enforces `run_at`.** Claims require `run_at <= now()` (jobs.md,
-  Ownership), and an early-firing job is moved to delayed, not run. A default is only the value when the
-  caller gives none; delayed work must always set `run_at` explicitly.
+- **`run_at` and `available_at` columns default to `now()`; the application does not rely on the defaults
+  for scheduled work.** The defaults are only a fallback so a row can never exist with a null time the
+  sweep cannot compare. The migration is applied and is not rewritten. Two rules decide the values, and
+  they are what make the sweep eligibility rule work:
+  - **Normal work-row creation sets `available_at = run_at + 2 minutes`** (`jobs.md`, Scheduling). That
+    gives the queue two minutes after the work is due to run it before the timed sweep treats the row as
+    lost.
+  - **An enqueue failure sets `available_at = now()`**, so the row is eligible for the next sweep or
+    reconnect check at once.
+
+  `run_at` is a separate matter: **the worker enforces it.** Claims require `run_at <= now()`
+  (`jobs.md`, Ownership), and an early-firing job is moved to delayed, not run. Enforcing `run_at` alone
+  does not say when a row is *eligible for the sweep*; `available_at` does. Delayed work always sets
+  `run_at` explicitly. The next PR that creates work rows (PR 2) sets `available_at` explicitly and tests
+  both rules.
 - **Pooled shard clients are included in PR 1** (`src/db/clients.ts`, `getShard`), with a connection check
   against both shards (`npm run db:check-pooled`). Runtime clients read only the pooled URLs and never
   fall back to direct URLs. Pool maximum is a parameter (`data.md`: API 5, worker 3 per shard primary).
@@ -56,8 +66,8 @@ a shard function every process agrees on. These choices are hard to change once 
 
 - Pinning follows the toolchain rule in ADR 0001: exact versions, committed lockfile.
 - Peer ranges checked on 2026-10-19 from the npm registry: `prisma@7.10.1` requires `typescript >=5.4.0`;
-  `@prisma/adapter-pg@7.10.1` depends on `pg ^8.16.3`. Not verified: behaviour against Neon's pooler; that
-  is proven in the infrastructure gate, not assumed here.
+  `@prisma/adapter-pg@7.10.1` depends on `pg ^8.16.3`. A peer range is not a statement of tested support.
+  Behaviour against Neon's pooler was checked directly in this PR; see Evidence.
 - `jobs.md` lease length, attempt maximum and backoff are **not** decided here: PR 1 contains no code that
   uses them. They are decided in the PR that first uses them.
 
@@ -73,7 +83,8 @@ a shard function every process agrees on. These choices are hard to change once 
 Migration SQL, the A-then-B apply output, migration status, the parity output, the pooled check and the
 three passing vectors are in the PR description.
 
-Verified 2026-10-19: both pooled URLs carry `channel_binding=require` and connect; a raw query, a model
-query and a transaction succeed through the pooler on both shards. Known warning: `pg` 8.23.1 prints that
-`sslmode=require` is currently treated as `verify-full` and will change in pg 9. Not acted on; revisit at
-the next `pg` major.
+Verified 2026-10-19 (`npm run db:check-pooled`): both pooled URLs carry `channel_binding=require` and
+connect; a raw query, a model query and a transaction succeed through the pooler on both shards. This
+verifies the pooled connection only. The wider infrastructure gate (queue, worker, email, recovery) is
+still open. Known warning: `pg` 8.23.1 prints that `sslmode=require` is currently treated as
+`verify-full` and will change in pg 9. Not acted on; revisit at the next `pg` major.
