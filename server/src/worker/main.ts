@@ -24,7 +24,7 @@ const handlers = {
   },
 };
 
-const worker = createWorkWorker(shards.A.primary, handlers, { connection: redis });
+const worker = createWorkWorker(shards, handlers, { connection: redis });
 
 worker.on('ready', () => {
   console.log('worker running');

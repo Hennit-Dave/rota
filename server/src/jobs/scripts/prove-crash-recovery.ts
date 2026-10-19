@@ -17,7 +17,7 @@ const queue = createWorkQueue(queueName, queueConnection);
 
 try {
   // Step 1: Enqueue the crash test row
-  const row = await enqueueWorkRow(prisma, 'proof-crash', { queue });
+  const row = await enqueueWorkRow(prisma, 'proof-crash', { queue, shard: 'A' });
   console.log(`Enqueued crash test row ${row.id}`);
 
   // Step 2: Spawn child worker process directly via node
@@ -81,7 +81,7 @@ try {
   // Step 4: Controlled test of early-redelivery contention before lease expires (Requirement 2)
   console.log('\nTesting early-redelivery contention while Postgres lease is still active...');
   const earlyProcessor = createWorkProcessor(prisma, {}, { leaseMs, maxAttempts: 5 });
-  const mockJob: any = { data: { rowId: row.id, generation: 1 } };
+  const mockJob: any = { data: { rowId: row.id, generation: 1, shard: 'A' } };
 
   const earlyAttemptStart = Date.now();
   await assert.rejects(
@@ -113,7 +113,7 @@ try {
     },
   };
 
-  const restartedWorker = createWorkWorker(prisma, restartedHandlers, {
+  const restartedWorker = createWorkWorker(shards, restartedHandlers, {
     queueName,
     connection: restartedConnection,
     leaseMs,

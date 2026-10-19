@@ -18,7 +18,7 @@ const handlers = {
   },
 };
 
-const worker = createWorkWorker(shards.A.primary, handlers, {
+const worker = createWorkWorker(shards, handlers, {
   queueName,
   connection,
   leaseMs,

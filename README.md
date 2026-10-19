@@ -18,7 +18,8 @@ npm ci
 npm run db:generate    # generates the Prisma client into src/generated/ (gitignored, so a fresh clone has none)
 npm run build
 npm run typecheck
-npm test
+npm test              # runs unit tests (9 tests, zero database mutations)
+npm run test:integration # runs database integration tests (needs .env, guards against non-test DB)
 npm run start:api      # terminal 1: http://localhost:3000/health returns {"ok":true}
 npm run start:worker   # terminal 2: logs "worker running"
 ```
@@ -52,6 +53,6 @@ The service must have `maxmemory-policy: noeviction`.
 | Command | Needs | What it does |
 |---|---|---|
 | `npm run jobs:check-valkey` | `VALKEY_URL` | Connects to Valkey, verifies `noeviction` policy, reports status |
-| `npm run jobs:prove:boxes-4-5` | `VALKEY_URL`, `SHARD_A_DATABASE_URL` | Proves Box 4 (immediate execution with timing) and Box 5 (delayed fire and exponential backoff) |
+| `npm run jobs:prove:boxes-4-5` | `VALKEY_URL`, `SHARD_A_DATABASE_URL`, `SHARD_B_DATABASE_URL` | Proves Box 4 (immediate execution on Shards A & B with timing) and Box 5 (delayed fire strictly at/after run_at, exponential backoff) |
 | `npm run jobs:prove:crash` | `VALKEY_URL`, `SHARD_A_DATABASE_URL` | Proves Box 6 (abrupt SIGKILL termination mid-claim and recovery upon lease expiry) |
 

@@ -24,17 +24,29 @@ let delayedCompleted = false;
 const retryTimestamps: number[] = [];
 let retryCompleted = false;
 
+let immediateBDurationMs = 0;
+let immediateBCompleted = false;
+
 const handlers = {
   'proof-immediate': async (ctx: any) => {
     const start = performance.now();
-    // Simulate lightweight task (measuring actual handler execution duration)
-    await prisma.workRow.update({
+    await ctx.prisma.workRow.update({
       where: { id: ctx.row.id },
       data: { failureReason: 'immediate-proof-executed' },
     });
     immediateDurationMs = performance.now() - start;
-    console.log(`[Box 4] Immediate handler executed in ${immediateDurationMs.toFixed(2)}ms`);
+    console.log(`[Box 4] Immediate handler (Shard A) executed in ${immediateDurationMs.toFixed(2)}ms`);
     immediateCompleted = true;
+  },
+  'proof-immediate-b': async (ctx: any) => {
+    const start = performance.now();
+    await ctx.prisma.workRow.update({
+      where: { id: ctx.row.id },
+      data: { failureReason: 'immediate-proof-b-executed' },
+    });
+    immediateBDurationMs = performance.now() - start;
+    console.log(`[Box 4] Immediate handler (Shard B) executed in ${immediateBDurationMs.toFixed(2)}ms`);
+    immediateBCompleted = true;
   },
   'proof-delayed': async (ctx: any) => {
     delayedFiredAt = Date.now();
@@ -54,36 +66,60 @@ const handlers = {
   },
 };
 
-const worker = createWorkWorker(prisma, handlers, {
+const worker = createWorkWorker(shards, handlers, {
   queueName,
   connection: workerConnection,
   leaseMs: 15_000,
   maxAttempts: 5,
 });
 
-try {
-  // --- BOX 4: Immediate Job ---
-  console.log('\nStarting Box 4: Enqueue immediate job...');
-  const immRow = await enqueueWorkRow(prisma, 'proof-immediate', { queue });
-  console.log(`Enqueued row ${immRow.id}`);
+let immRowAId: string | null = null;
+let immRowBId: string | null = null;
+let delRowId: string | null = null;
+let retRowId: string | null = null;
 
-  const startWaitImm = Date.now();
-  while (!immediateCompleted && Date.now() - startWaitImm < 15_000) {
+try {
+  // --- BOX 4: Immediate Job on Shard A ---
+  console.log('\nStarting Box 4 (Shard A): Enqueue immediate job...');
+  const immRowA = await enqueueWorkRow(shards.A.primary, 'proof-immediate', { queue, shard: 'A' });
+  immRowAId = immRowA.id;
+  console.log(`Enqueued Shard A row ${immRowA.id}`);
+
+  const startWaitImmA = Date.now();
+  while (!immediateCompleted && Date.now() - startWaitImmA < 15_000) {
     await new Promise((r) => setTimeout(r, 200));
   }
-  assert.equal(immediateCompleted, true, 'Immediate job should have completed');
+  assert.equal(immediateCompleted, true, 'Immediate job on Shard A should have completed');
 
-  const freshImm = await prisma.workRow.findUniqueOrThrow({ where: { id: immRow.id } });
-  assert.equal(freshImm.status, 'done');
-  assert.equal(freshImm.executionAttempts, 1);
-  console.log(`Box 4 PROVEN: Row ${immRow.id} completed. Execution duration: ${immediateDurationMs.toFixed(2)}ms`);
+  const freshImmA = await shards.A.primary.workRow.findUniqueOrThrow({ where: { id: immRowA.id } });
+  assert.equal(freshImmA.status, 'done');
+  assert.equal(freshImmA.executionAttempts, 1);
+  console.log(`Box 4 PROVEN (Shard A): Row ${immRowA.id} completed. Execution duration: ${immediateDurationMs.toFixed(2)}ms`);
 
-  // --- BOX 5A: Delayed Job ---
+  // --- BOX 4: Immediate Job on Shard B ---
+  console.log('\nStarting Box 4 (Shard B): Enqueue immediate job on Shard B...');
+  const immRowB = await enqueueWorkRow(shards.B.primary, 'proof-immediate-b', { queue, shard: 'B' });
+  immRowBId = immRowB.id;
+  console.log(`Enqueued Shard B row ${immRowB.id}`);
+
+  const startWaitImmB = Date.now();
+  while (!immediateBCompleted && Date.now() - startWaitImmB < 15_000) {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.equal(immediateBCompleted, true, 'Immediate job on Shard B should have completed');
+
+  const freshImmB = await shards.B.primary.workRow.findUniqueOrThrow({ where: { id: immRowB.id } });
+  assert.equal(freshImmB.status, 'done');
+  assert.equal(freshImmB.executionAttempts, 1);
+  console.log(`Box 4 PROVEN (Shard B): Row ${immRowB.id} completed. Execution duration: ${immediateBDurationMs.toFixed(2)}ms`);
+
+  // --- BOX 5A: Delayed Job (Strict Clock Assertion) ---
   console.log('\nStarting Box 5A: Enqueue delayed job (delay 4000ms)...');
   const delayMs = 4000;
   const runAt = new Date(Date.now() + delayMs);
   delayedDueAt = runAt.getTime();
-  const delRow = await enqueueWorkRow(prisma, 'proof-delayed', { queue, runAt });
+  const delRow = await enqueueWorkRow(shards.A.primary, 'proof-delayed', { queue, runAt, shard: 'A' });
+  delRowId = delRow.id;
   console.log(`Enqueued delayed row ${delRow.id} with run_at=${runAt.toISOString()}`);
 
   const startWaitDel = Date.now();
@@ -92,14 +128,15 @@ try {
   }
   assert.equal(delayedCompleted, true, 'Delayed job should have completed');
   assert.ok(
-    delayedFiredAt! >= delayedDueAt - 200,
-    `Delayed job fired at ${delayedFiredAt}, before runAt ${delayedDueAt}`,
+    delayedFiredAt! >= delayedDueAt,
+    `Delayed job fired at ${delayedFiredAt}, strictly before runAt ${delayedDueAt}`,
   );
-  console.log(`Box 5A PROVEN: Job fired ${delayedFiredAt! - delayedDueAt}ms after due time`);
+  console.log(`Box 5A PROVEN: Job fired ${delayedFiredAt! - delayedDueAt}ms after due time (never before run_at)`);
 
   // --- BOX 5B: Retry with Exponential Backoff ---
   console.log('\nStarting Box 5B: Enqueue retry job (fails twice, succeeds on attempt 3)...');
-  const retRow = await enqueueWorkRow(prisma, 'proof-retry', { queue });
+  const retRow = await enqueueWorkRow(shards.A.primary, 'proof-retry', { queue, shard: 'A' });
+  retRowId = retRow.id;
   console.log(`Enqueued retry row ${retRow.id}`);
 
   const startWaitRet = Date.now();
@@ -117,15 +154,22 @@ try {
   assert.ok(delta1to2 >= 1500, `Delta 1->2 was ${delta1to2}ms, expected >= 1500ms`);
   assert.ok(delta2to3 >= 3000, `Delta 2->3 was ${delta2to3}ms, expected >= 3000ms`);
 
-  const freshRet = await prisma.workRow.findUniqueOrThrow({ where: { id: retRow.id } });
+  const freshRet = await shards.A.primary.workRow.findUniqueOrThrow({ where: { id: retRow.id } });
   assert.equal(freshRet.status, 'done');
   assert.equal(freshRet.executionAttempts, 3);
   console.log(`Box 5B PROVEN: Row ${retRow.id} completed after 3 attempts with exponential backoff`);
 
   // Cleanup created test rows
-  await prisma.workRow.deleteMany({
-    where: { id: { in: [immRow.id, delRow.id, retRow.id] } },
-  });
+  if (immRowAId || delRowId || retRowId) {
+    await shards.A.primary.workRow.deleteMany({
+      where: { id: { in: [immRowAId, delRowId, retRowId].filter(Boolean) as string[] } },
+    });
+  }
+  if (immRowBId) {
+    await shards.B.primary.workRow.deleteMany({
+      where: { id: immRowBId },
+    });
+  }
 } finally {
   await worker.close();
   await queue.close();

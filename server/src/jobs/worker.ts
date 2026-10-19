@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { DelayedError, Job, Worker, type Processor } from 'bullmq';
+import type { Shards } from '../db/clients.js';
+import type { ShardId } from '../db/shard.js';
 import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
 import {
   BULLMQ_LOCK_DURATION_MS,
@@ -27,6 +30,23 @@ export interface JobContext {
 }
 
 export type JobHandler = (ctx: JobContext) => Promise<void>;
+
+export type ShardResolver =
+  | PrismaClient
+  | Shards
+  | Record<ShardId, { primary: PrismaClient }>
+  | Record<ShardId, PrismaClient>;
+
+export function resolvePrismaClient(resolver: ShardResolver, shard: ShardId): PrismaClient {
+  if ('$queryRaw' in resolver) {
+    return resolver as PrismaClient;
+  }
+  const shardEntry = (resolver as any)[shard];
+  if (!shardEntry) {
+    throw new Error(`No database client configured for shard '${shard}'`);
+  }
+  return shardEntry.primary ?? shardEntry;
+}
 
 export interface WorkerOptions {
   queueName?: string;
@@ -61,14 +81,18 @@ export async function renewClaimLease(
 
 /**
  * Creates a BullMQ worker processor enforcing:
+ * - Shard routing by validated server-generated shard identifier ('A' | 'B')
  * - Atomic claim with generation match, run_at <= now, and pending or expired lease
+ * - Explicit failure on unsupported job kinds (never marks unperformed work done)
+ * - Missing work row detection without silently disguising routing failures
  * - Contention detection without attempt increments or completion
  * - Three-field check on renewal, release, completion, and failure
  * - Early fire detection via job.moveToDelayed and DelayedError
  * - Attempt ceiling (attempt 5 may succeed; failure on attempt 5 marks row failed; no 6th execution)
+ * - Structured execution logging (job ID, row ID, generation, attempts, outcome, duration)
  */
 export function createWorkProcessor(
-  prisma: PrismaClient,
+  shards: ShardResolver,
   handlers: Record<string, JobHandler>,
   options?: { leaseMs?: number; maxAttempts?: number },
 ): Processor {
@@ -76,7 +100,19 @@ export function createWorkProcessor(
   const maxAttempts = options?.maxAttempts ?? WORK_MAX_ATTEMPTS;
 
   return async (job: Job, token?: string) => {
-    const { rowId, generation } = job.data as { rowId: string; generation: number };
+    const startTime = performance.now();
+    const { rowId, generation, shard } = job.data as {
+      rowId: string;
+      generation: number;
+      shard?: string;
+    };
+
+    // 0. Validate shard identity and resolve shard primary client
+    if (!shard || (shard !== 'A' && shard !== 'B')) {
+      throw new Error(`Job ${job.id} has invalid or missing shard identifier: '${shard}'`);
+    }
+
+    const prisma = resolvePrismaClient(shards, shard as ShardId);
     const claimToken = randomUUID();
 
     // 1. Atomic claim in Postgres (jobs.md, Ownership rule 1)
@@ -115,7 +151,42 @@ export function createWorkProcessor(
         createdAt: new Date(rawRow.created_at ?? rawRow.createdAt),
         updatedAt: new Date(rawRow.updated_at ?? rawRow.updatedAt),
       };
-      const handler = handlers[row.kind] ?? (async () => {});
+
+      const handler = handlers[row.kind];
+      if (!handler) {
+        // Unknown handler: explicit failure, never mark unperformed work done (Rule 1)
+        const durationMs = performance.now() - startTime;
+        const err = new Error(`Unsupported job kind: '${row.kind}'`);
+        console.error(
+          `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=unsupported_job_kind`,
+        );
+
+        if (row.executionAttempts >= maxAttempts) {
+          await prisma.$executeRaw`
+            UPDATE work_rows
+            SET status = 'failed'::"work_status",
+                failure_reason = ${err.message},
+                updated_at = NOW()
+            WHERE id = ${row.id}::uuid
+              AND generation = ${generation}
+              AND claim_token = ${claimToken}::uuid
+              AND status = 'claimed'::"work_status"
+          `;
+        } else {
+          await prisma.$executeRaw`
+            UPDATE work_rows
+            SET status = 'pending'::"work_status",
+                claim_token = NULL,
+                claim_expires_at = NULL,
+                updated_at = NOW()
+            WHERE id = ${row.id}::uuid
+              AND generation = ${generation}
+              AND claim_token = ${claimToken}::uuid
+              AND status = 'claimed'::"work_status"
+          `;
+        }
+        throw err;
+      }
 
       const ctx: JobContext = {
         prisma,
@@ -140,12 +211,21 @@ export function createWorkProcessor(
             AND status = 'claimed'::"work_status"
         `;
 
+        const durationMs = performance.now() - startTime;
         if (completed === 0) {
           // Ownership was lost during execution; abort
+          console.warn(
+            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=lost_ownership duration_ms=${durationMs.toFixed(2)}`,
+          );
           return;
         }
+
+        console.log(
+          `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=done duration_ms=${durationMs.toFixed(2)}`,
+        );
       } catch (err: any) {
         // Handler failure
+        const durationMs = performance.now() - startTime;
         if (row.executionAttempts >= maxAttempts) {
           // Failure on attempt ceiling marks row failed; do not release claim
           await prisma.$executeRaw`
@@ -158,6 +238,9 @@ export function createWorkProcessor(
               AND claim_token = ${claimToken}::uuid
               AND status = 'claimed'::"work_status"
           `;
+          console.error(
+            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${err?.message ?? 'attempt_budget_exhausted'}`,
+          );
           throw err;
         } else {
           // Retryable failure: release claim and rethrow for BullMQ exponential backoff
@@ -172,6 +255,9 @@ export function createWorkProcessor(
               AND claim_token = ${claimToken}::uuid
               AND status = 'claimed'::"work_status"
           `;
+          console.warn(
+            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=retryable_failure duration_ms=${durationMs.toFixed(2)} reason=${err?.message ?? 'handler_error'}`,
+          );
           throw err;
         }
       }
@@ -194,7 +280,10 @@ export function createWorkProcessor(
       WHERE id = ${rowId}::uuid
     `;
 
-    if (current.length === 0 || !current[0]) return;
+    if (current.length === 0 || !current[0]) {
+      // Missing work row: must never silently disguise routing failures
+      throw new Error(`Work row ${rowId} not found on shard ${shard}`);
+    }
     const cur = current[0];
 
     // Stale job or already completed/failed
@@ -207,6 +296,9 @@ export function createWorkProcessor(
       if (token) {
         await job.moveToDelayed(new Date(cur.run_at).getTime(), token);
       }
+      console.log(
+        `[job:execution] job_id=${job.id} row_id=${rowId} generation=${generation} attempts=${cur.execution_attempts} outcome=delayed`,
+      );
       throw new DelayedError();
     }
 
@@ -216,6 +308,9 @@ export function createWorkProcessor(
       cur.claim_expires_at &&
       new Date(cur.claim_expires_at).getTime() >= Date.now()
     ) {
+      console.warn(
+        `[job:execution] job_id=${job.id} row_id=${rowId} generation=${generation} attempts=${cur.execution_attempts} outcome=contention`,
+      );
       throw new ContentionError(`Row ${rowId} under active claim until ${cur.claim_expires_at.toISOString()}`);
     }
 
@@ -231,6 +326,9 @@ export function createWorkProcessor(
           AND execution_attempts >= ${maxAttempts}
           AND (status = 'pending'::"work_status" OR (status = 'claimed'::"work_status" AND claim_expires_at < NOW()))
       `;
+      console.error(
+        `[job:execution] job_id=${job.id} row_id=${rowId} generation=${generation} attempts=${cur.execution_attempts} outcome=exhausted`,
+      );
       throw new Error(`Execution attempts (${cur.execution_attempts}) reached maximum (${maxAttempts})`);
     }
 
@@ -240,13 +338,13 @@ export function createWorkProcessor(
 }
 
 export function createWorkWorker(
-  prisma: PrismaClient,
+  shards: ShardResolver,
   handlers: Record<string, JobHandler> = {},
   options?: WorkerOptions,
 ): Worker {
   const queueName = options?.queueName ?? WORK_QUEUE_NAME;
   const connection = options?.connection ?? createWorkerConnection();
-  const processor = createWorkProcessor(prisma, handlers, {
+  const processor = createWorkProcessor(shards, handlers, {
     leaseMs: options?.leaseMs,
     maxAttempts: options?.maxAttempts,
   });

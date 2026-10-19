@@ -33,6 +33,12 @@ The graduation task brief names Redis for background queueing, caching, and rate
 - **Producer (Enqueue path):** `ioredis` configured with `connectTimeout: 2000`, `commandTimeout: 2000`, `maxRetriesPerRequest: 1`, and `enableOfflineQueue: false`. Wrapped with a strict 2-second timeout boundary. If Valkey is unavailable or slow, the database work row remains committed as `pending` with `available_at = now()`, preventing API request threads from blocking.
 - **Consumer (Worker path):** `ioredis` configured with `maxRetriesPerRequest: null` for BullMQ blocking commands, with `lockDuration: 30000`, `stalledInterval: 15000`, and `maxStalledCount: 2`.
 
+### 3. Shard Routing for Queued Work
+
+- Every job payload in BullMQ carries a validated server-generated shard identifier (`shard: 'A' | 'B'`).
+- The worker dynamically routes claim queries and row inspections to the matching shard primary (`shards[shard].primary`).
+- Missing work rows throw explicit errors to immediately expose routing failures rather than silently disguising them as completed work.
+
 ---
 
 ## What changes in production

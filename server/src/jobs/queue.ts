@@ -1,4 +1,5 @@
 import { Queue, type JobsOptions } from 'bullmq';
+import type { ShardId } from '../db/shard.js';
 import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
 import {
   BULLMQ_JOB_ATTEMPTS,
@@ -13,9 +14,16 @@ export interface EnqueueOptions {
   payload?: any;
   runAt?: Date;
   queue?: Queue;
+  shard: ShardId;
 }
 
-export function createWorkQueue(queueName = WORK_QUEUE_NAME, connection = createProducerConnection()): Queue {
+let sharedProducerConnection: ReturnType<typeof createProducerConnection> | null = null;
+let sharedProducerQueue: Queue | null = null;
+
+export function createWorkQueue(
+  queueName = WORK_QUEUE_NAME,
+  connection = createProducerConnection(),
+): Queue {
   return new Queue(queueName, {
     connection,
     defaultJobOptions: {
@@ -23,6 +31,32 @@ export function createWorkQueue(queueName = WORK_QUEUE_NAME, connection = create
       removeOnFail: false,
     },
   });
+}
+
+/**
+ * Get or create the shared producer queue singleton.
+ * Reuses a single producer queue and connection across requests.
+ */
+export function getProducerQueue(queueName = WORK_QUEUE_NAME): Queue {
+  if (!sharedProducerQueue) {
+    sharedProducerConnection = createProducerConnection();
+    sharedProducerQueue = createWorkQueue(queueName, sharedProducerConnection);
+  }
+  return sharedProducerQueue;
+}
+
+/**
+ * Cleanly close the shared producer queue and connection.
+ */
+export async function closeProducerQueue(): Promise<void> {
+  if (sharedProducerQueue) {
+    await sharedProducerQueue.close();
+    sharedProducerQueue = null;
+  }
+  if (sharedProducerConnection) {
+    await sharedProducerConnection.quit();
+    sharedProducerConnection = null;
+  }
 }
 
 /**
@@ -34,17 +68,23 @@ export function formatJobId(rowId: string, generation: number): string {
 
 /**
  * Enqueue a work row (jobs.md, ADR 0002, ADR 0003):
- * 1. Writes Postgres row first (committed fact).
- * 2. Normal creation sets available_at = run_at + 2 minutes.
- * 3. Enqueues to BullMQ with deterministic jobId and delay.
- * 4. Two-second bounded enqueue timeout: on timeout or Valkey rejection, updates available_at = NOW()
- *    only for matching generation while still pending. Never resets status or overwrites claims.
+ * 1. Validates shard identifier ('A' | 'B').
+ * 2. Writes Postgres row first (committed fact).
+ * 3. Normal creation sets available_at = run_at + 2 minutes.
+ * 4. Enqueues to BullMQ carrying rowId, generation, and shard identifier.
+ * 5. Bounded enqueue: on timeout, Valkey rejection, or queue-construction failure,
+ *    updates available_at = NOW() only for matching generation while still pending.
+ *    Logs errors safely without discarding or hanging.
  */
 export async function enqueueWorkRow(
   prisma: PrismaClient,
   kind: string,
-  options?: EnqueueOptions,
+  options: EnqueueOptions,
 ): Promise<WorkRow> {
+  if (!options?.shard || (options.shard !== 'A' && options.shard !== 'B')) {
+    throw new Error(`Enqueue requires a valid shard ('A' | 'B'), got: '${options?.shard}'`);
+  }
+
   const runAt = options?.runAt ?? new Date();
   const availableAt = new Date(runAt.getTime() + 2 * 60 * 1000);
 
@@ -60,40 +100,50 @@ export async function enqueueWorkRow(
     },
   });
 
-  const queue = options?.queue ?? createWorkQueue();
   const jobId = formatJobId(row.id, row.generation);
   const delay = Math.max(0, runAt.getTime() - Date.now());
 
-  const jobOpts: JobsOptions = {
-    jobId,
-    delay,
-    attempts: BULLMQ_JOB_ATTEMPTS,
-    backoff: {
-      type: 'exponential',
-      delay: WORK_BACKOFF_DELAY_MS,
-    },
-  };
-
   let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`Valkey enqueue timed out after ${PRODUCER_ENQUEUE_TIMEOUT_MS}ms`));
-    }, PRODUCER_ENQUEUE_TIMEOUT_MS);
-    timer.unref?.();
-  });
-
-  const addPromise = queue.add(kind, { rowId: row.id, generation: row.generation }, jobOpts);
-
-  // Catch late settlement so an unhandled rejection doesn't crash the process
-  addPromise.catch((err) => {
-    // Late rejection logged; Postgres row remains pending with available_at=NOW()
-  });
-
   try {
+    const queue = options.queue ?? getProducerQueue();
+
+    const jobOpts: JobsOptions = {
+      jobId,
+      delay,
+      attempts: BULLMQ_JOB_ATTEMPTS,
+      backoff: {
+        type: 'exponential',
+        delay: WORK_BACKOFF_DELAY_MS,
+      },
+    };
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Valkey enqueue timed out after ${PRODUCER_ENQUEUE_TIMEOUT_MS}ms`));
+      }, PRODUCER_ENQUEUE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+
+    const addPromise = queue.add(
+      kind,
+      { rowId: row.id, generation: row.generation, shard: options.shard },
+      jobOpts,
+    );
+
+    // Safely log late settlement so an unhandled rejection doesn't crash the process
+    addPromise.catch((err) => {
+      console.warn(
+        `[enqueue:late_rejection] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${err?.message ?? err}`,
+      );
+    });
+
     await Promise.race([addPromise, timeoutPromise]);
-  } catch (err) {
-    // Enqueue timed out or rejected.
-    // Update available_at only for the matching generation while still pending (Implementation detail 1).
+  } catch (err: any) {
+    console.warn(
+      `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${err?.message ?? err}`,
+    );
+    // Enqueue timed out, rejected, or queue-construction failed.
+    // Update available_at only for the matching generation while still pending.
     await prisma.$executeRaw`
       UPDATE work_rows
       SET available_at = NOW(), updated_at = NOW()
