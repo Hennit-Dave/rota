@@ -19,9 +19,9 @@ export type PoolConfig = {
   primaryMax: number;
 };
 
-export function createShardClients(shard: ShardId, pool: PoolConfig): ShardClients {
+export function createShardClients(shard: ShardId, pool: PoolConfig, connectionStringOverride?: string): ShardClients {
   const varName = POOLED_VAR[shard];
-  const connectionString = process.env[varName];
+  const connectionString = connectionStringOverride ?? process.env[varName];
   if (!connectionString) throw new Error(`${varName} is not set.`);
   const adapter = new PrismaPg({ connectionString, max: pool.primaryMax });
   return { primary: new PrismaClient({ adapter }) };
@@ -29,8 +29,35 @@ export function createShardClients(shard: ShardId, pool: PoolConfig): ShardClien
 
 export type Shards = Record<ShardId, ShardClients>;
 
-export function createShards(pool: PoolConfig): Shards {
-  return { A: createShardClients('A', pool), B: createShardClients('B', pool) };
+export function createShards(pool: PoolConfig, overrides?: Partial<Record<ShardId, string>>): Shards {
+  return {
+    A: createShardClients('A', pool, overrides?.A),
+    B: createShardClients('B', pool, overrides?.B),
+  };
+}
+
+/**
+ * Creates shards strictly from TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL.
+ * Enforces TEST_DATABASE_ALLOWED=true and never falls back to ordinary application shard URLs.
+ */
+export function createTestShards(pool: PoolConfig): Shards {
+  if (process.env.TEST_DATABASE_ALLOWED !== 'true') {
+    throw new Error(
+      'Database tests and proofs require explicit guard: TEST_DATABASE_ALLOWED=true. Aborting to protect database rows.',
+    );
+  }
+
+  const testShardA = process.env.TEST_SHARD_A_DATABASE_URL;
+  const testShardB = process.env.TEST_SHARD_B_DATABASE_URL;
+
+  if (!testShardA || !testShardB) {
+    throw new Error(
+      'Database tests and proofs require TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL to be set explicitly. ' +
+      'Ordinary application shard URLs (SHARD_A_DATABASE_URL, SHARD_B_DATABASE_URL) will not be used as fallback.',
+    );
+  }
+
+  return createShards(pool, { A: testShardA, B: testShardB });
 }
 
 /**
