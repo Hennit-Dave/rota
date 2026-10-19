@@ -13,6 +13,7 @@ import {
 } from './config.js';
 import { createWorkerConnection } from './connection.js';
 import { WORK_QUEUE_NAME } from './queue.js';
+import { sanitizeError } from './redact.js';
 
 export class ContentionError extends Error {
   constructor(message: string) {
@@ -165,7 +166,7 @@ export function createWorkProcessor(
           await prisma.$executeRaw`
             UPDATE work_rows
             SET status = 'failed'::"work_status",
-                failure_reason = ${err.message},
+                failure_reason = ${sanitizeError(err)},
                 updated_at = NOW()
             WHERE id = ${row.id}::uuid
               AND generation = ${generation}
@@ -227,11 +228,12 @@ export function createWorkProcessor(
         // Handler failure
         const durationMs = performance.now() - startTime;
         if (row.executionAttempts >= maxAttempts) {
+          const sanitizedErr = sanitizeError(err);
           // Failure on attempt ceiling marks row failed; do not release claim
           await prisma.$executeRaw`
             UPDATE work_rows
             SET status = 'failed'::"work_status",
-                failure_reason = ${err?.message ?? 'attempt_budget_exhausted'},
+                failure_reason = ${sanitizedErr || 'attempt_budget_exhausted'},
                 updated_at = NOW()
             WHERE id = ${row.id}::uuid
               AND generation = ${generation}
@@ -239,10 +241,11 @@ export function createWorkProcessor(
               AND status = 'claimed'::"work_status"
           `;
           console.error(
-            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${err?.message ?? 'attempt_budget_exhausted'}`,
+            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'attempt_budget_exhausted'}`,
           );
           throw err;
         } else {
+          const sanitizedErr = sanitizeError(err);
           // Retryable failure: release claim and rethrow for BullMQ exponential backoff
           await prisma.$executeRaw`
             UPDATE work_rows
@@ -256,7 +259,7 @@ export function createWorkProcessor(
               AND status = 'claimed'::"work_status"
           `;
           console.warn(
-            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=retryable_failure duration_ms=${durationMs.toFixed(2)} reason=${err?.message ?? 'handler_error'}`,
+            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=retryable_failure duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'handler_error'}`,
           );
           throw err;
         }

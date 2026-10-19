@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { verifyNoEviction } from './connection.js';
 import { enqueueWorkRow, formatJobId } from './queue.js';
+import { redactSensitive, sanitizeError } from './redact.js';
 import { createWorkProcessor, resolvePrismaClient } from './worker.js';
 
 test('verifyNoEviction: verifies noeviction policy and rejects other policies', async () => {
@@ -95,4 +96,50 @@ test('resolvePrismaClient: correctly routes to shard A and B primaries', () => {
   const mockSinglePrisma: any = { $queryRaw: async () => [] };
   assert.equal(resolvePrismaClient(mockSinglePrisma, 'A'), mockSinglePrisma);
   assert.equal(resolvePrismaClient(mockSinglePrisma, 'B'), mockSinglePrisma);
+});
+
+test('redactSensitive & sanitizeError: thoroughly redacts synthetic credential-bearing errors', () => {
+
+  // Synthetic error 1: PostgreSQL URL with username and password
+  const pgErr = new Error(
+    'Connection failed to postgresql://rota_user:super_secret_pw123@ep-cool-shard.us-east-2.aws.neon.tech:5432/neondb?sslmode=require',
+  );
+  const sanitizedPg = sanitizeError(pgErr);
+  assert.ok(!sanitizedPg.includes('super_secret_pw123'), 'Password must be redacted');
+  assert.ok(!sanitizedPg.includes('rota_user'), 'Username must be redacted');
+  assert.ok(sanitizedPg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'Redacted marker must be present');
+
+  // Synthetic error 2: Valkey TLS connection string with secret token
+  const valkeySecret = 'valkey_secret_password_token_123';
+  const valkeyErr = new Error(
+    `Valkey command timeout on rediss://default:${valkeySecret}@rota-valkey-prj.example.com:25345`,
+  );
+  const sanitizedValkey = sanitizeError(valkeyErr);
+  assert.ok(!sanitizedValkey.includes(valkeySecret), 'Valkey token must be redacted');
+  assert.ok(sanitizedValkey.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'Redacted marker must be present');
+
+  // Synthetic error 3: Stripe secret key
+  const stripePrefix = ['sk', 'test'].join('_');
+  const stripeSecret = `${stripePrefix}_syntheticStripeKeySample12345`;
+  const stripeErr = new Error(`Stripe authentication failed for key ${stripeSecret}`);
+  const sanitizedStripe = sanitizeError(stripeErr);
+  assert.ok(!sanitizedStripe.includes(stripeSecret), 'Stripe key must be redacted');
+  assert.ok(sanitizedStripe.includes('[REDACTED_SECRET]'), 'Redacted marker must be present');
+
+  // Synthetic error 4: Resend API key
+  const resendPrefix = ['re', 'sampleApiKeyPrefix'].join('_');
+  const resendSecret = `${resendPrefix}_123456789abcdef`;
+  const resendErr = new Error(`Resend 401 unauthorized: key ${resendSecret} was invalid`);
+  const sanitizedResend = sanitizeError(resendErr);
+  assert.ok(!sanitizedResend.includes(resendSecret), 'Resend key must be redacted');
+  assert.ok(sanitizedResend.includes('[REDACTED_SECRET]'), 'Redacted marker must be present');
+
+  // Synthetic error 5: Bearer token and password query param
+  const authErr = new Error(
+    'Failed to authenticate: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig with query ?password=myHiddenPass123&token=secretTok',
+  );
+  const sanitizedAuth = sanitizeError(authErr);
+  assert.ok(!sanitizedAuth.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'), 'Bearer token must be redacted');
+  assert.ok(!sanitizedAuth.includes('myHiddenPass123'), 'Query password must be redacted');
+  assert.ok(!sanitizedAuth.includes('secretTok'), 'Query token must be redacted');
 });

@@ -19,9 +19,9 @@ export type PoolConfig = {
   primaryMax: number;
 };
 
-export function createShardClients(shard: ShardId, pool: PoolConfig): ShardClients {
+export function createShardClients(shard: ShardId, pool: PoolConfig, connectionStringOverride?: string): ShardClients {
   const varName = POOLED_VAR[shard];
-  const connectionString = process.env[varName];
+  const connectionString = connectionStringOverride ?? process.env[varName];
   if (!connectionString) throw new Error(`${varName} is not set.`);
   const adapter = new PrismaPg({ connectionString, max: pool.primaryMax });
   return { primary: new PrismaClient({ adapter }) };
@@ -29,8 +29,11 @@ export function createShardClients(shard: ShardId, pool: PoolConfig): ShardClien
 
 export type Shards = Record<ShardId, ShardClients>;
 
-export function createShards(pool: PoolConfig): Shards {
-  return { A: createShardClients('A', pool), B: createShardClients('B', pool) };
+export function createShards(pool: PoolConfig, overrides?: Partial<Record<ShardId, string>>): Shards {
+  return {
+    A: createShardClients('A', pool, overrides?.A),
+    B: createShardClients('B', pool, overrides?.B),
+  };
 }
 
 /**

@@ -4,6 +4,7 @@ import { after, before, test } from 'node:test';
 import { DelayedError, Queue, type Job } from 'bullmq';
 import { createShards, type Shards } from '../db/clients.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { createProducerConnection, createWorkerConnection } from './connection.js';
 import {
   closeProducerQueue,
   createWorkQueue,
@@ -15,6 +16,7 @@ import {
 import {
   ContentionError,
   createWorkProcessor,
+  createWorkWorker,
   renewClaimLease,
 } from './worker.js';
 
@@ -31,11 +33,17 @@ before(async () => {
     );
   }
 
-  if (!process.env.SHARD_A_DATABASE_URL || !process.env.SHARD_B_DATABASE_URL) {
-    throw new Error('SHARD_A_DATABASE_URL and SHARD_B_DATABASE_URL must be configured for integration tests.');
+  const testShardA = process.env.TEST_SHARD_A_DATABASE_URL;
+  const testShardB = process.env.TEST_SHARD_B_DATABASE_URL;
+
+  if (!testShardA || !testShardB) {
+    throw new Error(
+      'Database integration tests require TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL to be set explicitly. ' +
+      'Ordinary application shard URLs (SHARD_A_DATABASE_URL, SHARD_B_DATABASE_URL) will not be used as fallback.',
+    );
   }
 
-  shards = createShards({ primaryMax: 3 });
+  shards = createShards({ primaryMax: 3 }, { A: testShardA, B: testShardB });
   prismaA = shards.A.primary;
   prismaB = shards.B.primary;
   disconnectShards = async () => {
@@ -155,11 +163,11 @@ test('Item 2: routes queued work to correct primary on Shard A and Shard B', asy
   }
 });
 
-// --- ITEM 5: Actual Simultaneous Claim Test ---
-test('Item 5: simultaneous concurrent claims - exactly one wins, loser contends without attempt penalty', async () => {
+// --- ITEM 3: Simultaneous Claim Race Test (Reviewer Point 3) ---
+test('Item 3: simultaneous claim race - launch both attempts before either completes, assert 1 winner and unchanged attempts for loser', async () => {
   const row = await prismaA.workRow.create({
     data: {
-      kind: 'test-simultaneous',
+      kind: 'test-simultaneous-race',
       status: 'pending',
       generation: 1,
       executionAttempts: 0,
@@ -170,224 +178,241 @@ test('Item 5: simultaneous concurrent claims - exactly one wins, loser contends 
 
   try {
     let executionCount = 0;
-    let job1Entered = false;
-    let releaseJob1: () => void;
-    const job1Barrier = new Promise<void>((resolve) => {
-      releaseJob1 = resolve;
-    });
-
     const processor = createWorkProcessor(shards, {
-      'test-simultaneous': async () => {
+      'test-simultaneous-race': async () => {
         executionCount++;
-        job1Entered = true;
-        await job1Barrier;
+        // Keep handler running briefly so both promises are concurrently active in flight
+        await new Promise((r) => setTimeout(r, 100));
       },
     });
 
-    const job1: any = { id: 'sim-job-1', data: { rowId: row.id, generation: 1, shard: 'A' } };
-    const job2: any = { id: 'sim-job-2', data: { rowId: row.id, generation: 1, shard: 'A' } };
+    const job1: any = { id: 'race-job-1', data: { rowId: row.id, generation: 1, shard: 'A' } };
+    const job2: any = { id: 'race-job-2', data: { rowId: row.id, generation: 1, shard: 'A' } };
 
-    // Launch job 1
+    // Launch BOTH before either has completed its claim or finished
     const p1 = processor(job1, 'tok1');
+    const p2 = processor(job2, 'tok2');
 
-    // Wait until job 1 has claimed and entered its handler
-    while (!job1Entered) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    const results = await Promise.allSettled([p1, p2]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
 
-    // Now job 1 holds active lease. Job 2 attempts concurrent claim on the same row:
-    await assert.rejects(
-      () => processor(job2, 'tok2'),
-      (err: any) => err instanceof ContentionError,
-      'Concurrent attempt during active claim must throw ContentionError',
+    assert.equal(fulfilled.length, 1, 'Exactly one claim attempt must win');
+    assert.equal(rejected.length, 1, 'Exactly one claim attempt must lose');
+    const loser = rejected[0];
+    assert.ok(loser, 'Loser result must be present');
+    assert.ok(
+      loser.reason instanceof ContentionError,
+      `Loser must throw ContentionError, got: ${loser.reason}`,
     );
-
-    // Release job 1 to complete
-    releaseJob1!();
-    await p1;
 
     assert.equal(executionCount, 1, 'Handler must execute exactly once');
 
     const fresh = await prismaA.workRow.findUniqueOrThrow({ where: { id: row.id } });
     assert.equal(fresh.status, 'done');
-    assert.equal(fresh.executionAttempts, 1, 'Contention must not increment execution_attempts');
+    assert.equal(fresh.executionAttempts, 1, 'Contention must not increment execution_attempts for the loser');
   } finally {
     await cleanupRow(prismaA, row.id);
   }
 });
 
-// --- ITEM 5: Timeout / Late-Settlement Tests Showing Claimed/Done/Failed Rows Untouched ---
-test('Item 5: enqueue timeout fallback leaves claimed, done, and failed rows untouched', async () => {
-  const pastRunAt = new Date(Date.now() - 60_000);
-  const futureAvailableAt = new Date(Date.now() + 120_000);
+// --- ITEM 2: Producer Lifecycle & enqueueWorkRow Safety Tests (Reviewer Point 2) ---
+test('Item 2A: producer queue default path lifecycle - reuse and shutdown', async () => {
+  await closeProducerQueue();
 
-  // 1. Claimed row
-  const claimedRow = await prismaA.workRow.create({
-    data: {
-      kind: 'test-untouched-claimed',
-      status: 'claimed',
-      claimToken: randomUUID(),
-      claimExpiresAt: new Date(Date.now() + 30_000),
-      generation: 1,
-      executionAttempts: 1,
-      runAt: pastRunAt,
-      availableAt: futureAvailableAt,
-    },
-  });
-
-  // 2. Done row
-  const doneRow = await prismaA.workRow.create({
-    data: {
-      kind: 'test-untouched-done',
-      status: 'done',
-      generation: 1,
-      executionAttempts: 1,
-      runAt: pastRunAt,
-      availableAt: futureAvailableAt,
-    },
-  });
-
-  // 3. Failed row
-  const failedRow = await prismaA.workRow.create({
-    data: {
-      kind: 'test-untouched-failed',
-      status: 'failed',
-      failureReason: 'simulated_failure',
-      generation: 1,
-      executionAttempts: 5,
-      runAt: pastRunAt,
-      availableAt: futureAvailableAt,
-    },
-  });
-
+  // 1. Enqueue using the default producer queue (no queue passed in options)
+  const row1 = await enqueueWorkRow(prismaA, 'test-producer-default', { shard: 'A' });
   try {
-    // Simulate enqueue fallback query on all three rows
-    for (const testRow of [claimedRow, doneRow, failedRow]) {
-      const updated = await prismaA.$executeRaw`
-        UPDATE work_rows
-        SET available_at = NOW(), updated_at = NOW()
-        WHERE id = ${testRow.id}::uuid
-          AND generation = ${testRow.generation}
-          AND status = 'pending'
-      `;
-      assert.equal(updated, 0, `Fallback update must affect 0 rows when status is ${testRow.status}`);
+    const q1 = getProducerQueue();
+    assert.ok(q1, 'getProducerQueue() should instantiate default queue');
+
+    // 2. Second enqueue reuses the exact same queue instance
+    const row2 = await enqueueWorkRow(prismaA, 'test-producer-default', { shard: 'A' });
+    try {
+      const q2 = getProducerQueue();
+      assert.equal(q1, q2, 'Producer queue must be reused as singleton');
+
+      const fresh1 = await prismaA.workRow.findUniqueOrThrow({ where: { id: row1.id } });
+      const fresh2 = await prismaA.workRow.findUniqueOrThrow({ where: { id: row2.id } });
+      assert.equal(fresh1.status, 'pending');
+      assert.equal(fresh2.status, 'pending');
+    } finally {
+      await cleanupRow(prismaA, row2.id);
     }
-
-    // Verify all rows remained completely untouched
-    const freshClaimed = await prismaA.workRow.findUniqueOrThrow({ where: { id: claimedRow.id } });
-    assert.equal(freshClaimed.status, 'claimed');
-    assert.equal(freshClaimed.availableAt.getTime(), futureAvailableAt.getTime());
-
-    const freshDone = await prismaA.workRow.findUniqueOrThrow({ where: { id: doneRow.id } });
-    assert.equal(freshDone.status, 'done');
-    assert.equal(freshDone.availableAt.getTime(), futureAvailableAt.getTime());
-
-    const freshFailed = await prismaA.workRow.findUniqueOrThrow({ where: { id: failedRow.id } });
-    assert.equal(freshFailed.status, 'failed');
-    assert.equal(freshFailed.availableAt.getTime(), futureAvailableAt.getTime());
   } finally {
-    await cleanupRow(prismaA, claimedRow.id);
-    await cleanupRow(prismaA, doneRow.id);
-    await cleanupRow(prismaA, failedRow.id);
+    await cleanupRow(prismaA, row1.id);
+    await closeProducerQueue();
   }
 });
 
-// --- ITEM 5: BullMQ Terminal Failed-Set Proof ---
-test('Item 5: attempt ceiling failure marks row failed in Postgres and reaches BullMQ terminal failed set', async () => {
+test('Item 2B: enqueueWorkRow itself for timeout/late-settlement safety - leaves claimed, done, and failed rows untouched', async () => {
+  // Case A: Row transitions to claimed while queue.add hangs
+  const slowQueueClaimed: any = {
+    add: async (_name: string, payload: any) => {
+      // Simulate concurrent worker claiming the row while enqueue is hanging
+      await prismaA.workRow.update({
+        where: { id: payload.rowId },
+        data: {
+          status: 'claimed',
+          claimToken: randomUUID(),
+          claimExpiresAt: new Date(Date.now() + 30_000),
+        },
+      });
+      // Sleep past the 2000ms boundary so enqueueWorkRow times out
+      await new Promise((r) => setTimeout(r, 2200));
+    },
+  };
+
+  const rowA = await enqueueWorkRow(prismaA, 'test-late-claimed', {
+    shard: 'A',
+    queue: slowQueueClaimed,
+  });
+
+  try {
+    // enqueueWorkRow caught the timeout and ran its internal fallback SQL
+    const freshA = await prismaA.workRow.findUniqueOrThrow({ where: { id: rowA.id } });
+    assert.equal(freshA.status, 'claimed', 'Status must remain claimed');
+    assert.ok(
+      freshA.availableAt.getTime() > Date.now() + 60_000,
+      'available_at must remain untouched for claimed row',
+    );
+  } finally {
+    await cleanupRow(prismaA, rowA.id);
+  }
+
+  // Case B: Row transitions to done while queue.add hangs
+  const slowQueueDone: any = {
+    add: async (_name: string, payload: any) => {
+      await prismaA.workRow.update({
+        where: { id: payload.rowId },
+        data: { status: 'done' },
+      });
+      await new Promise((r) => setTimeout(r, 2200));
+    },
+  };
+
+  const rowB = await enqueueWorkRow(prismaA, 'test-late-done', {
+    shard: 'A',
+    queue: slowQueueDone,
+  });
+
+  try {
+    const freshB = await prismaA.workRow.findUniqueOrThrow({ where: { id: rowB.id } });
+    assert.equal(freshB.status, 'done', 'Status must remain done');
+    assert.ok(
+      freshB.availableAt.getTime() > Date.now() + 60_000,
+      'available_at must remain untouched for done row',
+    );
+  } finally {
+    await cleanupRow(prismaA, rowB.id);
+  }
+
+  // Case C: Row transitions to failed while queue.add hangs
+  const slowQueueFailed: any = {
+    add: async (_name: string, payload: any) => {
+      await prismaA.workRow.update({
+        where: { id: payload.rowId },
+        data: { status: 'failed', failureReason: 'simulated_terminal_failure' },
+      });
+      await new Promise((r) => setTimeout(r, 2200));
+    },
+  };
+
+  const rowC = await enqueueWorkRow(prismaA, 'test-late-failed', {
+    shard: 'A',
+    queue: slowQueueFailed,
+  });
+
+  try {
+    const freshC = await prismaA.workRow.findUniqueOrThrow({ where: { id: rowC.id } });
+    assert.equal(freshC.status, 'failed', 'Status must remain failed');
+    assert.ok(
+      freshC.availableAt.getTime() > Date.now() + 60_000,
+      'available_at must remain untouched for failed row',
+    );
+  } finally {
+    await cleanupRow(prismaA, rowC.id);
+  }
+});
+
+// --- ITEM 1: Real BullMQ Worker Terminal Failed Set Proof (Reviewer Point 1) ---
+test('Item 1: attempt ceiling failure - real BullMQ worker moves job to terminal failed set and marks Postgres row failed', async () => {
+  const testQueueName = `test-terminal-fail-${randomUUID()}`;
+  const testQueueConn = createProducerConnection();
+  const testWorkerConn = createWorkerConnection();
+  const testQueue = createWorkQueue(testQueueName, testQueueConn);
+
   const row = await prismaA.workRow.create({
     data: {
-      kind: 'test-terminal-fail',
+      kind: 'test-real-terminal-fail',
       status: 'pending',
       generation: 1,
-      executionAttempts: 4, // 4 attempts already used; attempt 5 will reach ceiling
+      executionAttempts: 0,
       runAt: new Date(Date.now() - 1000),
       availableAt: new Date(),
     },
   });
 
+  let worker: ReturnType<typeof createWorkWorker> | null = null;
+
   try {
-    const processor = createWorkProcessor(
-      shards,
-      {
-        'test-terminal-fail': async () => {
-          throw new Error('simulated-permanent-failure');
+    const failedPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timed out waiting for real BullMQ terminal failure'));
+      }, 15_000);
+      timeout.unref?.();
+
+      worker = createWorkWorker(
+        shards,
+        {
+          'test-real-terminal-fail': async () => {
+            throw new Error('permanent-terminal-failure');
+          },
         },
-      },
-      { maxAttempts: 5 },
-    );
-
-    const mockJob: any = {
-      id: `work-${row.id}-1`,
-      data: { rowId: row.id, generation: 1, shard: 'A' },
-    };
-
-    // Attempt 5 fails
-    await assert.rejects(
-      () => processor(mockJob),
-      /simulated-permanent-failure/,
-    );
-
-    // Postgres row must be marked failed
-    const fresh = await prismaA.workRow.findUniqueOrThrow({ where: { id: row.id } });
-    assert.equal(fresh.status, 'failed');
-    assert.equal(fresh.executionAttempts, 5);
-    assert.equal(fresh.failureReason, 'simulated-permanent-failure');
-
-    // Attempt ceiling on unowned pending row (e.g. from crash without clean handler failure)
-    const crashedRow = await prismaA.workRow.create({
-      data: {
-        kind: 'test-terminal-fail',
-        status: 'pending',
-        generation: 1,
-        executionAttempts: 5, // already exhausted
-        runAt: new Date(Date.now() - 1000),
-        availableAt: new Date(),
-      },
-    });
-
-    try {
-      const crashedJob: any = {
-        id: `work-${crashedRow.id}-1`,
-        data: { rowId: crashedRow.id, generation: 1, shard: 'A' },
-      };
-
-      await assert.rejects(
-        () => processor(crashedJob),
-        /Execution attempts \(5\) reached maximum \(5\)/,
+        {
+          queueName: testQueueName,
+          connection: testWorkerConn,
+          maxAttempts: 1, // terminal ceiling reached on 1st attempt
+          leaseMs: 10_000,
+        },
       );
 
-      const freshCrashed = await prismaA.workRow.findUniqueOrThrow({ where: { id: crashedRow.id } });
-      assert.equal(freshCrashed.status, 'failed');
-      assert.equal(freshCrashed.failureReason, 'attempt_budget_exhausted');
-    } finally {
-      await cleanupRow(prismaA, crashedRow.id);
-    }
-  } finally {
-    await cleanupRow(prismaA, row.id);
-  }
-});
+      worker.on('failed', (job) => {
+        if (job?.data?.rowId === row.id) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
 
-// --- ITEM 3: Producer Queue Lifecycle & Default Path ---
-test('Item 3: producer queue default path lifecycle and fallback handling', async () => {
-  const mockQueue: any = {
-    add: async () => {
-      // Simulate timeout
-      await new Promise((r) => setTimeout(r, 2500));
-    },
-  };
+    // Enqueue directly to the test queue with attempts: 1 to ensure BullMQ treats attempt 1 as terminal
+    await testQueue.add(
+      'test-real-terminal-fail',
+      { rowId: row.id, generation: 1, shard: 'A' },
+      { jobId: formatJobId(row.id, 1), attempts: 1 },
+    );
 
-  const row = await enqueueWorkRow(prismaA, 'test-default-producer', {
-    shard: 'A',
-    queue: mockQueue,
-  });
+    await failedPromise;
 
-  try {
-    // Row was created in Postgres first
+    // 1. Inspect actual BullMQ terminal failed set
+    const failedJobs = await testQueue.getFailed();
+    const bullmqJob = failedJobs.find((j) => j.id === formatJobId(row.id, 1));
+    assert.ok(bullmqJob, 'Job must be present in BullMQ terminal failed set');
+    assert.equal(bullmqJob.attemptsMade, 1);
+    assert.match(bullmqJob.failedReason ?? '', /permanent-terminal-failure/);
+
+    // 2. Inspect Postgres row state
     const fresh = await prismaA.workRow.findUniqueOrThrow({ where: { id: row.id } });
-    assert.equal(fresh.status, 'pending');
-    // Because timeout exceeded 2000ms, available_at was updated to NOW()
-    assert.ok(fresh.availableAt.getTime() <= Date.now() + 500);
+    assert.equal(fresh.status, 'failed', 'Postgres row must be marked failed');
+    assert.equal(fresh.executionAttempts, 1);
+    assert.match(fresh.failureReason ?? '', /permanent-terminal-failure/);
   } finally {
+    if (worker) {
+      await (worker as any).close();
+    }
+    await testQueue.close();
+    await testQueueConn.quit();
+    await testWorkerConn.quit();
     await cleanupRow(prismaA, row.id);
   }
 });

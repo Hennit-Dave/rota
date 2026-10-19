@@ -8,6 +8,8 @@ import {
 } from './config.js';
 import { createProducerConnection } from './connection.js';
 
+import { sanitizeError } from './redact.js';
+
 export const WORK_QUEUE_NAME = 'work';
 
 export interface EnqueueOptions {
@@ -133,14 +135,14 @@ export async function enqueueWorkRow(
     // Safely log late settlement so an unhandled rejection doesn't crash the process
     addPromise.catch((err) => {
       console.warn(
-        `[enqueue:late_rejection] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${err?.message ?? err}`,
+        `[enqueue:late_rejection] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${sanitizeError(err)}`,
       );
     });
 
     await Promise.race([addPromise, timeoutPromise]);
   } catch (err: any) {
     console.warn(
-      `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${err?.message ?? err}`,
+      `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${sanitizeError(err)}`,
     );
     // Enqueue timed out, rejected, or queue-construction failed.
     // Update available_at only for the matching generation while still pending.
