@@ -1,0 +1,52 @@
+// Rota schema. The same schema and migrations are applied to BOTH shards (A, then B).
+// The connection URL is chosen in prisma.config.ts (direct, unpooled URL for migrations).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkStatus {
+  pending
+  claimed
+  done
+  failed
+
+  @@map("work_status")
+}
+
+// Durable work rows (jobs.md). Postgres is the record; the Valkey queue is only a delivery mechanism.
+// origin_request_id and payment_operation_id are deliberately omitted for now (ADR 0002).
+model WorkRow {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind              String
+  status            WorkStatus @default(pending)
+  generation        Int        @default(1)
+  executionAttempts Int        @default(0) @map("execution_attempts")
+  // Application code sets these explicitly (ADR 0002); the defaults are only a fallback.
+  // Normal creation: available_at = run_at + 2 minutes. Enqueue failure: available_at = now().
+  // The worker enforces run_at (claims need run_at <= now()); available_at is the sweep eligibility time.
+  runAt             DateTime   @default(now()) @map("run_at") @db.Timestamptz(6)
+  availableAt       DateTime   @default(now()) @map("available_at") @db.Timestamptz(6)
+  claimToken        String?    @map("claim_token") @db.Uuid
+  claimExpiresAt    DateTime?  @map("claim_expires_at") @db.Timestamptz(6)
+  failureReason     String?    @map("failure_reason")
+
+  // Email only (jobs.md, External effects).
+  payload           Json?
+  firstAttemptAt    DateTime?  @map("first_attempt_at") @db.Timestamptz(6)
+  sentAt            DateTime?  @map("sent_at") @db.Timestamptz(6)
+  providerMessageId String?    @map("provider_message_id")
+
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Timed sweep: pending rows past available_at; claimed rows with an expired lease.
+  @@index([status, availableAt], map: "work_rows_status_available_at_idx")
+  @@index([status, claimExpiresAt], map: "work_rows_status_claim_expires_at_idx")
+  @@map("work_rows")
+}

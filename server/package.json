@@ -13,14 +13,32 @@
     "dev:api": "tsx watch --env-file-if-exists=../.env src/api/main.ts",
     "dev:worker": "tsx watch --env-file-if-exists=../.env src/worker/main.ts",
     "start:api": "node --env-file-if-exists=../.env dist/api/main.js",
-    "start:worker": "node --env-file-if-exists=../.env dist/worker/main.js"
+    "start:worker": "node --env-file-if-exists=../.env dist/worker/main.js",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "db:deploy:a": "SHARD=a node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate deploy",
+    "db:deploy:b": "SHARD=b node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate deploy",
+    "db:status:a": "SHARD=a node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate status",
+    "db:status:b": "SHARD=b node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate status",
+    "db:parity": "tsx --env-file-if-exists=../.env src/db/parity.ts",
+    "db:generate": "SHARD=a SHARD_A_DIRECT_URL=postgresql://unused:unused@localhost:5432/unused node ./node_modules/prisma/build/index.js generate",
+    "db:check-pooled": "tsx --env-file-if-exists=../.env src/db/check-pooled.ts",
+    "prebuild": "npm run db:generate",
+    "pretypecheck": "npm run db:generate",
+    "pretest": "npm run db:generate",
+    "predev:api": "npm run db:generate",
+    "predev:worker": "npm run db:generate"
   },
   "dependencies": {
-    "express": "5.3.0"
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "express": "5.3.0",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "prisma": "7.10.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3"
   }
