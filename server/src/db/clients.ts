@@ -37,6 +37,30 @@ export function createShards(pool: PoolConfig, overrides?: Partial<Record<ShardI
 }
 
 /**
+ * Creates shards strictly from TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL.
+ * Enforces TEST_DATABASE_ALLOWED=true and never falls back to ordinary application shard URLs.
+ */
+export function createTestShards(pool: PoolConfig): Shards {
+  if (process.env.TEST_DATABASE_ALLOWED !== 'true') {
+    throw new Error(
+      'Database tests and proofs require explicit guard: TEST_DATABASE_ALLOWED=true. Aborting to protect database rows.',
+    );
+  }
+
+  const testShardA = process.env.TEST_SHARD_A_DATABASE_URL;
+  const testShardB = process.env.TEST_SHARD_B_DATABASE_URL;
+
+  if (!testShardA || !testShardB) {
+    throw new Error(
+      'Database tests and proofs require TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL to be set explicitly. ' +
+      'Ordinary application shard URLs (SHARD_A_DATABASE_URL, SHARD_B_DATABASE_URL) will not be used as fallback.',
+    );
+  }
+
+  return createShards(pool, { A: testShardA, B: testShardB });
+}
+
+/**
  * The only way to reach a team's shard. Never import a shard's client directly (data.md).
  */
 export function getShard(shards: Shards, teamId: string): ShardClients {

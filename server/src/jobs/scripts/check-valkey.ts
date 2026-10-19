@@ -1,4 +1,5 @@
 import { createProducerConnection, verifyNoEviction } from '../connection.js';
+import { formatCheckValkeyError } from '../redact.js';
 
 console.log('Checking Valkey connection and noeviction policy...');
 
@@ -16,7 +17,7 @@ try {
   const versionMatch = info.match(/valkey_version:([^\r\n]+)/) || info.match(/redis_version:([^\r\n]+)/);
   console.log(`Server version: ${versionMatch ? versionMatch[1] : 'unknown'}`);
 } catch (err: any) {
-  console.error(`Valkey check failed: ${err.message}`);
+  console.error(formatCheckValkeyError(err));
   process.exit(1);
 } finally {
   await redis.quit();

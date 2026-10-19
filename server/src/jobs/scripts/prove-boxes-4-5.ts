@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { createShards } from '../../db/clients.js';
+import { createTestShards } from '../../db/clients.js';
 import { createProducerConnection, createWorkerConnection } from '../connection.js';
 import { createWorkQueue, enqueueWorkRow } from '../queue.js';
 import { createWorkWorker } from '../worker.js';
 
 console.log('--- Proving Box 4 (Queue.add consumed by Worker) & Box 5 (Delayed job & retry) ---');
 
-const shards = createShards({ primaryMax: 3 });
+const shards = createTestShards({ primaryMax: 3 });
 const prisma = shards.A.primary;
 const queueConnection = createProducerConnection();
 const workerConnection = createWorkerConnection();

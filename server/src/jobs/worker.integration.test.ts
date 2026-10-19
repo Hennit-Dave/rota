@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { DelayedError, Queue, type Job } from 'bullmq';
-import { createShards, type Shards } from '../db/clients.js';
+import { createTestShards, type Shards } from '../db/clients.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { createProducerConnection, createWorkerConnection } from './connection.js';
 import {
@@ -26,24 +26,7 @@ let prismaB: PrismaClient;
 let disconnectShards: () => Promise<void>;
 
 before(async () => {
-  // Database guard: prevent accidental execution on production/non-test environments
-  if (process.env.TEST_DATABASE_ALLOWED !== 'true') {
-    throw new Error(
-      'Database integration tests require explicit guard: TEST_DATABASE_ALLOWED=true. Aborting to protect database rows.',
-    );
-  }
-
-  const testShardA = process.env.TEST_SHARD_A_DATABASE_URL;
-  const testShardB = process.env.TEST_SHARD_B_DATABASE_URL;
-
-  if (!testShardA || !testShardB) {
-    throw new Error(
-      'Database integration tests require TEST_SHARD_A_DATABASE_URL and TEST_SHARD_B_DATABASE_URL to be set explicitly. ' +
-      'Ordinary application shard URLs (SHARD_A_DATABASE_URL, SHARD_B_DATABASE_URL) will not be used as fallback.',
-    );
-  }
-
-  shards = createShards({ primaryMax: 3 }, { A: testShardA, B: testShardB });
+  shards = createTestShards({ primaryMax: 3 });
   prismaA = shards.A.primary;
   prismaB = shards.B.primary;
   disconnectShards = async () => {
@@ -219,17 +202,25 @@ test('Item 3: simultaneous claim race - launch both attempts before either compl
 // --- ITEM 2: Producer Lifecycle & enqueueWorkRow Safety Tests (Reviewer Point 2) ---
 test('Item 2A: producer queue default path lifecycle - reuse and shutdown', async () => {
   await closeProducerQueue();
+  const testQueueName = `test-producer-lifecycle-${randomUUID()}`;
 
-  // 1. Enqueue using the default producer queue (no queue passed in options)
-  const row1 = await enqueueWorkRow(prismaA, 'test-producer-default', { shard: 'A' });
+  // 1. Enqueue using the default producer queue singleton with explicit test queue name
+  const row1 = await enqueueWorkRow(prismaA, 'test-producer-default', {
+    shard: 'A',
+    queueName: testQueueName,
+  });
   try {
-    const q1 = getProducerQueue();
+    const q1 = getProducerQueue(testQueueName);
     assert.ok(q1, 'getProducerQueue() should instantiate default queue');
+    assert.equal(q1.name, testQueueName, 'Queue name must match isolated test queue');
 
     // 2. Second enqueue reuses the exact same queue instance
-    const row2 = await enqueueWorkRow(prismaA, 'test-producer-default', { shard: 'A' });
+    const row2 = await enqueueWorkRow(prismaA, 'test-producer-default', {
+      shard: 'A',
+      queueName: testQueueName,
+    });
     try {
-      const q2 = getProducerQueue();
+      const q2 = getProducerQueue(testQueueName);
       assert.equal(q1, q2, 'Producer queue must be reused as singleton');
 
       const fresh1 = await prismaA.workRow.findUniqueOrThrow({ where: { id: row1.id } });

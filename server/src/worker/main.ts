@@ -1,5 +1,10 @@
 import { createShards } from '../db/clients.js';
 import { createWorkerConnection, verifyNoEviction } from '../jobs/connection.js';
+import {
+  formatJobFailedLog,
+  formatWorkerError,
+  formatWorkerInitError,
+} from '../jobs/redact.js';
 import { createWorkWorker } from '../jobs/worker.js';
 
 console.log('worker starting...');
@@ -13,7 +18,7 @@ try {
   await verifyNoEviction(redis);
   console.log('valkey connected; maxmemory-policy verified as noeviction');
 } catch (err: any) {
-  console.error(`worker failed to initialize valkey connection: ${err.message}`);
+  console.error(formatWorkerInitError(err));
   process.exit(1);
 }
 
@@ -31,11 +36,11 @@ worker.on('ready', () => {
 });
 
 worker.on('error', (err) => {
-  console.error(`worker error: ${err.message}`);
+  console.error(formatWorkerError(err));
 });
 
 worker.on('failed', (job, err) => {
-  console.warn(`job ${job?.id} failed: ${err.message}`);
+  console.warn(formatJobFailedLog(job?.id, err));
 });
 
 worker.on('completed', (job) => {

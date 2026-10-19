@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { verifyNoEviction } from './connection.js';
 import { enqueueWorkRow, formatJobId } from './queue.js';
-import { redactSensitive, sanitizeError } from './redact.js';
+import {
+  formatCheckValkeyError,
+  formatJobFailedLog,
+  formatWorkerError,
+  formatWorkerInitError,
+  redactSensitive,
+  sanitizeError,
+} from './redact.js';
 import { createWorkProcessor, resolvePrismaClient } from './worker.js';
 
 test('verifyNoEviction: verifies noeviction policy and rejects other policies', async () => {
@@ -142,4 +149,37 @@ test('redactSensitive & sanitizeError: thoroughly redacts synthetic credential-b
   assert.ok(!sanitizedAuth.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'), 'Bearer token must be redacted');
   assert.ok(!sanitizedAuth.includes('myHiddenPass123'), 'Query password must be redacted');
   assert.ok(!sanitizedAuth.includes('secretTok'), 'Query token must be redacted');
+});
+
+test('logging paths: formatWorkerInitError, formatWorkerError, formatJobFailedLog, and formatCheckValkeyError redact credentials', () => {
+  const secretPw = 'super_secret_test_password_456';
+  const rawErr = new Error(
+    `Connection refused to postgresql://admin_user:${secretPw}@ep-cool-shard.us-east-2.aws.neon.tech:5432/neondb`,
+  );
+
+  // 1. worker init failure logging path
+  const initMsg = formatWorkerInitError(rawErr);
+  assert.ok(initMsg.startsWith('worker failed to initialize valkey connection:'));
+  assert.ok(!initMsg.includes(secretPw), 'worker init log must not leak password');
+  assert.ok(initMsg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'worker init log must redact user and pass');
+
+  // 2. worker runtime error logging path
+  const runtimeMsg = formatWorkerError(rawErr);
+  assert.ok(runtimeMsg.startsWith('worker error:'));
+  assert.ok(!runtimeMsg.includes(secretPw), 'worker error log must not leak password');
+  assert.ok(runtimeMsg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'worker error log must redact user and pass');
+
+  // 3. job failed logging path
+  const jobMsg = formatJobFailedLog('work-test-1', rawErr);
+  assert.ok(jobMsg.startsWith('job work-test-1 failed:'));
+  assert.ok(!jobMsg.includes(secretPw), 'job failed log must not leak password');
+  assert.ok(jobMsg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'job failed log must redact user and pass');
+
+  // 4. check-valkey error logging path
+  const valkeySecret = 'valkey_probe_secret_token_789';
+  const valkeyErr = new Error(`Command failed on rediss://default:${valkeySecret}@probe.example.com:25345`);
+  const checkValkeyMsg = formatCheckValkeyError(valkeyErr);
+  assert.ok(checkValkeyMsg.startsWith('Valkey check failed:'));
+  assert.ok(!checkValkeyMsg.includes(valkeySecret), 'check-valkey log must not leak token');
+  assert.ok(checkValkeyMsg.includes('[REDACTED_USER]:[REDACTED_PASS]@'), 'check-valkey log must redact credentials');
 });

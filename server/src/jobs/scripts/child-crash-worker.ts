@@ -1,4 +1,4 @@
-import { createShards } from '../../db/clients.js';
+import { createTestShards } from '../../db/clients.js';
 import { createWorkerConnection } from '../connection.js';
 import { createWorkWorker } from '../worker.js';
 
@@ -6,7 +6,7 @@ import { createWorkWorker } from '../worker.js';
 const queueName = process.env.CRASH_QUEUE_NAME || 'proof-crash';
 const leaseMs = Number(process.env.CRASH_LEASE_MS) || 6_000;
 
-const shards = createShards({ primaryMax: 2 });
+const shards = createTestShards({ primaryMax: 2 });
 const connection = createWorkerConnection();
 
 const handlers = {

@@ -25,3 +25,19 @@ export function sanitizeError(err: unknown): string {
   }
   return redactSensitive(String(err));
 }
+
+export function formatWorkerInitError(err: unknown): string {
+  return `worker failed to initialize valkey connection: ${sanitizeError(err)}`;
+}
+
+export function formatWorkerError(err: unknown): string {
+  return `worker error: ${sanitizeError(err)}`;
+}
+
+export function formatJobFailedLog(jobId: string | undefined, err: unknown): string {
+  return `job ${jobId ?? 'unknown'} failed: ${sanitizeError(err)}`;
+}
+
+export function formatCheckValkeyError(err: unknown): string {
+  return `Valkey check failed: ${sanitizeError(err)}`;
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createShards } from '../../db/clients.js';
+import { createTestShards } from '../../db/clients.js';
 import { createProducerConnection, createWorkerConnection } from '../connection.js';
 import { createWorkQueue, enqueueWorkRow } from '../queue.js';
 import { ContentionError, createWorkProcessor, createWorkWorker } from '../worker.js';
@@ -10,7 +10,7 @@ console.log('--- Proving Box 6 (Worker crash recovery with abrupt process termin
 const queueName = `proof-crash-${Date.now()}`;
 const leaseMs = 8_000; // 8 second lease for test observation
 
-const shards = createShards({ primaryMax: 3 });
+const shards = createTestShards({ primaryMax: 3 });
 const prisma = shards.A.primary;
 const queueConnection = createProducerConnection();
 const queue = createWorkQueue(queueName, queueConnection);

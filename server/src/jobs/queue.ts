@@ -16,6 +16,7 @@ export interface EnqueueOptions {
   payload?: any;
   runAt?: Date;
   queue?: Queue;
+  queueName?: string;
   shard: ShardId;
 }
 
@@ -23,7 +24,7 @@ let sharedProducerConnection: ReturnType<typeof createProducerConnection> | null
 let sharedProducerQueue: Queue | null = null;
 
 export function createWorkQueue(
-  queueName = WORK_QUEUE_NAME,
+  queueName = process.env.WORK_QUEUE_NAME || WORK_QUEUE_NAME,
   connection = createProducerConnection(),
 ): Queue {
   return new Queue(queueName, {
@@ -39,7 +40,7 @@ export function createWorkQueue(
  * Get or create the shared producer queue singleton.
  * Reuses a single producer queue and connection across requests.
  */
-export function getProducerQueue(queueName = WORK_QUEUE_NAME): Queue {
+export function getProducerQueue(queueName = process.env.WORK_QUEUE_NAME || WORK_QUEUE_NAME): Queue {
   if (!sharedProducerQueue) {
     sharedProducerConnection = createProducerConnection();
     sharedProducerQueue = createWorkQueue(queueName, sharedProducerConnection);
@@ -107,7 +108,7 @@ export async function enqueueWorkRow(
 
   let timer: NodeJS.Timeout | undefined;
   try {
-    const queue = options.queue ?? getProducerQueue();
+    const queue = options.queue ?? getProducerQueue(options.queueName);
 
     const jobOpts: JobsOptions = {
       jobId,
