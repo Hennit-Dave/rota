@@ -103,7 +103,7 @@ leaves every number to an ADR: token lifetimes, the clock-skew allowance, the pa
 **accepted trade-off**: sign-up verification email is deferred, so there is no way to answer identically, and
 the route is rate limited (ADR 0007). **Squatting risk until magic link / verification lands:** anyone can register
 someone else's address (unverified, `security.md` account-verification policy) and hold the account; the real owner
-cannot register and must recover through magic link or reset, which arrive in PR B.
+cannot register and must recover through magic link or reset, which arrive in the password reset and magic link slice.
 
 ## Why
 
