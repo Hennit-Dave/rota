@@ -1,9 +1,12 @@
 import express from 'express';
+import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 
 export interface AppDeps {
   logger?: Logger;
+  /** When given, mounts /auth. Left out by tests that only need the bare app. */
+  auth?: Omit<AuthDeps, 'logger'>;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -15,6 +18,10 @@ export function createApp(deps: AppDeps = {}) {
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
+
+  if (deps.auth) {
+    app.use('/auth', createAuthRouter({ ...deps.auth, logger }));
+  }
 
   installPostRoutes(app, logger);
   return app;

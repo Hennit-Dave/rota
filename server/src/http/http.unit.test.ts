@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import express from 'express';
 import { z } from 'zod';
-import { createLogger } from './logger.js';
+import { createLogger, recordRouteBase } from './logger.js';
 import { ApiError } from './errors.js';
 import { jsonBody } from './json.js';
 import { installPostRoutes, installPreRoutes } from './pipeline.js';
@@ -49,6 +49,13 @@ before(async () => {
     rateLimit(fake, logger, (req) => [{ name: 'login_email', subject: String((req.validated!.body as { email: string }).email), max: 5, windowSeconds: 900 }]),
     (_req, res) => void res.json({ ok: true }),
   );
+  const mounted = express.Router();
+  mounted.use(recordRouteBase);
+  mounted.get('/ok', (_req, res) => void res.json({ ok: true }));
+  mounted.get('/fails', () => {
+    throw new ApiError('invalid_credentials');
+  });
+  app.use('/mounted', mounted);
   app.get('/boom', () => {
     throw new Error('db exploded at postgresql://admin:supersecret@host/db with password=hunter2');
   });
@@ -173,6 +180,14 @@ test('a token in the query string is rejected by validation and never reaches th
   assert.equal(res.status, 400);
   assert.ok(!lines.join('\n').includes('abc123'));
   assert.ok(!(await res.text()).includes('abc123'));
+});
+
+test('the route template keeps its mount prefix for successes AND for errors thrown inside a mounted router', async () => {
+  lines.length = 0;
+  await fetch(base + '/mounted/ok');
+  await fetch(base + '/mounted/fails');
+  const routes = logs().filter((l) => l.msg === 'request').map((l) => `${l.status} ${l.route}`);
+  assert.deepEqual(routes, ['200 /mounted/ok', '401 /mounted/fails']);
 });
 
 test('error responses log the error code', async () => {

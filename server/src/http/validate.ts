@@ -59,12 +59,25 @@ export function toErrorDetails(error: z.ZodError, scope?: string): ErrorDetail[]
       case 'invalid_type':
         out.push({ path, code: 'invalid_type' });
         break;
+      case 'custom': {
+        // Only our own allow-listed codes pass through; anything else is the generic 'invalid'.
+        const params = (issue as { params?: { rota?: unknown; min?: unknown; max?: unknown } }).params;
+        const code = typeof params?.rota === 'string' && CUSTOM_CODES.has(params.rota) ? params.rota : 'invalid';
+        const detail: ErrorDetail = { path, code };
+        if (typeof params?.min === 'number') detail.min = params.min;
+        if (typeof params?.max === 'number') detail.max = params.max;
+        out.push(detail);
+        break;
+      }
       default:
         out.push({ path, code: 'invalid' });
     }
   }
   return out;
 }
+
+// Codes our own schemas may attach through `ctx.addIssue({ code: 'custom', params: { rota: ... } })`.
+const CUSTOM_CODES: ReadonlySet<string> = new Set(['too_short', 'too_long', 'password_common']);
 
 const NOTHING = z.strictObject({});
 

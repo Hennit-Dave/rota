@@ -53,6 +53,11 @@ export interface RedisLike {
   expire(key: string, seconds: number): Promise<unknown>;
 }
 
+/** Per-rule overrides of the configured thresholds. Used by tests to shrink a limit. */
+export type RateRuleConfigOverrides = Partial<
+  Record<'loginIp' | 'loginEmail' | 'registerIp' | 'refreshIp', { max: number; windowSeconds: number }>
+>;
+
 export interface RateLimiter {
   consume(rule: RateRule): Promise<RateResult>;
 }

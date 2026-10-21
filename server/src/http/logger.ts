@@ -62,6 +62,16 @@ export function createLogger(sink: LogSink = (line) => console.log(line)): Logge
 }
 
 /**
+ * Express resets `req.baseUrl` when an error leaves a router, so by the time the request is logged the mount
+ * prefix ("/auth") is gone and the route would read "/login". Put this first in every mounted router: it records
+ * the prefix while the request is still inside it.
+ */
+export const recordRouteBase: RequestHandler = (req, res, next) => {
+  res.locals.routeBase = req.baseUrl;
+  next();
+};
+
+/**
  * One line per request (observability.md): request ID, user ID when authenticated, the route TEMPLATE (never
  * the raw URL, which could carry a token), status, duration, error code on failure, and the database route.
  * Handlers set `res.locals.userId` and `res.locals.dbRoute`; the error handler sets `res.locals.errorCode`.
@@ -71,7 +81,8 @@ export function requestLogger(logger: Logger): RequestHandler {
     const started = performance.now();
     res.on('close', () => {
       const aborted = !res.writableFinished;
-      const template = req.route?.path ? `${req.baseUrl}${String(req.route.path)}` : '(unmatched)';
+      const base = String(res.locals.routeBase ?? req.baseUrl ?? '');
+      const template = req.route?.path ? `${base}${String(req.route.path)}` : '(unmatched)';
       const status = res.statusCode;
       const fields: LogFields = {
         requestId: String(res.locals.requestId ?? ''),

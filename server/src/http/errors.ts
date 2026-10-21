@@ -113,6 +113,9 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
     }
 
     res.locals.errorCode = apiError.code;
+    if (apiError.code === 'unauthenticated') {
+      res.setHeader('WWW-Authenticate', 'Bearer');
+    }
     if (apiError.retryAfterSeconds !== undefined) {
       res.setHeader('Retry-After', String(apiError.retryAfterSeconds));
     }
