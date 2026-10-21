@@ -1,6 +1,6 @@
 # 0005: Authentication tokens, sessions and the password policy
 
-- **Status:** proposed (accepted when Dave merges PR A)
+- **Status:** accepted (2026-10-21; Dave approved every decision in it)
 - **Date:** 2026-10-21
 - **Decided by:** Dave
 - **Related:** PR A (`feat/auth-server`), `.agents/rules/security.md`, ADR 0006 (password hashing), ADR 0007 (rate limiting)
