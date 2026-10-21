@@ -8,6 +8,7 @@ test('defaults are exactly the numbers Dave approved on 2026-10-21', () => {
   assert.equal(c.refreshIdleDays, 30);
   assert.equal(c.sessionAbsoluteDays, 90);
   assert.equal(c.clockSkewSeconds, 0);
+  assert.equal(c.transactionMaxWaitMs, 5000);
   assert.deepEqual(c.password, { minLength: 15, maxLength: 128 });
   assert.deepEqual(c.rateLimits.loginIp, { max: 30, windowSeconds: 900 });
   assert.deepEqual(c.rateLimits.loginEmail, { max: 5, windowSeconds: 900 });
@@ -19,6 +20,11 @@ test('env overrides apply', () => {
   const c = loadAuthConfig({ AUTH_ACCESS_TOKEN_MINUTES: '5', RATE_LIMIT_LOGIN_EMAIL_MAX: '2', RATE_LIMIT_LOGIN_EMAIL_WINDOW_SECONDS: '60' });
   assert.equal(c.accessTokenMinutes, 5);
   assert.deepEqual(c.rateLimits.loginEmail, { max: 2, windowSeconds: 60 });
+});
+
+test('the transaction wait is configurable, and a bad value stops the server', () => {
+  assert.equal(loadAuthConfig({ AUTH_TRANSACTION_MAX_WAIT_MS: '8000' }).transactionMaxWaitMs, 8000);
+  assert.throws(() => loadAuthConfig({ AUTH_TRANSACTION_MAX_WAIT_MS: '0' }), /AUTH_TRANSACTION_MAX_WAIT_MS/);
 });
 
 test('a set-but-invalid value stops the server instead of silently weakening a security setting', () => {

@@ -10,7 +10,7 @@ import type { AuthConfig } from './config.js';
 import { createRequireAuth } from './middleware.js';
 import type { PasswordService } from './password.js';
 import { createAuthSchemas } from './schemas.js';
-import { createSession } from './sessions.js';
+import { authTransaction, createSession, revokeAllFamilies, revokeFamily, rotateRefreshToken } from './sessions.js';
 import type { TokenService } from './tokens.js';
 
 export interface AuthDeps {
@@ -79,7 +79,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
 
       let created;
       try {
-        created = await db.$transaction(async (tx) => {
+        created = await authTransaction(db, config, async (tx) => {
           const user = await tx.user.create({ data: { email, name } });
           await tx.credential.create({ data: { userId: user.id, passwordHash } });
           const session = await createSession(tx, { userId: user.id, config, now: now() });
@@ -129,7 +129,7 @@ export function createAuthRouter(deps: AuthDeps): Router {
         throw new ApiError('invalid_credentials');
       }
 
-      const session = await db.$transaction((tx) => createSession(tx, { userId: user.id, config, now: now() }));
+      const session = await authTransaction(db, config, (tx) => createSession(tx, { userId: user.id, config, now: now() }));
       res.locals.userId = user.id;
       res.json({
         user: userView(user),
@@ -143,6 +143,60 @@ export function createAuthRouter(deps: AuthDeps): Router {
     const user = await db.user.findUnique({ where: { id: req.auth!.userId } });
     if (!user) throw new ApiError('unauthenticated', { reason: 'user_missing' });
     res.json({ user: userView(user) });
+  });
+
+  // POST /auth/refresh: public auth route (the access token may well have expired). Zod, then rate limit, then
+  // handler. Every failure is the same 401; the true reason goes to the log only (ADR 0005).
+  router.post(
+    '/refresh',
+    validateRequest({ body: schemas.refresh }),
+    rateLimit(limiter, logger, (req) => [
+      { name: 'refresh_ip', subject: clientIp(req), ...config.rateLimits.refreshIp },
+    ]),
+    async (req, res) => {
+      const { refreshToken } = req.validated!.body as { refreshToken: string };
+      // The transaction COMMITS before anything below runs, so a detected reuse is already revoked when the 401 goes out.
+      const outcome = await rotateRefreshToken(db, { token: refreshToken, config, now: now() });
+
+      if (outcome.kind === 'rejected') {
+        if (outcome.userId) res.locals.userId = outcome.userId;
+        if (outcome.familyId) res.locals.familyId = outcome.familyId;
+        if (outcome.reason === 'reuse_detected') {
+          // A security event: an already-used token came back, so the session is treated as stolen.
+          logger.warn('refresh_reuse_detected', {
+            requestId: String(res.locals.requestId ?? ''),
+            userId: outcome.userId ?? '',
+            familyId: outcome.familyId ?? '',
+          });
+        }
+        throw new ApiError('unauthenticated', { reason: `refresh_${outcome.reason}` });
+      }
+
+      res.locals.userId = outcome.userId;
+      res.locals.familyId = outcome.familyId;
+      res.json({ session: await sessionResponse(outcome.userId, outcome.familyId, outcome.refreshToken) });
+    },
+  );
+
+  // POST /auth/logout: user route. Ends THIS device's session only.
+  router.post('/logout', validateRequest({}), requireAuth, async (req, res) => {
+    const { userId, familyId } = req.auth!;
+    await revokeFamily(db, { userId, familyId, config });
+    logger.info('session_revoked', { requestId: String(res.locals.requestId ?? ''), userId, familyId, reason: 'logout' });
+    res.status(204).end();
+  });
+
+  // POST /auth/logout-all: user route. Ends every session of the caller, on every device.
+  router.post('/logout-all', validateRequest({}), requireAuth, async (req, res) => {
+    const { userId } = req.auth!;
+    const revoked = await revokeAllFamilies(db, { userId, config });
+    logger.info('session_revoked', {
+      requestId: String(res.locals.requestId ?? ''),
+      userId,
+      reason: 'logout_all',
+      outcome: `families_revoked_${revoked}`,
+    });
+    res.status(204).end();
   });
 
   return router;

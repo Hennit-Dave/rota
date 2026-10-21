@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { hashRefreshToken, newRefreshToken, REFRESH_TOKEN_PATTERN, createSession } from './sessions.js';
+import {
+  authTransaction,
+  createSession,
+  hashRefreshToken,
+  newRefreshToken,
+  REFRESH_TOKEN_PATTERN,
+  revokeAllFamilies,
+  revokeFamily,
+  rotateRefreshToken,
+} from './sessions.js';
 import { loadAuthConfig } from './config.js';
 
 test('a refresh token is 32 random bytes in base64url (43 characters), unique, and matches the pattern', () => {
@@ -50,4 +59,18 @@ test('a first token never outlives its family, even with a short absolute lifeti
   };
   await createSession(fakeDb as never, { userId: 'u', config: loadAuthConfig({ AUTH_SESSION_ABSOLUTE_DAYS: '10' }), now: new Date() });
   assert.equal(written.idle!.getTime(), written.abs!.getTime());
+});
+
+test('every auth transaction is started with the configured maxWait, not Prisma\'s 2 s default', async () => {
+  const seen: unknown[] = [];
+  const db: any = {
+    refreshToken: { findUnique: async () => ({ id: 'a', familyId: 'b' }) },
+    $transaction: async (_fn: unknown, options: unknown) => (seen.push(options), 0),
+  };
+  const config = { ...loadAuthConfig({}), transactionMaxWaitMs: 4321 };
+  await authTransaction(db, config, async () => 1);
+  await rotateRefreshToken(db, { token: 'x', config, now: new Date() });
+  await revokeFamily(db, { userId: 'u', familyId: 'f', config });
+  await revokeAllFamilies(db, { userId: 'u', config });
+  assert.deepEqual(seen, [{ maxWait: 4321 }, { maxWait: 4321 }, { maxWait: 4321 }, { maxWait: 4321 }]);
 });

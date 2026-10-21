@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AuthConfig } from './config.js';
 import type { PasswordBlocklist } from './blocklist.js';
 import { normalizePassword, passwordLength } from './password.js';
+import { REFRESH_TOKEN_PATTERN } from './sessions.js';
 
 /**
  * Request schemas for the auth routes. Built from the config so the limits live in one place. Every object is
@@ -47,5 +48,7 @@ export function createAuthSchemas(config: AuthConfig, blocklist: PasswordBlockli
   return {
     register: z.strictObject({ name, email, password: newPassword }),
     login: z.strictObject({ email, password: existingPassword }),
+    // The exact shape of a token we issue (32 bytes, base64url), so junk never reaches the database.
+    refresh: z.strictObject({ refreshToken: z.string().regex(REFRESH_TOKEN_PATTERN) }),
   };
 }

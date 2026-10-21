@@ -59,6 +59,10 @@ before(async () => {
   app.get('/boom', () => {
     throw new Error('db exploded at postgresql://admin:supersecret@host/db with password=hunter2');
   });
+  app.get('/tx-timeout', () => {
+    // What Prisma throws when a transaction cannot start in time. It carries `code: 'P2028'`.
+    throw Object.assign(new Error('Transaction API error: Unable to start a transaction in the given time.'), { code: 'P2028' });
+  });
   app.get('/teapot', () => {
     throw new ApiError('invalid_credentials', { reason: 'unknown_email' });
   });
@@ -148,6 +152,14 @@ test('an unexpected error is a plain 500 and nothing sensitive reaches the calle
   for (const leak of ['supersecret', 'hunter2', 'admin', 'exploded']) assert.ok(!text.includes(leak), `body leaked ${leak}`);
   const logged = lines.join('\n');
   for (const leak of ['supersecret', 'hunter2', 'admin:']) assert.ok(!logged.includes(leak), `log leaked ${leak}`);
+});
+
+test('a database transaction that could not start in time is a retryable 503, not a 500', async () => {
+  lines.length = 0;
+  const res = await fetch(base + '/tx-timeout');
+  assert.equal(res.status, 503);
+  assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'service_unavailable');
+  assert.ok(logs().some((l) => l.msg === 'request_rejected' && l.reason === 'database_transaction_unavailable'));
 });
 
 test('a rejection reason stays in the server log and is not sent to the client', async () => {

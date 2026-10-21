@@ -8,7 +8,7 @@ import { createAuthSchemas } from './schemas.js';
 
 const config = loadAuthConfig({});
 const blocklist = createBlocklist(['password1234567890', '1234567890123456']);
-const { register, login } = createAuthSchemas(config, blocklist);
+const { register, login, refresh } = createAuthSchemas(config, blocklist);
 const good = { name: 'Amara Okafor', email: 'amara@example.com', password: 'a-long-enough-pass' };
 
 const details = (input: unknown, schema: z.ZodType = register) => {
@@ -75,4 +75,16 @@ test('login applies no password policy: any non-empty password up to the maximum
 test('error details never contain the submitted password', () => {
   const secret = 'Password1234567890';
   assert.ok(!JSON.stringify(details({ ...good, password: secret })).toLowerCase().includes('password1234567890'));
+});
+
+test('refresh accepts exactly the shape of a token we issue, and nothing else', () => {
+  const token = 'A'.repeat(43);
+  assert.ok(refresh.safeParse({ refreshToken: token }).success);
+  assert.ok(refresh.safeParse({ refreshToken: `${'a-_Z09'.repeat(7)}a` }).success, 'base64url alphabet');
+  for (const bad of ['A'.repeat(42), 'A'.repeat(44), `${'A'.repeat(42)}=`, `${'A'.repeat(42)}+`, `${'A'.repeat(42)} `, '', 5, null]) {
+    assert.ok(!refresh.safeParse({ refreshToken: bad }).success, `should reject ${JSON.stringify(bad)}`);
+  }
+  assert.deepEqual(details({ refreshToken: token, extra: 1 }, refresh), [{ path: '', code: 'unrecognized_key' }]);
+  assert.deepEqual(details({}, refresh), [{ path: 'refreshToken', code: 'invalid_type' }]);
+  assert.ok(!JSON.stringify(details({ refreshToken: 'not-a-token-<x>' }, refresh)).includes('not-a-token'), 'the value is never echoed');
 });

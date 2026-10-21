@@ -92,6 +92,16 @@ function fromBodyParserError(err: unknown): ApiError | null {
   return null;
 }
 
+/**
+ * Prisma raises P2028 when an interactive transaction could not start in time (a cold database connection can
+ * take longer than the default 2 s wait) or ran past its timeout; either way it rolled back. That is the
+ * database being briefly unavailable, not a bug in the request: 503, so the app retries.
+ */
+function fromTransactionUnavailable(err: unknown): ApiError | null {
+  if (typeof err !== 'object' || err === null || (err as { code?: unknown }).code !== 'P2028') return null;
+  return new ApiError('service_unavailable', { reason: 'database_transaction_unavailable' });
+}
+
 export function createErrorHandler(logger: Logger): ErrorRequestHandler {
   // Express identifies error middleware by its four parameters, so `_next` must stay.
   return (err, req, res, next) => {
@@ -101,7 +111,8 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
     }
 
     const requestId = String(res.locals.requestId ?? '');
-    let apiError: ApiError | null = err instanceof ApiError ? err : fromBodyParserError(err);
+    let apiError: ApiError | null =
+      err instanceof ApiError ? err : (fromBodyParserError(err) ?? fromTransactionUnavailable(err));
 
     if (!apiError) {
       // Unexpected: log a sanitized message for us, tell the caller nothing about it.

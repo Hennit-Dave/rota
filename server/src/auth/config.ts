@@ -16,6 +16,12 @@ export interface AuthConfig {
   sessionAbsoluteDays: number;
   /** 0: the same process issues and verifies, so there is no cross-host skew (ADR 0005). */
   clockSkewSeconds: number;
+  /**
+   * How long an auth transaction may wait to START (Prisma's `maxWait`; its default is 2000). 5000 covers the cold
+   * Neon connection measured from the development machine (3.7 s for a first query). Measured locally only:
+   * re-measure on the deployment host (ADR 0005).
+   */
+  transactionMaxWaitMs: number;
   issuer: string;
   audience: string;
   password: { minLength: number; maxLength: number };
@@ -55,6 +61,7 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
     refreshIdleDays: positiveInt(env, 'AUTH_REFRESH_IDLE_DAYS', 30),
     sessionAbsoluteDays: positiveInt(env, 'AUTH_SESSION_ABSOLUTE_DAYS', 90),
     clockSkewSeconds: 0,
+    transactionMaxWaitMs: positiveInt(env, 'AUTH_TRANSACTION_MAX_WAIT_MS', 5000),
     issuer: 'rota-api',
     audience: 'rota-app',
     // 15: NIST SP 800-63B-4 section 3.1.1.2 for a password used alone. 128: our cap, above the 64 NIST asks

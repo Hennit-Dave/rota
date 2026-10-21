@@ -12,6 +12,7 @@ import { createRateLimiter, type RateRuleConfigOverrides } from '../ratelimit/li
 import { createBlocklist, type PasswordBlocklist } from './blocklist.js';
 import { loadAuthConfig, type AuthConfig } from './config.js';
 import { argon2Hasher, createPasswordService, type PasswordHasher } from './password.js';
+import { createSession } from './sessions.js';
 import { createTokenService, type TokenService } from './tokens.js';
 
 /**
@@ -33,6 +34,14 @@ export interface Reply {
   text: string;
 }
 
+export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+export interface TestSession {
+  familyId: string;
+  refreshToken: string;
+  accessToken: string;
+}
+
 export interface TestApp {
   base: string;
   db: PrismaClient;
@@ -48,6 +57,8 @@ export interface TestApp {
   logLines(): string[];
   newEmail(): string;
   seedUser(opts?: { email?: string; password?: string; name?: string }): Promise<{ id: string; email: string; password: string }>;
+  /** A new session (family + first refresh token + access token) for a seeded user, without an Argon2 login. */
+  startSession(userId: string): Promise<TestSession>;
   post(path: string, body?: unknown, headers?: Record<string, string>): Promise<Reply>;
   get(path: string, headers?: Record<string, string>): Promise<Reply>;
   stop(): Promise<void>;
@@ -133,6 +144,11 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
         data: { email, name: opts.name ?? 'Seeded User', credential: { create: { passwordHash: await argon2Hasher.hash(password) } } },
       });
       return { id: user.id, email, password };
+    },
+    async startSession(userId) {
+      const created = await createSession(db, { userId, config, now: now() });
+      const access = await tokens.sign({ userId, familyId: created.familyId });
+      return { familyId: created.familyId, refreshToken: created.refreshToken, accessToken: access.token };
     },
     post: (path, body, headers) => call('POST', path, body ?? {}, headers),
     get: (path, headers) => call('GET', path, undefined, headers),
