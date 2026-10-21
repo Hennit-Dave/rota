@@ -140,10 +140,15 @@ passes, the infrastructure is a plan, not a verified stack:
 - [ ] A `Queue.add` consumed by a `Worker` on Aiven Valkey
 - [ ] Delayed job and retry
 - [ ] Worker-restart recovery
+- [ ] Neon, Aiven and Resend confirmed free; spending blocked, not just alerted
+
+## Later proofs (not blocking)
+
+These stay required before submission but no longer hold up feature work. The reconciliation sweep that
+queue-loss recovery depends on already exists (ADR 0004); only its end-to-end proof is deferred.
 - [ ] Queue-loss recovery: delete disposable queued jobs from Valkey; the independent reconciliation
       process restores them from Postgres. A worker restart alone doesn't prove this.
-- [ ] One email from the worker through Resend
-- [ ] Neon, Aiven and Resend confirmed free; spending blocked, not just alerted
+- [ ] One email from the worker through Resend. Proven with the invite feature.
 
 ## Deployment gate — before read-your-own-writes is marked done, and before submission
 
