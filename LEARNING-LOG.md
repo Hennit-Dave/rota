@@ -1,5 +1,17 @@
 # Learning log
 
+## Self-study checklist
+
+The seven self-study topics (a graded requirement). Tick a topic only when its entry below is written in your own words. Agents point out what is missing; they never write or edit an entry.
+
+- [ ] EAS Build
+- [ ] Why AsyncStorage is unsafe for tokens
+- [x] Refresh-token rotation and reuse detection
+- [x] Idempotency (2026-10-21)
+- [x] Observability
+- [ ] Load testing
+- [x] Architecture Decision Records (2026-10-16)
+
 ## 2026-10-15 — Agent instruction setup
 
 Using one canonical file gives Claude Code and the Antigravity agent a single source of truth. If each agent had its own copy of the project instructions, those copies could gradually become different, causing the agents to follow different rules. With one shared file, I only need to update the instructions once. Both agents still need to know where that file is and when to read it.
@@ -63,3 +75,40 @@ This matters because being queued or claimed is not proof that the actual work h
 **Sources read:**  
 - Stripe documentation — idempotent requests  
 
+## 2026-10-21 — Request IDs and safe logging · Self-study: Observability
+
+Observability means being able to understand what happened inside a running system from the information it records. The brief’s goal is to answer “What happened to this user’s payment at 3:14pm?” using logs alone. The login logging is a step toward that goal, but payment tracing is still unfinished.
+The user sees a general message such as “Email or password is incorrect,” while the internal log records the specific reason, such as bad_password. This helps investigate the failure without revealing to the caller whether an account exists. Each request gets a request ID—a tracking number shared by its log entries—so one login attempt can be followed without mixing it up with others.
+An allow-list limits logging to approved fields, such as request ID, status and duration. If a new field hasn’t been approved, it stays out. This is safer than recording everything and trying to remove known secrets, because someone could forget to block a sensitive field. Approved fields still need checking to ensure their contents don’t expose passwords, tokens or other private information.
+Logs also need testing. The reported bug recorded /login instead of /auth/login, showing that an application can work while its logs give misleading information. The lesson is to record enough to investigate problems, protect private information, and test that the records are accurate. Following payments through background jobs and keeping logs available long enough to investigate them still needs work.
+**Sources read:**  
+- OWASP Logging cheat sheet - 
+
+## 2026-10-21 — Server authentication (PR A) · Self-study: Refresh-token rotation and reuse detection
+
+**Why two tokens?**
+The app uses 2 tokens because one of the tokens is used for every request to prove who the user is, the other token is to get an access token.
+We use two tokens because a short-lived access token stops working, and the refresh token means the app doesn't have to log in again every 15 mins.
+
+**Rotation and families**
+Rotation means every time the phone uses a refresh token, the server marks the token used then gives back a new token and a new access token. The chain of used tokens coming from one login on one device is the family.
+
+**Reuse detection**
+When a phone uses a token then gets a new one, the old token is marked used. If an imposter tries the previously used token, the server sees a used token coming back and can't tell which one is the real user, so the server's only option is to kill the whole family.
+Both the user and attacker get signed out; the real user gets logged in again and the attacker is logged out.
+
+**Why only a hash is stored**
+If the database gets stolen, they only see the fingerprints and not the usable tokens.
+
+**Why every failure is the same 401**
+So the attacker can't tell they have been caught, and only the server logs get to know the real reason.
+
+**What I got wrong at first**
+At first I thought the attacker would know they were caught, but actually they wouldn't know a thing, just the plain 401, and the server logs the reason why.
+
+**JWT handling**
+A JSON Web Token (JWT) is like a digital ID card that an app can check to confirm information about a user, such as their identity or permissions.
+JWT handling is the process of how an app checks and uses tokens safely, including verifying signatures, checking expiry dates, and rejecting revoked tokens. It also explains how to protect tokens from theft and misuse.
+
+**Sources read**
+JSON Web Token Cheat Sheet — OWASP Cheat Sheet Series

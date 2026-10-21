@@ -46,6 +46,43 @@ The graduation task brief names Redis for background queueing, caching, and rate
 - Expired claims move to a new generation (or to `failed` when no attempts remain). A job that keeps failing before it ever claims is capped by `recovery_count` (`WORK_MAX_RECOVERIES`, default 5) and then marked `failed`.
 - A Valkey failure ends that shard's pass and leaves rows eligible; a Postgres failure on one shard does not stop the other. Recorded in `docs/decisions/0004-reconciliation-sweep.md`.
 
+### 5. Authentication API
+
+Identity lives on shard A only (`users`, `credentials`, `refresh_token_families`, `refresh_tokens`) and is read and written
+through its **primary**, never a replica (`server/src/db/identity.ts`). Decisions and numbers: ADR 0005 (tokens, sessions,
+password policy), ADR 0006 (Argon2id), ADR 0007 (rate limiting). Threat write-up: `docs/SECURITY.md`.
+
+| Route | Type | Checks, in order | Success |
+|---|---|---|---|
+| `POST /auth/register` | public | Zod, rate limit (`register_ip`), handler | `201 { user, session }` |
+| `POST /auth/login` | public | Zod, rate limit (`login_ip`, `login_email`), handler | `200 { user, session }` |
+| `POST /auth/refresh` | public | Zod, rate limit (`refresh_ip`), handler | `200 { session }` |
+| `GET /auth/me` | user | Zod, access token, session check, handler | `200 { user }` |
+| `POST /auth/logout` | user | Zod, access token, session check, handler | `204`, this device only |
+| `POST /auth/logout-all` | user | Zod, access token, session check, handler | `204`, every device |
+
+- `session` is `{ accessToken, accessTokenExpiresAt, refreshToken }`. Responses that carry tokens send `Cache-Control: no-store`.
+- The access token is a JWT (HS256) with `sub` and `sid` (the session, i.e. refresh-token family) only. Every authenticated
+  request re-checks the session on shard A's primary, so a logout or a detected theft stops the very next request.
+- Refresh rotates the token inside one transaction that locks the family row (`FOR UPDATE`). Logout and logout-all take the
+  same lock (logout-all locks the user's families in id order), which is what makes them safe against a refresh in flight.
+- **Error body, every route:** `{ "error": { "code", "message", "requestId", "details"? , "retryAfterSeconds"? } }`. The app
+  switches on `code`; `message` is for debugging. `details` is `[{ path, code, min?, max? }]` and never contains the
+  submitted value. The `X-Request-Id` header equals `requestId`.
+
+| `code` | HTTP | When |
+|---|---|---|
+| `validation_failed` | 400 | Body, query or params failed Zod (unknown keys included) |
+| `invalid_json` | 400 | Body is not valid JSON |
+| `payload_too_large` | 413 | Body over the 10 kb limit |
+| `unauthenticated` | 401 | Any bad, expired, revoked or reused access or refresh token. One code on purpose: the reason is in the server log only |
+| `invalid_credentials` | 401 | Login: unknown email and wrong password look identical |
+| `email_in_use` | 409 | Register: the address already has an account (accepted trade-off, ADR 0005) |
+| `not_found` | 404 | Unknown route |
+| `rate_limited` | 429 | Over a limit; `Retry-After` header and `retryAfterSeconds` |
+| `internal_error` | 500 | Unexpected; nothing about it is sent |
+| `service_unavailable` | 503 | Valkey is down (limited routes fail closed), or the database could not start a transaction in time. Safe to retry |
+
 ---
 
 ## What changes in production
