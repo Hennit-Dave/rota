@@ -172,6 +172,8 @@ try {
   }
 } finally {
   await worker.close();
+  // Remove this proof's own queue from the shared Valkey so runs never accumulate keys.
+  await queue.obliterate({ force: true }).catch(() => {});
   await queue.close();
   await queueConnection.quit();
   await workerConnection.quit();

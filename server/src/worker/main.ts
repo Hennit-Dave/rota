@@ -1,5 +1,11 @@
 import { createShards } from '../db/clients.js';
-import { createWorkerConnection, verifyNoEviction } from '../jobs/connection.js';
+import {
+  createProducerConnection,
+  createWorkerConnection,
+  verifyNoEviction,
+} from '../jobs/connection.js';
+import { createWorkQueue, resolveQueueName } from '../jobs/queue.js';
+import { startReconciler } from '../jobs/reconcile.js';
 import {
   formatJobFailedLog,
   formatWorkerError,
@@ -31,6 +37,12 @@ const handlers = {
 
 const worker = createWorkWorker(shards, handlers, { connection: redis });
 
+// Reconciliation sweep (jobs.md): its own bounded producer-style connection, so a hung Valkey cannot
+// hang the sweep. Runs at startup, every RECONCILE_INTERVAL_MS, and after a Valkey reconnect.
+const reconcileConnection = createProducerConnection();
+const reconcileQueue = createWorkQueue(resolveQueueName(), reconcileConnection);
+const reconciler = startReconciler(shards, reconcileQueue, { reconnectSource: reconcileConnection });
+
 worker.on('ready', () => {
   console.log('worker running');
 });
@@ -49,7 +61,9 @@ worker.on('completed', (job) => {
 
 async function shutdown(signal: NodeJS.Signals) {
   console.log(`worker received ${signal}, closing`);
+  await reconciler.stop();
   await worker.close();
+  await reconcileQueue.close();
   await redis.quit();
   await shards.A.primary.$disconnect();
   await shards.B.primary.$disconnect();

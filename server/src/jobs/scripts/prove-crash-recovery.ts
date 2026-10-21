@@ -145,6 +145,8 @@ try {
   await restartedConnection.quit();
   await prisma.workRow.deleteMany({ where: { id: row.id } });
 } finally {
+  // Remove this proof's own queue from the shared Valkey so runs never accumulate keys.
+  await queue.obliterate({ force: true }).catch(() => {});
   await queue.close();
   await queueConnection.quit();
   await shards.A.primary.$disconnect();

@@ -39,6 +39,13 @@ The graduation task brief names Redis for background queueing, caching, and rate
 - The worker dynamically routes claim queries and row inspections to the matching shard primary (`shards[shard].primary`).
 - Missing work rows throw explicit errors to immediately expose routing failures rather than silently disguising them as completed work.
 
+### 4. Reconciliation Sweep
+
+- Postgres work rows are the record; the Valkey queue can lose jobs. `server/src/jobs/reconcile.ts` runs inside the worker process on its own timer (default every 30 minutes, `RECONCILE_INTERVAL_MS`), at startup, and after a Valkey reconnect. It is independent of BullMQ.
+- Per shard it picks a batch of rows with `FOR UPDATE SKIP LOCKED` (the lock covers only the pick), then, after commit, looks up each pending row's `work-<id>-<generation>` job: missing → add with the remaining delay; waiting, delayed or active → leave; failed or completed → new generation.
+- Expired claims move to a new generation (or to `failed` when no attempts remain). A job that keeps failing before it ever claims is capped by `recovery_count` (`WORK_MAX_RECOVERIES`, default 5) and then marked `failed`.
+- A Valkey failure ends that shard's pass and leaves rows eligible; a Postgres failure on one shard does not stop the other. Recorded in `docs/decisions/0004-reconciliation-sweep.md`.
+
 ---
 
 ## What changes in production
