@@ -16,7 +16,7 @@
     "start:worker": "node --env-file-if-exists=../.env dist/worker/main.js",
     "test": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",
     "test:unit": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",
-    "test:integration": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.integration.test.ts\"",
+    "test:integration": "node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 \"src/**/*.integration.test.ts\"",
     "test:all": "npm run test && npm run test:integration",
     "db:deploy:a": "SHARD=a node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate deploy",
     "db:deploy:b": "SHARD=b node --env-file-if-exists=../.env ./node_modules/prisma/build/index.js migrate deploy",

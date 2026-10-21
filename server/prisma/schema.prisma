@@ -27,6 +27,10 @@ model WorkRow {
   status            WorkStatus @default(pending)
   generation        Int        @default(1)
   executionAttempts Int        @default(0) @map("execution_attempts")
+  // Consecutive sweep recoveries of a pending row whose BullMQ job failed without the row ever being
+  // claimed (ADR 0004). Incremented with the generation bump, reset to 0 by a successful claim. At
+  // WORK_MAX_RECOVERIES the sweep marks the row failed. Not the attempt budget: attempts count claims.
+  recoveryCount     Int        @default(0) @map("recovery_count")
   // Application code sets these explicitly (ADR 0002); the defaults are only a fallback.
   // Normal creation: available_at = run_at + 2 minutes. Enqueue failure: available_at = now().
   // The worker enforces run_at (claims need run_at <= now()); available_at is the sweep eligibility time.

@@ -27,3 +27,39 @@ When a worker crashes leaving unfinished work behind another worker can reclaim 
 Before a duplicate job happen the database record is checked first, if it already says done, the job is skipped because the job was successful.
 Logs are record, checking which job retried, failed or finished and it doesnt expose passwords or credentials, this helps fish out issues to know where how to solve the issue
 The worker was created but didn’t start because an unset option overwrote the library’s default of starting automatically. Earlier tests missed this because they disabled startup or used a mock worker. The fix keeps automatic startup enabled unless explicitly turned off, and the new test checks all three cases: omitted, unset and false.
+
+## 2026-10-21 — Reconciliation sweep and recovery guard (PR #18) · Self-study: Idempotency
+
+**What this slice did:**  
+PR #18 added a reconciliation sweep that checks Postgres for work that still needs to be done and puts it back into the queue if it is missing. It also added a recovery guard so that an old worker cannot come back later and update a job it no longer owns.
+
+**What is idempotency?**  
+Idempotency means doing the same action more than once should still give the same final result as doing it once.  
+My everyday example would be locking my phone. If I press the lock button again after it is already locked, it stays locked instead of creating a second lock.
+
+**Why do duplicates happen in Rota?**  
+Duplicates can happen because a background worker may crash while doing a job, so the job gets retried. They can also happen when the reconciliation sweep and the normal queue process both try to add the same job.
+
+**What does each tool protect?**  
+The fixed job ID stops the same job from being added to the queue more than once.  
+The claim token makes sure only the worker that currently owns the job is allowed to update it, so an old worker cannot come back later and overwrite the result.  
+Resend's idempotency key helps stop the same email from being sent twice when the same key is used again.
+
+**What can't it guarantee?**  
+It cannot guarantee that an email will never be sent twice in every possible situation. For example, the worker could send the email through Resend, Resend accepts it, and then the worker crashes before saving `sent_at` in the database. When the job retries, the system may think the email was never sent. In that situation, only Resend's idempotency key protects against another send, and that protection only lasts for 24 hours.
+
+**Where will it matter next?**  
+It will matter even more with payments and webhooks. A payment request may be retried if the network fails, and payment providers can send the same webhook more than once. Without idempotency, the same payment could be processed twice or the same event could change the database twice. With money, duplicates are much more serious because they can mean charging a customer twice.
+
+**What I got wrong at first:**  
+My belief for a queued job was that it meant the job was done. However, I was wrong. A queued job simply means the work has been promised and is waiting to be processed.
+
+The job first starts as **pending**. When a worker picks it up, it becomes **claimed**, meaning that worker currently owns the job and is responsible for processing it. It only moves to **done** after the actual action succeeds.
+
+What showed me I was wrong was learning about the recovery process. A job can already be in the queue or even be claimed by a worker and still fail before the work is completed. For example, the worker can crash after claiming the job, which means another worker may need to recover and process it later.
+
+This matters because being queued or claimed is not proof that the actual work happened. The system needs to track the real state of the work so it can retry unfinished jobs without losing them or allowing an old worker to update a job after ownership has changed.
+
+**Sources read:**  
+- Stripe documentation — idempotent requests  
+

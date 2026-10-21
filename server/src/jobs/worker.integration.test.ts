@@ -254,6 +254,8 @@ test('Item 2A: producer queue default path lifecycle - reuse and shutdown', asyn
     }
   } finally {
     await cleanupRow(prismaA, row1.id);
+    // Remove this test's own queue from the shared Valkey before the singleton is closed.
+    await getProducerQueue(testQueueName).obliterate({ force: true }).catch(() => {});
     await closeProducerQueue();
   }
 });
@@ -423,6 +425,7 @@ test('Item 1: attempt ceiling failure - real BullMQ worker moves job to terminal
     if (worker) {
       await (worker as any).close();
     }
+    await testQueue.obliterate({ force: true }).catch(() => {});
     await testQueue.close();
     await testQueueConn.quit();
     await testWorkerConn.quit();

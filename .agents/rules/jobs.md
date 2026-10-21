@@ -29,6 +29,7 @@ The failure tests at the end are the acceptance criteria; the prose alone proves
 | `status` | `pending`, `claimed`, `done`, `failed` |
 | `generation` | Increments on reschedule and on any recovery that needs a new job ID |
 | `execution_attempts` | Durable count of claimed executions. Never reset by recovery or rescheduling |
+| `recovery_count` | Consecutive sweep recoveries of a pending row whose job failed without any claim. Incremented with the generation bump, reset to 0 by a successful claim (see Attempt budget) |
 | `run_at` | When the work should happen (business time). Recovery never moves it |
 | `available_at` | When a timed sweep may treat the row as lost |
 | `claim_token`, `claim_expires_at` | Current execution's ownership token and lease |
@@ -71,7 +72,14 @@ effects** — that is the job of the idempotency rules below.
   of running. **A failing execution at the max** marks it `failed`, matched as in Ownership rule 3.
 - BullMQ `attempts` only paces retries with backoff. The durable count decides `failed`, so queue loss and
   new generations never grant a fresh budget.
-- **Human retry only:** an explicit admin action sets `status='pending'`, resets `execution_attempts` to 0,
+- **Failures before a claim.** `execution_attempts` cannot see a job that fails before it claims
+  (Postgres unreachable at the claim, a bug in that path). `recovery_count` bounds that:
+  - It increments in the same statement as the generation bump, only for "the job failed or completed while
+    the row is still `pending`". Expired-claim recovery does not touch it.
+  - A successful claim resets it to 0 inside the claim update.
+  - At `WORK_MAX_RECOVERIES` (its own setting, defaulting to the attempt max) the sweep marks the row
+    `failed`, reason `unclaimable_after_recoveries: <sanitized BullMQ reason>`, instead of bumping again.
+- **Human retry only:** an explicit admin action sets `status='pending'`, resets `execution_attempts` and `recovery_count` to 0,
   increments `generation`, sets `available_at = now()`, logs who and why, and enqueues the new job ID.
   Sweeps never retry `failed` rows.
 
@@ -104,8 +112,9 @@ effects** — that is the job of the idempotency rules below.
 - Missing → add it with the remaining delay.
 - Waiting, delayed or active → leave it.
 - **Failed or completed** (BullMQ's own retries ran out, or a completion update was lost) → re-adding
-  that ID does nothing, so start a **new generation**: bump `generation`, keep `execution_attempts`,
-  enqueue the new ID. The durable budget still decides `failed`.
+  that ID does nothing, so start a **new generation**: bump `generation` and `recovery_count`, keep
+  `execution_attempts`, enqueue the new ID. At the recovery cap, mark `failed` instead (see Attempt budget).
+  Without the cap a job that never claims would be recreated on every sweep forever.
 - Expired-claim recovery bumps `generation` and clears the claim in one transaction.
 - The timed sweep picks its batch with `SELECT … FOR UPDATE SKIP LOCKED` inside a transaction. That lock
   protects only the pick. **No session-level advisory locks** — Neon's transaction-mode pooler doesn't
@@ -183,3 +192,7 @@ Each asserts rows and logs, not just "no error".
 14. **Stripe uncertain result:** a charge call times out after Stripe received it → the retry finds
     the existing payment; no second charge.
 15. **Reschedule finished work:** rescheduling a `done` or `failed` row changes nothing and enqueues nothing.
+16. **Pre-claim failures are bounded:** a job fails before every claim, across sweeps → the generation and
+    `recovery_count` rise to `WORK_MAX_RECOVERIES`, then the row is `failed` with
+    `unclaimable_after_recoveries`, `execution_attempts` still 0, no job for a further generation, and later
+    sweeps leave it alone. A successful claim resets `recovery_count`.

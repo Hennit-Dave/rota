@@ -84,7 +84,8 @@ export async function renewClaimLease(
 /**
  * Creates a BullMQ worker processor enforcing:
  * - Shard routing by validated server-generated shard identifier ('A' | 'B')
- * - Atomic claim with generation match, run_at <= now, and pending or expired lease
+ * - Atomic claim with generation match, run_at <= now, and pending or expired lease; a successful claim
+ *   resets recovery_count (ADR 0004)
  * - Explicit failure on unsupported job kinds (never marks unperformed work done)
  * - Missing work row detection without silently disguising routing failures
  * - Contention detection without attempt increments or completion
@@ -124,6 +125,7 @@ export function createWorkProcessor(
           claim_token = ${claimToken}::uuid,
           claim_expires_at = NOW() + (${leaseMs} || ' milliseconds')::interval,
           execution_attempts = execution_attempts + 1,
+          recovery_count = 0,
           updated_at = NOW()
       WHERE id = ${rowId}::uuid
         AND generation = ${generation}
@@ -141,6 +143,7 @@ export function createWorkProcessor(
         status: rawRow.status,
         generation: Number(rawRow.generation),
         executionAttempts: Number(rawRow.execution_attempts ?? rawRow.executionAttempts ?? 0),
+        recoveryCount: Number(rawRow.recovery_count ?? rawRow.recoveryCount ?? 0),
         runAt: new Date(rawRow.run_at ?? rawRow.runAt),
         availableAt: new Date(rawRow.available_at ?? rawRow.availableAt),
         claimToken: rawRow.claim_token ?? rawRow.claimToken ?? null,

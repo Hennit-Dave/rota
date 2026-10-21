@@ -93,6 +93,63 @@ export function formatJobId(rowId: string, generation: number): string {
 }
 
 /**
+ * Add the BullMQ job for an existing work row's current generation (jobs.md, Job IDs and Scheduling).
+ * Shared by the producer and the reconciler so both use the same ID, delay rule and retry options.
+ *
+ * - The ID is deterministic, so adding an ID that already exists is ignored by BullMQ.
+ * - delay = max(0, run_at - now): a restored job never runs early and never moves run_at.
+ * - Bounded by PRODUCER_ENQUEUE_TIMEOUT_MS. Throws on timeout or rejection; the caller decides what a
+ *   failure means for the row.
+ */
+export async function addWorkJob(
+  queue: Queue,
+  row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>,
+  shard: ShardId,
+): Promise<{ jobId: string; delayMs: number }> {
+  const jobId = formatJobId(row.id, row.generation);
+  const delayMs = Math.max(0, row.runAt.getTime() - Date.now());
+
+  const jobOpts: JobsOptions = {
+    jobId,
+    delay: delayMs,
+    attempts: BULLMQ_JOB_ATTEMPTS,
+    backoff: {
+      type: 'exponential',
+      delay: WORK_BACKOFF_DELAY_MS,
+    },
+  };
+
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Valkey enqueue timed out after ${PRODUCER_ENQUEUE_TIMEOUT_MS}ms`));
+      }, PRODUCER_ENQUEUE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+
+    const addPromise = queue.add(
+      row.kind,
+      { rowId: row.id, generation: row.generation, shard },
+      jobOpts,
+    );
+
+    // Safely log late settlement so an unhandled rejection doesn't crash the process
+    addPromise.catch((err) => {
+      console.warn(
+        `[enqueue:late_rejection] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${shard}: ${sanitizeError(err)}`,
+      );
+    });
+
+    await Promise.race([addPromise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  return { jobId, delayMs };
+}
+
+/**
  * Enqueue a work row (jobs.md, ADR 0002, ADR 0003):
  * 1. Validates shard identifier ('A' | 'B').
  * 2. Writes Postgres row first (committed fact).
@@ -127,43 +184,10 @@ export async function enqueueWorkRow(
   });
 
   const jobId = formatJobId(row.id, row.generation);
-  const delay = Math.max(0, runAt.getTime() - Date.now());
 
-  let timer: NodeJS.Timeout | undefined;
   try {
     const queue = options.queue ?? getProducerQueue(options.queueName);
-
-    const jobOpts: JobsOptions = {
-      jobId,
-      delay,
-      attempts: BULLMQ_JOB_ATTEMPTS,
-      backoff: {
-        type: 'exponential',
-        delay: WORK_BACKOFF_DELAY_MS,
-      },
-    };
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`Valkey enqueue timed out after ${PRODUCER_ENQUEUE_TIMEOUT_MS}ms`));
-      }, PRODUCER_ENQUEUE_TIMEOUT_MS);
-      timer.unref?.();
-    });
-
-    const addPromise = queue.add(
-      kind,
-      { rowId: row.id, generation: row.generation, shard: options.shard },
-      jobOpts,
-    );
-
-    // Safely log late settlement so an unhandled rejection doesn't crash the process
-    addPromise.catch((err) => {
-      console.warn(
-        `[enqueue:late_rejection] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${sanitizeError(err)}`,
-      );
-    });
-
-    await Promise.race([addPromise, timeoutPromise]);
+    await addWorkJob(queue, row, options.shard);
   } catch (err: any) {
     console.warn(
       `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${sanitizeError(err)}`,
@@ -177,8 +201,6 @@ export async function enqueueWorkRow(
         AND generation = ${row.generation}
         AND status = 'pending'
     `;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 
   return row;
