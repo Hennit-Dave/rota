@@ -18,9 +18,9 @@ npm ci
 npm run db:generate    # generates the Prisma client into src/generated/ (gitignored, so a fresh clone has none)
 npm run build
 npm run typecheck
-npm test              # runs unit tests (9 tests, zero database mutations)
-npm run test:integration # runs database integration tests (needs .env, guards against non-test DB)
-npm run start:api      # terminal 1: http://localhost:3000/health returns {"ok":true}
+npm test              # runs unit tests (no database, no network)
+npm run test:integration # runs database integration tests (needs .env, guards against non-test DB); also test:integration:slow and test:all, see below
+npm run start:api      # terminal 1: http://localhost:3000/health returns {"ok":true}. Needs AUTH_JWT_SECRET (see below)
 npm run start:worker   # terminal 2: logs "worker running"
 ```
 
@@ -56,3 +56,30 @@ The service must have `maxmemory-policy: noeviction`.
 | `npm run jobs:prove:boxes-4-5` | `VALKEY_URL`, `SHARD_A_DATABASE_URL`, `SHARD_B_DATABASE_URL` | Proves Box 4 (immediate execution on Shards A & B with timing) and Box 5 (delayed fire strictly at/after run_at, exponential backoff) |
 | `npm run jobs:prove:crash` | `VALKEY_URL`, `SHARD_A_DATABASE_URL` | Proves Box 6 (abrupt SIGKILL termination mid-claim and recovery upon lease expiry) |
 
+### Authentication (server only; needs `AUTH_JWT_SECRET`, `VALKEY_URL` and the shard URLs in `.env`)
+
+Email-and-password sign-up with short-lived access tokens, rotating refresh tokens and logout. The API refuses to start
+without a signing secret. Routes, error codes and limits: `docs/ARCHITECTURE.md` (section 5) and `docs/SECURITY.md`.
+
+```sh
+openssl rand -base64 32   # copy the output into AUTH_JWT_SECRET in the root .env (at least 32 bytes once decoded)
+cd server && npm run build && npm run start:api
+```
+
+| Command | What it does |
+|---|---|
+| `npm test` | Unit tests only: no database, no network |
+| `npm run test:integration` | Needs the `TEST_*` variables in `.env`. Runs against the **test** shards and real Valkey, one file at a time. The fast integration tests |
+| `npm run test:integration:slow` | The concurrency and revocation-race tests (`*.slow.test.ts`). They hold database locks on purpose and take minutes against Neon |
+| `npm run test:all` | All three. **Run it before every PR** |
+
+Try it (default port 3000). This writes to the database in `SHARD_A_DATABASE_URL`, which is the real shard A, so use an address you are happy to leave there:
+
+```sh
+curl -s -X POST localhost:3000/auth/register -H 'content-type: application/json' \
+  -d '{"name":"Ada Example","email":"ada@example.com","password":"a-long-enough-passphrase"}'
+# -> 201 { user, session: { accessToken, accessTokenExpiresAt, refreshToken } }
+curl -s localhost:3000/auth/me -H "authorization: Bearer $ACCESS_TOKEN"
+curl -s -X POST localhost:3000/auth/refresh -H 'content-type: application/json' -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
+curl -s -X POST localhost:3000/auth/logout -H "authorization: Bearer $ACCESS_TOKEN"
+```

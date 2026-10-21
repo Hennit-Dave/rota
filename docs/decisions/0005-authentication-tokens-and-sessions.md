@@ -48,6 +48,28 @@ leaves every number to an ADR: token lifetimes, the clock-skew allowance, the pa
   per-token revocation column: one source of truth.
 - Rotation, reuse detection and revocation follow `security.md` exactly: one transaction, the family row locked
   `FOR UPDATE`, reuse revokes the family and **commits** before the 401 is returned. **No grace window.**
+  - `POST /auth/refresh` takes `{ refreshToken }` (exactly 43 base64url characters, else `400`), is rate limited by IP
+    (`refresh_ip`) *before* the database is touched, and answers `200 { session }`. The presented token is looked up by hash
+    outside the transaction (so a made-up token costs one read), then inside it: lock the family, reject if revoked or past
+    its absolute expiry, consume the token with one conditional `UPDATE` (unused and not idle-expired), insert the
+    replacement, commit. The replacement's idle expiry is capped at the family's absolute expiry.
+  - The transaction **returns** its outcome and the route throws the 401 afterwards. Throwing inside would roll back the
+    family revocation and leave a stolen session alive.
+  - Only a token that was already **used** counts as theft. An idle-expired token, an expired family or an already revoked
+    family is refused (401) without revoking anything further, and an earlier `revoked_reason` is never overwritten.
+  - `POST /auth/logout` (this device) and `POST /auth/logout-all` (every device) are user routes (access token and session
+    check, empty body and query). They take the same family lock. `logout-all` locks all of the user's families **in id order**
+    so two of them, or one of them against a single-family lock, cannot deadlock. Both answer `204` and are idempotent.
+  - `revoked_reason` values: `logout`, `logout_all`, `reuse_detected`.
+- **Transaction wait.** Every auth transaction waits up to **5 s** to start (`AUTH_TRANSACTION_MAX_WAIT_MS`, default 5000;
+  Prisma's own default is 2 s). **Measured locally; re-measure on the deployment host.** Basis: a first query on a cold
+  connection to Neon took 3.7 s from the development machine, so 5 s is that plus margin. If it still cannot start in time
+  (Prisma `P2028`), the answer is `503 service_unavailable`, not `500`; nothing was consumed, so the app can retry. The re-measure
+  is tracked on issue #7.
+- **App rule for refresh failures (for the app slice).** Any `400` or `401` from `POST /auth/refresh` means **sign out locally**
+  (clear the secure-store tokens and the caches). A `400` also means the app sent a malformed token, which is an app bug: log it.
+  A `503` or a network error is **not** a sign-out: keep the tokens and retry. Logout (`/auth/logout`, `/auth/logout-all`) returns
+  `204` with an empty body.
 - **One public 401 code, `unauthenticated`,** for every failed access token or refresh token. The true reason
   (`reuse_detected`, `expired`, `revoked`, `unknown`) goes to the server log only.
 - Errors share one body: `{ error: { code, message, requestId, details? } }`. The app switches on `code`.
@@ -96,8 +118,14 @@ cannot register and must recover through magic link or reset, which arrive in PR
 - **Known weaknesses, accepted:**
   - No grace window: a refresh whose response is lost looks like reuse on the next refresh and forces a login.
   - Used refresh-token rows must be kept until their family expires so reuse can be detected. They accumulate; a
-    purge job is a follow-up, not in PR A.
+    purge job is a follow-up (issue #20), not in PR A.
   - A login that starts while `logout-all` runs creates a new family and is not revoked by it.
+  - A thief who refreshes *first* and keeps rotating while the real owner is offline holds a working session (up to the
+    90-day absolute limit) until the owner's next refresh presents the old token. That is detected and kills the family, but
+    until then there is no signal. Reuse detection catches theft only when both parties use the token.
+  - A refresh that can't start its transaction within the 5 s wait (cold database connection) is a retryable `503`. The 5 s was
+    measured on the development machine only (see Decision).
+  - Used and expired refresh-token rows are never deleted yet; a purge job is a separate follow-up, tracked in issue #20.
 - **NIST SHALL not yet met: no list with a confirmed data licence.** Decided by Dave on 2026-10-21: option C, defer and
   document the gap; **no list is bundled.** NIST 3.1.1.2: *"verifiers **SHALL** compare the prospective secret against a
   blocklist that contains known commonly used, expected, or compromised passwords. The entire password **SHALL** be subject
@@ -115,10 +143,25 @@ cannot register and must recover through magic link or reset, which arrive in PR
 - Also from NIST 3.1.1.2, handled: NFC normalisation, counting code points, no truncation, no composition rules. Not
   handled: *"Verifiers **SHALL** allow the use of password managers and autofill functionality"* is a property of the app's
   inputs, to be checked in the app slice.
-- **Revisit when:** the host is chosen (re-benchmark hashing, ADR 0006), a second API process exists (clock skew),
+- **Revisit when:** the host is chosen (re-benchmark hashing, ADR 0006; measure cold-connection time and set the transaction wait), a second API process exists (clock skew),
   or sign-up verification email is built (the 409 trade-off and the squatting risk).
 
 ## Evidence
 
-Pending PR A stages 2 and 3: the refresh, reuse, concurrent-refresh, revocation-race and logout-all tests, and the
-request/response sequence in the PR description.
+Run from `server/`; integration tests need the `TEST_*` variables in `.env` and use the test shards.
+
+| Behaviour | Test (file) |
+|---|---|
+| Rotation: new token, old token refused, hashes only in the database (security.md 5) | `refresh.integration.test.ts` |
+| Reuse revokes and commits the family; newest token and its access tokens die; another device lives (6) | `refresh.integration.test.ts` |
+| Two simultaneous refreshes: one 200, one 401, the winner's new token dead (7); three at once: one winner (data.md 9) | `concurrency.slow.test.ts` |
+| Revocation race, deterministic: revocation first, and refresh first (8) | `concurrency.slow.test.ts` |
+| Revocation race, repeated 15 times with random offsets: nothing survives (8) | `concurrency.slow.test.ts` |
+| Logout ends this device only; logout-all ends every family, keeps earlier reasons, spares other users (9) | `logout.integration.test.ts` |
+| No deadlock when logout, logout-all and refresh run together | `concurrency.slow.test.ts` |
+| Same 401 body for unknown, idle-expired, expired and revoked; reason only in the log | `refresh.integration.test.ts` |
+| 429 before the token is touched; Valkey down is 503 and consumes nothing; no token in any log line | `refresh.integration.test.ts` |
+| Token shape, strict body | `schemas.unit.test.ts`, `refresh.integration.test.ts` |
+| P2028 is a 503 | `http.unit.test.ts` |
+
+Commands and the live request/response sequence are in the PR A description.
