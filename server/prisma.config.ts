@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { defineConfig } from 'prisma/config';
 
 // Migrations always use the DIRECT (unpooled) URL: Prisma's migration engine does not work through
