@@ -1,6 +1,7 @@
 # 0003: Queue and worker foundation, Valkey substitution, and durable claims
 
-- **Status:** proposed (accepted when Dave merges PR 2)
+- **Status:** Accepted
+- **Facilitator sign-off on Valkey replacing Redis:** pending
 - **Date:** 2026-10-19
 - **Decided by:** Dave
 - **Related:** issue #13 (Refs), PR `feat/queue-worker`, `.agents/rules/jobs.md`, `docs/ARCHITECTURE.md`
@@ -45,7 +46,7 @@ The infrastructure gate requires background job processing, delayed execution, r
    - 3-field check on renewal, release, completion, and terminal failure (`status = 'claimed' AND generation = $gen AND claim_token = $token`).
 7. **Recovery boundary (PR 2 vs PR 3):**
    - PR 2 proves worker-restart recovery via BullMQ stalled-job detection and expired-claim reclamation, and verifies early-fire delayed scheduling.
-   - PR 3 implements the independent reconciliation sweep (reconciliation interval candidate `RECONCILE_INTERVAL_MS = 1800000`, explicitly pending PR 3 approval) and queue-loss recovery on local Homebrew Valkey without `FLUSHALL`.
+   - PR 3 implements the independent reconciliation sweep (`RECONCILE_INTERVAL_MS = 1800000`, approved; see ADR 0004). The end-to-end queue-loss proof (local Valkey, no `FLUSHALL`) is deferred to "Later proofs (not blocking)" in `AGENTS.md`.
 
 ## Why
 
