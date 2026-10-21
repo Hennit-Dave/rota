@@ -8,7 +8,7 @@ The seven self-study topics (a graded requirement). Tick a topic only when its e
 - [ ] Why AsyncStorage is unsafe for tokens
 - [ ] Refresh-token rotation and reuse detection
 - [x] Idempotency (2026-10-21)
-- [ ] Observability
+- [x] Observability
 - [ ] Load testing
 - [x] Architecture Decision Records (2026-10-16)
 
