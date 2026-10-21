@@ -28,6 +28,19 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
   email, a password or a token, so none of them can reach a log line. Error text passes through the shared redaction.
 - This is the minimum. The logger library and Sentry are chosen at build step 3.
 
+## Passwords (threat 5, with rate limiting)
+
+- Stored as Argon2id (19 MiB, 2 iterations, parallelism 1) on shard A, in `credentials.password_hash`. Never returned, never
+  logged. Library and benchmark: ADR 0006.
+- Policy (NIST SP 800-63B-4, ADR 0005): minimum 15 and maximum 128 characters, counted as Unicode code points; NFC-normalised;
+  no composition rules; over-long passwords are rejected, never truncated. A blocklist check exists but **its list is empty:
+  NIST SHALL not yet met, no list with a confirmed data licence** (ADR 0005; tracked in `AGENTS.md`, "Later proofs").
+- Login never says which of email or password was wrong: one `401 invalid_credentials`, and an unknown email still runs one
+  Argon2 verification against a dummy hash so timing does not reveal accounts.
+- **Accepted trade-off: `409 email_in_use` at sign-up reveals that an address has an account.** Sign-up verification is deferred,
+  so there is no way to answer identically. The route is rate limited. **Squatting risk until magic link / verification
+  lands:** anyone can register someone else's address (unverified) and hold the account.
+
 ## Signing secret
 
 `AUTH_JWT_SECRET` is base64 of at least 32 random bytes (RFC 7518 section 3.2). Generate: `openssl rand -base64 32`.

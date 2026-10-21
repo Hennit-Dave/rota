@@ -150,6 +150,9 @@ queue-loss recovery depends on already exists (ADR 0004); only its end-to-end pr
       process restores them from Postgres. A worker restart alone doesn't prove this.
 - [ ] Queue-loss recovery repeated with the deployed worker
 - [ ] One email from the worker through Resend. Proven with the invite feature.
+- [ ] Password blocklist data: bundle a list of common/compromised passwords whose data licence is confirmed (or write our
+      own), with its source and licence notice. The mechanism exists but the list is empty, so NIST SP 800-63B-4 3.1.1.2's
+      blocklist SHALL is not yet met (ADR 0005).
 
 ## Deployment gate — before read-your-own-writes is marked done, and before submission
 

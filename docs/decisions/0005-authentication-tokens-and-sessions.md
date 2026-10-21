@@ -70,6 +70,10 @@ leaves every number to an ADR: token lifetimes, the clock-skew allowance, the pa
     Length is therefore counted in code points, not UTF-16 units (an emoji is one character, not two).
   - Truncation: *"Verifiers **SHALL** request the password to be provided in full (not a subset of it) and **SHALL**
     verify the entire submitted password (e.g., not truncate it)."* Over-long passwords are rejected, never cut.
+- **Implemented in PR A stage 2:** passwords are NFC-normalised (a SHOULD in 3.1.1.2), length is counted in code points,
+  over-long passwords are rejected rather than cut, and a blocklist check exists (its list is empty, see Consequences). A password that fails any of these is
+  `400 validation_failed` with a detail on path `password`: code `too_short` (with `min`), `too_long` (with `max`) or
+  `password_common`. Login applies none of these rules (a short old password is checked, not rejected).
 - OWASP ASVS 5.0 requirement 6.2.1 sets 8 as its Level 1 floor and "strongly recommends" 15
   (https://github.com/OWASP/ASVS/blob/master/5.0/en/0x15-V6-Authentication.md; read through a search excerpt only).
 
@@ -94,12 +98,23 @@ cannot register and must recover through magic link or reset, which arrive in PR
   - Used refresh-token rows must be kept until their family expires so reuse can be detected. They accumulate; a
     purge job is a follow-up, not in PR A.
   - A login that starts while `logout-all` runs creates a new family and is not revoked by it.
-- **Open, raised to Dave on 2026-10-21, not built in PR A:** NIST 3.1.1.2 also says *"verifiers **SHALL** compare the
-  prospective secret against a blocklist that contains known commonly used, expected, or compromised passwords. The
-  entire password **SHALL** be subject to comparison, not substrings or words that might be contained therein."*
-  It also says verifiers *"**SHOULD** apply the normalization process for stabilized strings using the Normalization
-  Form Canonical Composition (NFC)"* before hashing, and *"**SHALL** allow the use of password managers and
-  autofill functionality."* A password policy that cites NIST is not complete without the blocklist.
+- **NIST SHALL not yet met: no list with a confirmed data licence.** Decided by Dave on 2026-10-21: option C, defer and
+  document the gap; **no list is bundled.** NIST 3.1.1.2: *"verifiers **SHALL** compare the prospective secret against a
+  blocklist that contains known commonly used, expected, or compromised passwords. The entire password **SHALL** be subject
+  to comparison, not substrings or words that might be contained therein."* The mechanism is built and tested (whole
+  password, NFC, case-insensitive, error `password_common`; `server/src/auth/blocklist.ts`), but the production list is
+  **empty** and the API logs `password_blocklist_empty` at every startup, so the gap cannot go unnoticed.
+  - *Why deferred.* The best candidate was SecLists (`Passwords/Common-Credentials/xato-net-10-million-passwords*.txt`),
+    whose repository licence is MIT (Copyright (c) 2018 Daniel Miessler). Nothing in that repository says the MIT grant
+    covers the password data itself or states the licence of the upstream dataset. The UK NCSC top-100k list could not be
+    checked (its page is removed and its file and terms pages return 404). A confident "clean licence" was not possible.
+  - *What a list would cost, measured:* only entries of 15 or more characters matter, because shorter passwords are already
+    rejected by length. From SecLists, 10,908 entries (188 KiB) come from the top 1M, and 141,033 entries (2.4 MiB) from all 5.2M.
+  - *To close the gap:* confirm the data licence of one list (or write our own), bundle it with its source, licence notice and
+    a generator script, and replace this bullet. Tracked in `AGENTS.md` under "Later proofs (not blocking)".
+- Also from NIST 3.1.1.2, handled: NFC normalisation, counting code points, no truncation, no composition rules. Not
+  handled: *"Verifiers **SHALL** allow the use of password managers and autofill functionality"* is a property of the app's
+  inputs, to be checked in the app slice.
 - **Revisit when:** the host is chosen (re-benchmark hashing, ADR 0006), a second API process exists (clock skew),
   or sign-up verification email is built (the 409 trade-off and the squatting risk).
 
