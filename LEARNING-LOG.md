@@ -1,5 +1,17 @@
 # Learning log
 
+## Self-study checklist
+
+The seven self-study topics (a graded requirement). Tick a topic only when its entry below is written in your own words. Agents point out what is missing; they never write or edit an entry.
+
+- [ ] EAS Build
+- [ ] Why AsyncStorage is unsafe for tokens
+- [ ] Refresh-token rotation and reuse detection
+- [x] Idempotency (2026-10-21)
+- [ ] Observability
+- [ ] Load testing
+- [x] Architecture Decision Records (2026-10-16)
+
 ## 2026-10-15 — Agent instruction setup
 
 Using one canonical file gives Claude Code and the Antigravity agent a single source of truth. If each agent had its own copy of the project instructions, those copies could gradually become different, causing the agents to follow different rules. With one shared file, I only need to update the instructions once. Both agents still need to know where that file is and when to read it.
@@ -62,4 +74,13 @@ This matters because being queued or claimed is not proof that the actual work h
 
 **Sources read:**  
 - Stripe documentation — idempotent requests  
+
+## 2026-10-21 — Request IDs and safe logging · Self-study: Observability
+
+Observability means being able to understand what happened inside a running system from the information it records. The brief’s goal is to answer “What happened to this user’s payment at 3:14pm?” using logs alone. The login logging is a step toward that goal, but payment tracing is still unfinished.
+The user sees a general message such as “Email or password is incorrect,” while the internal log records the specific reason, such as bad_password. This helps investigate the failure without revealing to the caller whether an account exists. Each request gets a request ID—a tracking number shared by its log entries—so one login attempt can be followed without mixing it up with others.
+An allow-list limits logging to approved fields, such as request ID, status and duration. If a new field hasn’t been approved, it stays out. This is safer than recording everything and trying to remove known secrets, because someone could forget to block a sensitive field. Approved fields still need checking to ensure their contents don’t expose passwords, tokens or other private information.
+Logs also need testing. The reported bug recorded /login instead of /auth/login, showing that an application can work while its logs give misleading information. The lesson is to record enough to investigate problems, protect private information, and test that the records are accurate. Following payments through background jobs and keeping logs available long enough to investigate them still needs work.
+**Sources read:**  
+- OWASP Logging cheat sheet - 
 
