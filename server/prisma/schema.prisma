@@ -54,3 +54,67 @@ model WorkRow {
   @@index([status, claimExpiresAt], map: "work_rows_status_claim_expires_at_idx")
   @@map("work_rows")
 }
+
+// ---- Identity (shard A only in practice; the same migrations run on both shards, data.md) ----
+// users, credentials and refresh-token records live on shard A. Reads always use the primary.
+
+model User {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Stored trimmed and lowercased by the application; the unique index makes registration atomic.
+  email           String    @unique
+  name            String
+  // NULL = unverified. Signup verification is deferred (security.md).
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  credential Credential?
+  families   RefreshTokenFamily[]
+
+  @@map("users")
+}
+
+model Credential {
+  userId       String   @id @map("user_id") @db.Uuid
+  // Argon2id PHC string. Never logged, never returned.
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("credentials")
+}
+
+// One row per device login. The family is the "session": the access token carries its ID and every
+// authenticated request checks it. Revoking the family revokes every token in it (ADR 0005).
+model RefreshTokenFamily {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  // logout | logout_all | reuse_detected
+  revokedReason     String?   @map("revoked_reason")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokens RefreshToken[]
+
+  @@index([userId], map: "refresh_token_families_user_id_idx")
+  @@map("refresh_token_families")
+}
+
+model RefreshToken {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  familyId      String    @map("family_id") @db.Uuid
+  // SHA-256 of the opaque token. The token itself is never stored.
+  tokenHash     Bytes     @unique @map("token_hash")
+  idleExpiresAt DateTime  @map("idle_expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  family RefreshTokenFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId], map: "refresh_tokens_family_id_idx")
+  @@map("refresh_tokens")
+}
