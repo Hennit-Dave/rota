@@ -151,3 +151,19 @@ One thing that surprised me was the emulator froze because the Mac ran low on me
 
 **Sources read**
 Development build guidance and EAS Build documentation.
+
+
+## 2026-10-22 — Sign-in screens (PR #30)
+
+**What this slice does**
+It adds login and signup screens and connects them to the server. After a successful login or signup, the app stores the login tokens safely in SecureStore.
+
+**How the app decides what to show on launch**
+The app checks the saved session with the server first. While checking, it shows a loading screen. A valid session opens the signed-in screens; an invalid or missing session opens the login and signup screens. A connection problem should allow a retry rather than automatically treating the user as logged out.
+
+**Errors come from the server**
+The server returns an error code, and the app turns it into a clear message. This keeps the app's response consistent with what actually happened.
+"Email or password is incorrect" appears in a banner because the server deliberately doesn't reveal which detail was wrong. Marking either field would suggest the app knows which one caused the failure and could reveal whether an account exists.
+
+**What I learned**
+One thing I learned is from missing the grey-dim bug. I was told to record every bug along the way for the build, but the agent went ahead and fixed it. If it had been recorded, it would give me an edge if something like that occurred again. I then told the agent to always stop and show me any bug it encounters before fixing it, so I can record the bug and also record the fix.
