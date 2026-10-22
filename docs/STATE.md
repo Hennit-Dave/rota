@@ -19,13 +19,16 @@ rows marked *planned* are filled in by the slice that builds them.
 |---|---|---|---|---|
 | API health result (`['health']`) | TanStack Query | It is server data (a diagnostic probe) | `staleTime` 0, `gcTime` 60 s: a health check is only worth anything if it is fresh, so it always refetches and is dropped quickly | No |
 | Access token and refresh token | `expo-secure-store`, one item `rota.session` holding both | `AGENTS.md` rule 4. One item so a crash cannot leave tokens from two different refreshes side by side | n/a | Yes, in secure-store only. Never in the query cache, AsyncStorage, a log or backup (Android backup rules exclude secure-store) |
-| Session status (`restoring`, `signedOut`, `signedIn`) | Zustand | Client-only. Rebuilt on launch from whether tokens exist; the first authenticated request proves they still work | n/a | No |
+| Session status (`restoring`, `signedOut`, `signedIn`) | Zustand | Client-only. Rebuilt on launch from a **verified** restore (below): stored tokens plus a successful `GET /auth/me`, or tokens kept when the server could not be asked. It also decides which side of the app exists (`Stack.Protected`) | n/a | No |
+| The signed-in user (`['me']`: id, email, name, emailVerified) | TanStack Query | Server data. Seeded from the sign-in, sign-up or restore answer, so the placeholder home needs no second request. The key has no user ID because the answer *is* "who am I"; sign-out clears the whole cache, so it cannot leak to the next account | TanStack defaults (`staleTime` 0, `gcTime` 5 min), with `refetchOnMount: false`: it is refetched when the app returns to the foreground, not on every screen visit. No number invented for a placeholder screen; set properly with the real home | No |
+| Sign-in and sign-up form fields (name, email, password) | Component state (`useState`) | A password must never sit in the Zustand store, the query cache or a TanStack mutation (which keeps its variables in memory), so sign-in and sign-up are plain async functions, not mutations. Cleared when the screen goes away | n/a | No, and never in a log |
 | Selected team ID | Zustand | Client-only choice. An ID only: the server checks membership on every request (`security.md`) | n/a | No (whether it should survive a restart is decided with the team screens) |
-| Sign-out notice (`none`, `session_ended`, `revoke_unconfirmed`) | Zustand (UI flag) | Tells the signed-out screen which message to show | n/a | No |
+| Sign-out notice (`none`, `session_ended`, `revoke_unconfirmed`) | Zustand (UI flag) | Tells the signed-out side which screen to open first: `/session-ended`, `/signed-out-offline`, or `/login`. Cleared on sign-in and when the user moves on | n/a | No |
 | Account epoch | A plain in-memory counter (`app/src/auth/epoch.ts`) | Not UI state and must be readable from non-React code. Discards results that belong to a previous account | n/a | No, on purpose |
+| Launch overlay phase (`launch`, `loading`, `done`) | Component state in `LaunchGate` | Derived from "has the session been restored" and one timer. Pure rules in `app/src/motion/launchPhase.ts`, unit-tested. Not in Zustand: nothing else reads it | n/a | No |
 | Connectivity | NetInfo, fed into TanStack's `onlineManager` | The rules need one answer to "are we online" for queries and for the API client | n/a | No |
 | App in foreground | React Native `AppState`, fed into TanStack's `focusManager` | Refetch when the app returns to the foreground (settings across devices, later) | n/a | No |
-| Theme (light/dark) | Follows the device for now | Becomes a per-user server setting in the settings slice. Auth screens stay light-only because the setting does not exist before sign-in (issue #24) | n/a | n/a |
+| Theme (light/dark) | Follows the device for now | Becomes a per-user server setting in the settings slice. Auth screens stay light-only (forced with `ColorsOverrideProvider`) because the setting does not exist before sign-in (issue #24) | n/a | n/a |
 | Upcoming shifts, "last updated" time | TanStack Query + persister over expo-sqlite (*planned*) | Offline viewing | *planned*: set in the offline-shifts slice, with the maximum age | *planned*: allowlisted fields only, cleared on logout |
 | Settings (quiet hours, time zone, notification types, language, theme) | TanStack Query, server is the source (*planned*) | Server-owned, per-field `updatedAt` | *planned* | No |
 
@@ -52,6 +55,40 @@ never an uncertain refresh. Mutations do not retry (`app/src/services.ts`, `app/
   (ADR 0005) and a cold Neon connection was measured at 3.7 s from the development machine. Tune it from real use.
 - The base URL must be `https`, except the local development server (`http://10.0.2.2:<port>`, `localhost`) in a development build.
 
+## App start: restoring the session (`app/src/auth/restore.ts`)
+
+The app decides which side to show only after the stored session has been checked with the server. While that runs the status is
+`restoring` and neither side exists.
+
+| What happens | Result | Status afterwards |
+|---|---|---|
+| No tokens on the device (or secure-store unreadable) | `signed_out`, nothing is sent | `signedOut` |
+| `GET /auth/me` answers 200 (after one refresh if the access token had expired) | `signed_in` | `signedIn`, `['me']` seeded |
+| The refresh is refused (400 or 401), or `/auth/me` is still 401 after a good refresh | `session_ended`, full local sign-out with that notice | `signedOut`, `/session-ended` |
+| Offline, timeout, 429, 503, an unreadable answer, or a refresh whose answer was lost | `unverified`: **the session is kept** (never replayed, `app-state.md`) | `signedIn`; home shows its own offline or "couldn't load" state with Retry |
+
+## The launch screen (`app/src/ui/LaunchGate.tsx`, `app/src/motion/`)
+
+The Shift-swap mark from the Figma Motion page covers the restore. Its rules, each tested in `app/src/motion/motion.test.ts`:
+
+- **It never adds waiting.** The app is rendered underneath the moment it is ready; the overlay fades out over 150 ms and ignores touches, so
+  nothing waits for the animation. Ready early means a cut to the app, not a finished swap.
+- **It plays only while the session restores:** one swap and back (1.08 s), on the teal of the native splash.
+- **Past one cycle it hands over to the Loading mark** (the teal fades to the app background so the teal-and-grey mark can be seen).
+- **Reduce motion** (`AccessibilityInfo.isReduceMotionEnabled`): no movement. Launch shows the static mark; Loading shows the static mark
+  with a visible "Loading…" label and no spinner.
+- **Size.** The animation starts at the size of the native splash mark (about 98 dp), not the 180 x 120 in Figma, so the mark does not jump
+  between the two. Pinned by `launchMetrics.test.ts` to `app.config.ts` and the splash PNG.
+
+## Signing in and signing up (`app/src/auth/authActions.ts`)
+
+`POST /auth/login` and `POST /auth/register` are public routes: no access token is attached and a 401 there means "wrong credentials",
+never a refresh. The answer is parsed, then (1) the epoch captured at the start is checked, so a sign-out or account switch while the
+request was out discards it (app-state.md test 9), (2) both tokens are written to secure-store as one item, (3) the epoch is checked
+again, and if a sign-out raced the write the tokens are cleared again, (4) only then does the store become signed in. If secure-store
+refuses the write the user is not signed in. Errors are mapped by the server's `code` and `details` to Figma's words
+(`app/src/auth/authFailure.ts`); the 429 wait is the server's `Retry-After`, only formatted (`app/src/auth/retryWait.ts`).
+
 ## Signing out and switching accounts (`app/src/auth/signOut.ts`, `session.ts`)
 
 Order, every time, even if a step throws (the tokens are always deleted):
@@ -64,6 +101,10 @@ Order, every time, even if a step throws (the tokens are always deleted):
 4. Reset Zustand to its initial state, carrying the notice (ADR 0008).
 5. Delete the tokens from secure-store.
 
+**Log out of all devices** (`POST /auth/logout-all`) needs the server: offline or failing, it does **not** sign out locally and shows an
+error, because signing out without ending the other sessions would tell the user every device is ended when it is not. On success the
+five steps run with no notice.
+
 **Explicit logout:** online, the app first asks the server to revoke this device's session (`POST /auth/logout`) so a copied refresh token
 stops working, then does the five steps. **Offline, or if the revoke fails,** it does the five steps at once and the notice
 `revoke_unconfirmed` tells the user the server could not confirm the session ended. A session the server already called invalid skips
@@ -71,8 +112,17 @@ the revoke.
 
 ## Known weaknesses (written down on purpose)
 
+- **Android focus highlight.** When a focused input is disabled or blurred, Android hands focus to the first focusable view, the page's
+  `ScrollView`, and draws its default focus highlight over the page (a uniform 7% dim). React Native's `focusable={false}` is not honoured by
+  `ScrollView` on Android, so a submit parks focus on a hidden input instead (`app/src/ui/FocusSink.tsx`). Revisit if a native rebuild ever
+  allows turning the default focus highlight off for the whole app.
+
 - **A lost refresh response forces a new login.** There is no grace window on the server (ADR 0005), so a refresh that succeeded but whose
   answer never arrived looks like reuse on the next attempt. Accepted trade-off.
+- **The helper "Use at least 15 characters." under the signup password is display copy**, a mirror of the server's policy (ADR 0005). Error
+  messages take their number from the server's `details`; if the policy changes, this copy and the Figma text change with it.
+- **A password that is on the common list is only rejected once a list exists:** the production blocklist is empty (ADR 0005), so
+  `password_common` is mapped and tested but the real server does not send it yet.
 - **Offline logout leaves the server session alive** until it expires or is revoked another way; the user is told.
 - *Planned, written when the settings slice lands:* last-writer-wins follows arrival order, not the user's intent, so a slow request can
   overwrite a newer change to the same field.

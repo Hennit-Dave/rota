@@ -114,8 +114,13 @@ npm start                                                    # Metro; then open 
 ```
 
 Run the API on a free port in another terminal (`PORT=3100 npm run dev:api` in `server/`; the server's default 3000 may be taken by another
-project). The first screen calls `GET /health` and says "The API answered: ok."; in a development build a link on it opens a check of every
-native module (`rota://dev-check`).
+project). The first screen is the sign-in screen. After signing in, the placeholder home has a development-only link to the API check
+(`/dev-api`: it calls `GET /health` and says "The API answered: ok."), and from there a link to a check of every native module
+(`rota://dev-check`, also reachable directly by that link, signed in or not).
+
+**Android 17 and the local API.** A development build declares `ACCESS_LOCAL_NETWORK` (dev-client server discovery), and on Android 17 an
+address such as `10.0.2.2` counts as the local network. If the "nearby devices" prompt was declined, requests to the local API hang with no
+error. Allow it, or run `adb shell pm grant design.davebuilds.rota android.permission.ACCESS_LOCAL_NETWORK`. A release build does not declare it.
 
 **Check 16 KB page-size support** (the emulator image is Android 17 with 16 KB pages; `adb shell getconf PAGE_SIZE` must print 16384):
 

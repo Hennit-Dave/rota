@@ -8,6 +8,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { queryClient, restoreSession, wireQueryManagers } from '../services';
 import { useSessionStore } from '../state/sessionStore';
 import { fontFiles, useColors } from '../theme';
+import { FocusSinkProvider } from '../ui/FocusSink';
+import { LaunchGate } from '../ui/LaunchGate';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -18,23 +20,35 @@ export default function RootLayout() {
 
   useEffect(() => {
     const unwire = wireQueryManagers();
-    void restoreSession();
+    // The session is checked with the server before either side is shown. If anything unexpected escapes, show sign-in.
+    restoreSession().catch(() => useSessionStore.getState().setSignedOut());
     return unwire;
   }, []);
 
   // A font that fails to load falls back to the system font rather than blocking the app.
   const ready = (fontsLoaded || fontError !== null) && status !== 'restoring';
-  useEffect(() => {
-    if (ready) void SplashScreen.hideAsync();
-  }, [ready]);
-
-  if (!ready) return null;
 
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <StatusBar style="auto" />
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} />
+        {/* The launch animation covers the restore. The native splash is hidden once its first frame is on screen, so the two meet without a flash. */}
+        <LaunchGate ready={ready} onShown={() => void SplashScreen.hideAsync()}>
+          <StatusBar style="auto" />
+          <FocusSinkProvider>
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+              {/* Which side exists depends only on the session status; a screen on the other side cannot be reached by link or back. */}
+              <Stack.Protected guard={status === 'signedIn'}>
+                <Stack.Screen name="(app)" />
+              </Stack.Protected>
+              <Stack.Protected guard={status === 'signedOut'}>
+                <Stack.Screen name="(auth)" />
+              </Stack.Protected>
+              {/* Development-only check screens, reachable from either side. */}
+              <Stack.Screen name="dev-api" />
+              <Stack.Screen name="dev-check" />
+            </Stack>
+          </FocusSinkProvider>
+        </LaunchGate>
       </QueryClientProvider>
     </SafeAreaProvider>
   );

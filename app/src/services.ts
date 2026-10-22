@@ -4,6 +4,9 @@ import { AppState } from 'react-native';
 import { createApiClient } from './api/client';
 import { readApiBaseUrl } from './api/config';
 import { shouldRetryQuery, type Logger } from './api/errors';
+import { createAuthActions } from './auth/authActions';
+import type { AuthUser } from './auth/authResponses';
+import { createRestoreSession } from './auth/restore';
 import { createSessionActions } from './auth/session';
 import { AccountEpoch } from './auth/epoch';
 import { secureTokenStore } from './auth/secureTokenStore';
@@ -82,15 +85,43 @@ export function wireQueryManagers(): () => void {
   };
 }
 
-/** Launch: look for stored tokens and set the store. The first authenticated request is what proves they work. */
+/** The one query that describes the signed-in user. Personal, so sign-out clears the whole cache (app-state.md). */
+export const meQueryKey = ['me'] as const;
+
+/** A session now exists (sign-in, sign-up, or a restore): seed the user the server returned and open the signed-in side. */
+function onSignedIn(user: AuthUser | null) {
+  if (user) queryClient.setQueryData(meQueryKey, user);
+  useSessionStore.getState().setSignedIn();
+}
+
+/** Sign in and sign up. Built on first use, like the API client, so a bad API address surfaces as an error on submit. */
+export function getAuthActions() {
+  return createAuthActions({
+    client: getApi(),
+    tokens: secureTokenStore,
+    epoch,
+    onSignedIn: (user) => onSignedIn(user),
+  });
+}
+
+/**
+ * App start: decide which side to show only after the stored session has been checked with the server (docs/STATE.md).
+ * Offline or unreachable keeps the session and shows the signed-in side with its own offline state (app-state.md).
+ */
 export async function restoreSession(): Promise<void> {
-  const store = useSessionStore.getState();
-  let hasSession = false;
+  let client: ReturnType<typeof getApi>;
   try {
-    hasSession = (await secureTokenStore.read()) !== null;
+    client = getApi();
   } catch {
-    // unreadable secure-store is treated as signed out
+    // No usable API address (a misconfigured build): nothing can be verified. Show the sign-in side; submitting reports it.
+    useSessionStore.getState().setSignedOut();
+    return;
   }
-  if (hasSession) store.setSignedIn();
-  else store.setSignedOut();
+  await createRestoreSession({
+    tokens: secureTokenStore,
+    client,
+    signOutLocal,
+    onSignedIn,
+    onSignedOut: () => useSessionStore.getState().setSignedOut(),
+  })();
 }
