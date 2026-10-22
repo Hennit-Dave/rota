@@ -4,14 +4,14 @@
 
 The seven self-study topics (a graded requirement). Tick a topic only when its entry below is written in your own words. Agents point out what is missing; they never write or edit an entry.
 
-- [ ] EAS Build
-- [ ] Why AsyncStorage is unsafe for tokens
+- [x] EAS Build
+- [x] Why AsyncStorage is unsafe for tokens
 - [x] Refresh-token rotation and reuse detection
 - [x] Idempotency (2026-10-21)
 - [x] Observability
 - [ ] Load testing
 - [x] Architecture Decision Records (2026-10-16)
-
+ 
 ## 2026-10-15 — Agent instruction setup
 
 Using one canonical file gives Claude Code and the Antigravity agent a single source of truth. If each agent had its own copy of the project instructions, those copies could gradually become different, causing the agents to follow different rules. With one shared file, I only need to update the instructions once. Both agents still need to know where that file is and when to read it.
@@ -112,3 +112,42 @@ JWT handling is the process of how an app checks and uses tokens safely, includi
 
 **Sources read**
 JSON Web Token Cheat Sheet — OWASP Cheat Sheet Series
+
+
+## 2026-10-22 — Offline storage and token storage · Self-study: Why AsyncStorage is unsafe for tokens
+
+**What AsyncStorage is**
+AsyncStorage is a simple way for an app to save small pieces of data on your device, even after you close it. For example, it can save app settings or your theme choice. Think of it like a small storage box for the app.
+
+**Why it's risky for tokens**
+However, it stores data unencrypted, so anyone who gains access to those files could read what is saved there. That makes it risky for login tokens.
+
+**What SecureStore does differently**
+Expo SecureStore protects the data you put in it, not the whole phone. In SecureStore, tokens are saved encrypted. On Android, it uses encryption keys protected by Android Keystore. A token is a secret that lets you access your account. If someone steals a usable token, they may be able to act as you until it expires or is revoked.
+
+**Shifts vs tokens in Rota**
+For Rota, Expo SQLite can hold the offline shifts the app needs. Shift information can still be private, so only the fields needed are kept, and the saved shifts are cleared on logout. Tokens need stronger protection, so they belong in SecureStore.
+
+**Sources read**
+Expo SecureStore documentation.
+
+
+## 2026-10-22 — App scaffold and first native build (PR #25, #27) · Self-study: EAS Build
+
+**What a development build is**
+A development build is a testing version of your own app. It includes the native features your app needs — parts that work directly with Android or iOS. Expo Go comes with a fixed set of those features, and you cannot add new native pieces to it.
+
+**What EAS Build does**
+EAS Build turns your project's code into an app you can install. Its cloud service does the building on Expo's computers instead of using your Mac. It can also manage the signing credentials used to sign the app.
+
+**Why the native modules were planned first**
+Adding native code that isn't already inside your development build requires rebuilding it. Planning the modules first helps avoid unnecessary builds and saves time and your cloud allowance. Ordinary JavaScript changes usually don't require a new native build.
+
+**What the local build proved**
+The local test checked that the app could build and run on the emulator using 16 KB memory pages. That helped catch compatibility problems before using a cloud build. The cloud APK still needed its own check because it was a separately built file.
+
+**What surprised me**
+One thing that surprised me was the emulator froze because the Mac ran low on memory: build programs were still running in the background and iCloud was likely syncing the project's build folders. The build tools were stopped, and I moved the project out of iCloud into a Developer folder.
+
+**Sources read**
+Development build guidance and EAS Build documentation.
