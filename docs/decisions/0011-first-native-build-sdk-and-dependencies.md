@@ -103,7 +103,7 @@ evidence is source inspection plus the build above.
   `expo-font` both families loaded · Sentry module imports (not initialised) · `react-native-svg` rendered. **14 of 14 OK.**
 - **The scheme works:** `adb shell am start -d rota://dev-check` opened that screen in the running app.
 - **App to API:** the placeholder screen shows "The API answered: ok." from `GET http://10.0.2.2:3100/health`.
-- Screenshots: `/Users/blk/Desktop/rota-pr-b-evidence/` (outside the repo, for the PR description).
+- Screenshots: `/Users/blk/Developer/rota-pr-b-evidence/` (outside the repo, for the PR description).
 - Unit tests: `cd app && npm test` (40 tests), `npm run typecheck`, `npx expo-doctor` (20/20). `python3 app/scripts/check-16kb.py <apk>` reproduces
   the APK checks (tested: passes on the real build, fails on a known 4 KB-aligned library).
 - Generated manifest: the `rota` scheme, and an `autoVerify` filter for `https://rota.davebuilds.design` at `/invite`, `/magic`, `/reset`
