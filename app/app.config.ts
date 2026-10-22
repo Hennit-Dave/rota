@@ -77,6 +77,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     package: 'design.davebuilds.rota',
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
+      // Android 13+ themed icons: the system tints this layer's shape (alpha only), so its colour does not matter.
+      monochromeImage: './assets/adaptive-icon-monochrome.png',
       backgroundColor: palette.teal,
     },
     googleServicesFile: googleServicesFile(),
@@ -105,8 +107,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         image: './assets/splash-icon.png',
         imageWidth: 200,
-        backgroundColor: palette.paper,
-        dark: { image: './assets/splash-icon.png', backgroundColor: palette.night },
+        // The mark is white on teal in light and dark mode alike, so there is no separate dark variant.
+        backgroundColor: palette.teal,
       },
     ],
     // ADR 0010: plain SQLite, no SQLCipher. The sqlite-vec extension ships a prebuilt vec.so that is NOT 16 KB
