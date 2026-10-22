@@ -26,10 +26,22 @@ only in this file.
 - Opening a deep link never consumes a token; returning from Checkout triggers a server status check.
 - Every list has loading, empty, end-of-list and error states.
 
-## Pending before the first native build
+## Decided (the three that were pending)
 
-The client state tool, the offline storage library, and the routing and deep-link library. Don't pick
-them; ask. Directory layout and commands are filled in by the scaffold slice.
+Client state: Zustand (ADR 0008). Offline storage: `expo-sqlite`, plain (ADR 0010). Routing and deep links:
+Expo Router, scheme `rota`, App Links on `rota.davebuilds.design` (ADR 0009). The first-build native list and the
+16 KB audit are ADR 0011.
+
+## Layout and commands
+
+`app/src/app/` routes (Expo Router) · `api/` client, errors, config · `auth/` epoch, token store, sign-out ·
+`state/` the Zustand store · `theme/` design tokens mirrored from Figma · `ui/` components · `services.ts` the only
+place real instances are wired. Config is `app.config.ts` (TypeScript); `android/` is generated and gitignored.
+
+Run from `app/`: `npm ci` · `npm run typecheck` · `npm test` (Node's test runner, no device) · `npx expo-doctor` ·
+`npm run start` (dev server for the development build). A local build and install is `cd android && ./gradlew
+app:assembleDebug -PreactNativeArchitectures=arm64-v8a` after `npx expo prebuild --platform android --no-install`
+(see the README for the JDK and Android SDK it needs).
 
 ## Design source
 

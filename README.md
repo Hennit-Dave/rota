@@ -83,3 +83,48 @@ curl -s localhost:3000/auth/me -H "authorization: Bearer $ACCESS_TOKEN"
 curl -s -X POST localhost:3000/auth/refresh -H 'content-type: application/json' -d "{\"refreshToken\":\"$REFRESH_TOKEN\"}"
 curl -s -X POST localhost:3000/auth/logout -H "authorization: Bearer $ACCESS_TOKEN"
 ```
+
+## Run the app (Android, development build)
+
+Expo SDK 58, React Native 0.88, Android only. Remote push does not work in Expo Go, so the app runs as a **development build**
+(a debug app that loads its JavaScript from your computer). Decisions and the 16 KB page-size audit: `docs/decisions/0011-*.md`.
+Where each piece of data lives: `docs/STATE.md`.
+
+```sh
+cd app
+npm ci
+npm run typecheck
+npm test                 # unit tests, no device (client, refresh, sign-out, config, EXPO_PUBLIC allowlist)
+npx expo-doctor          # 20 checks, should all pass
+```
+
+**Local build on an emulator or phone (free, does not use an EAS build).** Needs an Android SDK (`ANDROID_HOME`, usually
+`~/Library/Android/sdk`) and a JDK. Android Studio's bundled JDK (25 on 2026-10-21) built it with Gradle 9.4.1; EAS itself uses JDK 17.
+The first build downloads Gradle and NDK 27.1.12297006, so allow time and about 3 GB.
+
+```sh
+cd app
+echo 'EXPO_PUBLIC_API_URL=http://10.0.2.2:3100' > .env      # 10.0.2.2 = this computer, seen from the emulator
+npx expo prebuild --platform android --no-install            # generates android/ (gitignored)
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ANDROID_HOME=$HOME/Library/Android/sdk
+cd android && ./gradlew app:assembleDebug -PreactNativeArchitectures=arm64-v8a && ./gradlew --stop && cd ..
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb reverse tcp:8081 tcp:8081
+npm start                                                    # Metro; then open the app (or: adb shell am start -d "exp+rota://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081" design.davebuilds.rota)
+```
+
+Run the API on a free port in another terminal (`PORT=3100 npm run dev:api` in `server/`; the server's default 3000 may be taken by another
+project). The first screen calls `GET /health` and says "The API answered: ok."; in a development build a link on it opens a check of every
+native module (`rota://dev-check`).
+
+**Check 16 KB page-size support** (the emulator image is Android 17 with 16 KB pages; `adb shell getconf PAGE_SIZE` must print 16384):
+
+```sh
+python3 scripts/check-16kb.py android/app/build/outputs/apk/debug/app-debug.apk    # zipalign -c -P 16, then every 64-bit .so; ends "RESULT: PASS"
+```
+
+Run it on the EAS build's APK too, before installing it. It fails (exit 1) on any library that is not 16 KB aligned.
+
+Push needs `app/google-services.json` (Firebase client config, gitignored; ask Dave for it, or download it from the Firebase console for the
+Android app `design.davebuilds.rota`). EAS cloud builds get it from the EAS file variable `GOOGLE_SERVICES_JSON`. Without it the app builds and runs but cannot
+register for push. See ADR 0011. Nothing else needs a secret: the only `EXPO_PUBLIC_` variable is the API address (`docs/SECURITY.md`).
