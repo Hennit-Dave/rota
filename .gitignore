@@ -19,5 +19,12 @@ dist/
 !.env.example
 
 
+# Signing keys and credential files (an Android keystore, certificates, EAS credentials.json). Back these up in a password
+# manager, never in the repo.
+*.jks
+*.keystore
+*.p12
+credentials.json
+
 # Generated Prisma client
 server/src/generated/
