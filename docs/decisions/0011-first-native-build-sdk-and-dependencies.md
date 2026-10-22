@@ -182,22 +182,23 @@ The permission audit above needed the same variable to merge the release manifes
 
 ## Image sizes for the final art
 
-Checked against Expo's documentation and Google's adaptive-icon guidance on 2026-10-21. Placeholders are in `app/assets/`; the table is repeated in
+Checked against Expo's documentation and Google's adaptive-icon guidance on 2026-10-21. The final art (added 2026-10-22) is in `app/assets/`; the table is repeated in
 `app/assets/README.md`.
 
 | Asset | File | Exact size | Rules |
 |---|---|---|---|
 | App icon | `assets/icon.png` | **1024 x 1024 px**, PNG | Exactly square (1023 x 1024 is invalid). Fill the whole square, **no rounded corners and no transparent pixels**; the OS applies the mask |
 | Adaptive icon foreground | `assets/adaptive-icon.png` | **1024 x 1024 px**, PNG, transparent background | Android layers are 108 x 108 dp. Keep the logo **at most 66 x 66 dp and at least 48 x 48 dp**: on the 1024 px canvas that is **at most about 626 px and at least about 455 px**, centred. The outer 18 dp (about **171 px**) on each side is reserved for masking and parallax. No shadow or mask baked into the layer. The background is the solid colour `palette.teal` in `app.config.ts` |
-| Splash mark | `assets/splash-icon.png` | **1024 x 1024 px**, PNG, transparent background (Expo's recommendation) | Shown 200 dp wide (`imageWidth` in `app.config.ts`) on `palette.paper` (light) or `palette.night` (dark). A separate dark-mode image is optional (`dark.image`) |
+| Adaptive icon monochrome layer | `assets/adaptive-icon-monochrome.png` | **1024 x 1024 px**, PNG, transparent background | Same size and safe zone as the foreground. Used for Android 13+ themed icons, which tint the shape and read only its alpha channel |
+| Splash mark | `assets/splash-icon.png` | **1024 x 1024 px**, PNG, transparent background (Expo's recommendation) | Shown 200 dp wide (`imageWidth` in `app.config.ts`) on `palette.teal` in light and dark mode alike (no `dark` variant is configured) |
 | Notification icon | `assets/notification-icon.png` | **96 x 96 px**, PNG | **All white on a transparent background** (Android draws it as a silhouette). Tinted `palette.teal` by `app.config.ts` |
 
 Not verified: how Android 12 and later crop the splash mark to a circle. Keep the mark inside the central two-thirds of the canvas to be safe.
-Optional, not configured: a monochrome adaptive icon layer for Android 13+ themed icons (it would be a new config entry, so a rebuild).
+The monochrome layer for Android 13+ themed icons is configured (`android.adaptiveIcon.monochromeImage`).
 
 ## Before the first EAS build (still open)
 
-1. **Final art** (Dave designs it in Figma): the four images above. Icons are compiled in, so the art lands before the build.
+1. **Final art** (Dave designed it in Figma): the five images above, in place since 2026-10-22. Icons are compiled in, so the art lands before the build.
 2. **The build itself**, after this PR merges and the art is in: `eas build --profile development --platform android`. Then run
    `python3 app/scripts/check-16kb.py <downloaded.apk>` on the result before installing it (it runs `zipalign -c -P 16` and the ELF scan).
 3. **Sentry:** organisation, project and an EAS source-map token in the Sentry slice (see above for the preview profile).
