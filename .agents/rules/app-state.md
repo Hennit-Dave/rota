@@ -14,7 +14,7 @@ money logic in the app (`money.md`).
 | Kind | Where | Examples |
 |---|---|---|
 | Server state | **TanStack Query**, for all server data (brief) | shifts, members, feed, settings, billing figures |
-| Client state | **One** client state tool, **pending Dave's choice** (Zustand or React state), justified in `STATE.md` | open tab, form drafts |
+| Client state | **Zustand**, one small store (ADR 0008), justified in `STATE.md` | session status, selected team, UI flags |
 | Persisted state | TanStack Query persister, allowlisted queries only | upcoming shifts for offline viewing |
 | Secrets | `expo-secure-store` only | access and refresh tokens |
 
@@ -30,8 +30,11 @@ money logic in the app (`money.md`).
 - One API client attaches the access token, reads the response's request ID for Sentry, and handles 401.
 - **Only one refresh in flight** (`security.md`): concurrent 401s wait for the same refresh.
 - **What a failed refresh means decides what happens:**
-  - **The server says the session is invalid, expired or revoked** (401 from the refresh endpoint): sign
-    out fully (below).
+  - **The server says the session is invalid, expired or revoked** (400 or 401 from the refresh endpoint,
+    ADR 0005): sign out fully (below). A 400 also means the app sent a malformed token, which is an app bug:
+    log it, without the token.
+  - **The server refused before touching the token** (429 or 503 from the refresh endpoint): keep the session;
+    trying again later is safe.
   - **Offline before the request was sent:** keep the session and the saved shifts; allow offline viewing;
     try again when connectivity returns.
   - **Sent, but the response was lost** (timeout, connection dropped): don't replay it automatically. Under
@@ -50,7 +53,11 @@ Local steps, for every full sign-out:
    it starts; a result arriving under an older epoch is discarded, never written to any cache.
 2. Cancel in-flight queries; clear the **in-memory query cache and mutation cache**.
 3. Stop the persister, delete the persisted cache, and restart it with the next user's buster.
-4. Delete tokens from secure-store.
+4. Reset the client state store (Zustand) to its initial state, carrying the sign-out notice (ADR 0008).
+   *Why: otherwise the previous user's selected team is still in memory for the next user.*
+5. Delete tokens from secure-store.
+
+Every step runs even if an earlier one fails; the tokens are always deleted.
 
 *Why: clearing device storage alone leaves the previous user's data in memory, and a slow request or a
 delayed persistence write could restore it.*
@@ -105,8 +112,9 @@ delayed persistence write could restore it.*
 - The persisted cache has a maximum age (config, in `STATE.md`) and a buster that includes the user ID, so
   another account never sees it. It is **cleared on logout** and on any forced sign-out.
 - **Shift data is personal information; persist only the fields needed for offline viewing and document
-  the storage protection.** The persister's device storage is chosen in `STATE.md`; if it or the
-  connectivity library has a native module, it is installed before the first EAS build (`expo-builds.md`).
+  the storage protection.** The persister's device storage is `expo-sqlite`, plain,
+  no SQLCipher (ADR 0010); it and the connectivity library are native modules installed before the first EAS build
+  (`expo-builds.md`).
 - Offline, mutations fail fast with a clear message. There is no offline mutation queue (not in the brief).
 
 ## Lists (brief, Requirement 1)

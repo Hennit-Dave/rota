@@ -41,7 +41,7 @@ expense. All additional application infrastructure must remain on free plans wit
 expiring trial credits. If something can't be free, say so plainly.**
 
 - App: React Native + Expo, TypeScript. Android EAS **development build** (Expo Go can't receive push).
-- App state: TanStack Query for all server state. Client state tool: **pending** (Dave picks, justified in `STATE.md`).
+- App state: TanStack Query for all server state. Client state: Zustand, one small store (ADR 0008).
 - Tokens: `expo-secure-store` only.
 - API: Node.js + Express + TypeScript. Validation: Zod on the **whole request** (body, query, route params).
 - Database: PostgreSQL on two Neon projects (one per shard), pooled `-pooler` strings, read replicas.
@@ -96,7 +96,7 @@ expiring trial credits. If something can't be free, say so plainly.**
 - Implementing renewals: first explain the test-mode collection flow, including saved-payment-method consent
   and any customer action required.
 - Relaxing a security rule to make a test pass.
-- Choosing the deployment provider or the client state tool.
+- Choosing the deployment provider.
 
 ## Never
 
@@ -189,7 +189,9 @@ from `.env.example` (names only); the server scripts read it.
 | Run worker (compiled; build first) | `npm run start:worker` |
 | Run API / worker with reload | `npm run dev:api` / `npm run dev:worker` |
 
-**Pending until a slice creates them.** Don't invent scripts: run app, migrate, seed, test, lint, load test.
+App commands run from `app/` (see `app/AGENTS.md`): `npm ci`, `npm run typecheck`, `npm test`, `npx expo-doctor`.
+
+**Pending until a slice creates them.** Don't invent scripts: migrate, seed, lint, load test.
 
 The Android development build (`eas build`, profile pending) **needs a new native build. Warn first.**
 

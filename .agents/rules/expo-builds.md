@@ -34,6 +34,8 @@ If a rule here conflicts with `AGENTS.md`, stop and ask. The checks at the end a
 | Changing native config in `app.json` / `app.config`: plugins, permissions, package name, URL scheme, notification settings | Styles, screens, logic, API calls |
 | Changing the Expo SDK version | Adding a pure-JavaScript package |
 
+The final list for the first build, with versions and the 16 KB page-size audit, is ADR 0011.
+
 If unsure whether a package has native code, check its docs before installing, and treat "unsure" as
 "needs a build".
 
@@ -48,10 +50,10 @@ list in an ADR, and install with `npx expo install` so versions match the Expo S
 | Push notifications | `expo-notifications` (plus whatever its docs require for project ID and device checks) | brief, `jobs.md` |
 | Token storage | `expo-secure-store` | `AGENTS.md` rule 4 |
 | Connectivity for offline rules | `@react-native-community/netinfo` | `app-state.md` |
-| Persisted offline shifts | Storage chosen in `STATE.md` (pending) | `app-state.md` |
+| Persisted offline shifts | `expo-sqlite`, plain (ADR 0010). Never enable its `withSQLiteVecExtension` (prebuilt library not 16 KB aligned) | `app-state.md` |
 | Error tracking | `@sentry/react-native` (Expo integration) | `observability.md` |
 | Feed list | `@shopify/flash-list` **v2: JavaScript-only, no native dependencies**; check its React Native architecture requirement when picking the version | brief |
-| Deep links: invites, magic links, notification taps, Checkout return | Routing and linking choice (pending), with the URL **scheme** set in config | brief, `security.md` |
+| Deep links: invites, magic links, notification taps, Checkout return | `expo-router` (ADR 0009), scheme `rota`, https App Links on `rota.davebuilds.design` | brief, `security.md` |
 | Opening Stripe Checkout and returning to the app | `expo-web-browser` | `money.md` |
 | Device time zone for settings | `expo-localization` | brief (Requirement 7) |
 
