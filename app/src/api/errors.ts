@@ -14,6 +14,8 @@ export class ApiError extends Error {
     message: string,
     readonly requestId: string | null,
     readonly details?: unknown,
+    /** From the `Retry-After` header (or the body's `retryAfterSeconds`) of a 429. The server decides it; the app only formats it. */
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -75,6 +77,15 @@ export class RefreshUncertainError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RefreshUncertainError';
+  }
+}
+
+/** The server accepted a sign-in or sign-up but the tokens could not be saved on this device (secure-store failed). */
+export class TokenSaveError extends Error {
+  readonly kind = 'token_save';
+  constructor() {
+    super('The session could not be saved on this device.');
+    this.name = 'TokenSaveError';
   }
 }
 

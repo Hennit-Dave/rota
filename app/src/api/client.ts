@@ -76,7 +76,8 @@ function toApiError(raw: RawResponse): ApiError {
   const code = typeof error?.code === 'string' ? error.code : 'unknown_error';
   const message = typeof error?.message === 'string' ? error.message : `Request failed (${raw.status}).`;
   const requestId = raw.requestId ?? (typeof error?.requestId === 'string' ? error.requestId : null);
-  return new ApiError(raw.status, code, message, requestId, error?.details);
+  const bodyRetry = typeof error?.retryAfterSeconds === 'number' ? error.retryAfterSeconds : null;
+  return new ApiError(raw.status, code, message, requestId, error?.details, raw.retryAfterSeconds ?? bodyRetry);
 }
 
 export function createApiClient(deps: ApiClientDeps) {

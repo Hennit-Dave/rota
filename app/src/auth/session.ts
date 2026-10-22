@@ -1,5 +1,5 @@
 import type { ApiClient } from '../api/client';
-import { SessionEndedError, StaleAccountError } from '../api/errors';
+import { OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import type { SignOutLocal } from './signOut';
 
 export interface SessionActionsDeps {
@@ -30,6 +30,24 @@ export function createSessionActions({ client, isOnline, signOutLocal }: Session
       }
       await signOutLocal(serverConfirmed ? 'none' : 'revoke_unconfirmed');
       return { serverConfirmed };
+    },
+
+    /**
+     * Log out of every device. Unlike logout, this does NOT sign out locally when the server cannot be reached:
+     * signing out here without ending the other sessions would tell the user every device is ended when it is not.
+     * Offline or failing, it throws and the user is still signed in, so they can try again.
+     */
+    async logoutAll(): Promise<void> {
+      if (!isOnline()) throw new OfflineError();
+      try {
+        await client.post('/auth/logout-all');
+      } catch (error) {
+        // Already signed out (the refresh path, or another sign-out): nothing more to do.
+        if (error instanceof SessionEndedError || error instanceof StaleAccountError) return;
+        throw error;
+      }
+      // The server ended every session, including this one. Clean up locally.
+      await signOutLocal('none');
     },
   };
 }
