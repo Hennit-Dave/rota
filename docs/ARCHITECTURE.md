@@ -83,6 +83,34 @@ password policy), ADR 0006 (Argon2id), ADR 0007 (rate limiting). Threat write-up
 | `internal_error` | 500 | Unexpected; nothing about it is sent |
 | `service_unavailable` | 503 | Valkey is down (limited routes fail closed), or the database could not start a transaction in time. Safe to retry |
 
+### 6. Mobile app
+
+Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and
+the 16 KB page-size audit are in ADR 0011. Where each piece of data lives: `docs/STATE.md`.
+
+```
+app/src/
+  app/         Expo Router routes (a file here is a screen and a URL)
+  api/         API client (one refresh in flight, stale-account discard), errors, config, cache times
+  auth/        account epoch, token store (secure-store), local sign-out, logout
+  state/       the Zustand store (session status, selected team, UI flags)
+  theme/       design tokens mirrored from Figma: palette, colours (light/dark), dimensions, typography
+  ui/          components built only from the tokens
+  services.ts  composition root: the real client, query client, sign-out, query managers
+```
+
+- **Layering.** `api/` and `auth/` are plain TypeScript with injected dependencies (fetch, token store, connectivity, epoch), so the
+  rules in `app-state.md` are unit-tested without a device. `services.ts` is the only file that wires the real ones together.
+- **The app never decides anything that matters** (`AGENTS.md` rules 2 and 3). It holds no money logic, no plan table and no permission
+  rules; it sends requests and displays what the server answers.
+- **Design tokens** mirror Figma's three variable collections one-to-one (`Rota / Primitives` -> `palette.json`, `Rota / Colour` ->
+  `colors.ts` with Light and Dark, `Rota / Dimensions` -> `dimensions.ts`) and the six text styles -> `typography.ts`. Raw hex values exist
+  only in `palette.json`, which `app.config.ts` also reads so the splash and notification colours come from the same source.
+- **Deep links.** Scheme `rota`, and https App Links on `rota.davebuilds.design` for `/invite`, `/magic`, `/reset` and `/checkout`
+  (verification goes live when `assetlinks.json` is hosted). Opening a link consumes nothing.
+- **Native modules** are fixed at build time. Everything the whole app needs is installed up front so the limited EAS build quota is spent
+  once (`expo-builds.md`, ADR 0011).
+
 ---
 
 ## What changes in production

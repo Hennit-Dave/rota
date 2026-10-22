@@ -1,6 +1,6 @@
 # Security
 
-Status: **partial**, written as PR A (server authentication) lands. The eight-threat list (brief, Requirement 4) is
+Status: **partial**, written as slices land (PR A server authentication, PR B app scaffold). The eight-threat list (brief, Requirement 4) is
 completed in later slices; sections below are added by the slice that builds the control.
 
 | # | Threat | Status |
@@ -10,7 +10,7 @@ completed in later slices; sections below are added by the slice that builds the
 | 3 | A stolen access token | Written below (PR A) |
 | 4 | A stolen refresh token, and reuse | Written below (PR A) |
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
-| 6 | Secrets extracted from the app bundle | Not yet written (needs the app) |
+| 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
 | 7 | Forged or replayed Stripe webhooks | Not yet written (needs payments) |
 | 8 | Theft or reuse of invite and reset tokens | Not yet written (needs invites and reset) |
 
@@ -122,3 +122,37 @@ bundle or any `EXPO_PUBLIC_` variable.
    WHERE revoked_at IS NULL;` (not run by any code; everyone then signs in again).
 5. Rotation is not exercised by an automated test yet. A second verifier, or a rotation without logging out in-flight tokens, would need
    a key ID and two accepted keys (ADR 0005, Revisit when).
+
+## Threat 6: secrets extracted from the app bundle
+
+**What it is.** Anyone can download the APK, unzip it and search it. Anything inside is public: a payment key in an `EXPO_PUBLIC_`
+variable would let a stranger issue refunds (brief, Requirement 4).
+
+**How it is handled.**
+- **One `EXPO_PUBLIC_` variable exists, and it is not a secret** (table below). A unit test (`app/src/publicEnv.test.ts`) fails if any
+  other `EXPO_PUBLIC_` name appears anywhere in the app, or if an allowed name looks secret-shaped, or if one is missing from this
+  file or `.env.example`. A new variable therefore cannot be added without writing its justification here first.
+- The app holds no key, no signing secret and no provider credential. The server holds every secret as an environment variable
+  (`.env.example` lists names only). The app has no payment logic at all (`AGENTS.md` rule 2).
+- Tokens are stored only in `expo-secure-store`, never AsyncStorage, never the query cache, never a log. Android's cloud and
+  device-transfer backup rules shipped with `expo-secure-store` exclude its data, so tokens are not copied off the device by backup.
+- `android/` is generated and gitignored; the Sentry source-map upload token will be an EAS build secret, never a public variable.
+- **`google-services.json` (Firebase client config for push)** holds the Firebase project identifiers and a Google API key. Those
+  values are shipped inside every APK by design, so they are not secret. It is still kept out of the repository (ADR 0011) so a
+  public repo does not trigger secret-scanning alerts or trip the brief's `_KEY` history search. The Firebase **service-account
+  private key** is the real secret: it is uploaded to EAS credentials and never enters the repo or the app.
+
+**EXPO_PUBLIC_ variables (the complete list).**
+
+| Variable | Value | Why it is safe to expose |
+|---|---|---|
+| `EXPO_PUBLIC_API_URL` | The API's address, for example `https://api.example.com` (locally `http://10.0.2.2:<port>`) | It is only an address, and anyone with the APK or a network trace can read it anyway. It grants nothing: the server authenticates every request and decides every permission, and never trusts the client (`AGENTS.md` rule 3). The app refuses to start talking to anything that is not `https`, except the local development server in a development build (`app/src/api/config.ts`, tested). |
+
+The Sentry DSN will join this table in the Sentry slice. A DSN can only submit events, not read them, which is why Sentry documents it
+as public; that claim is checked then, not assumed now.
+
+**What remains.** A debug build loads its JavaScript from the development server and does not contain the bundle, so the bundle search
+(`unzip` the APK and search for `sk_`, `secret`, `password`, `_KEY`) is run on the first preview (release) build and recorded then.
+
+**Proving tests.** `app/src/publicEnv.test.ts` (allowlist), `app/src/api/config.test.ts` (https only), `app/src/auth/signOut.test.ts` and
+`app/src/api/client.test.ts` (token handling).
