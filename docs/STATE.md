@@ -25,6 +25,7 @@ rows marked *planned* are filled in by the slice that builds them.
 | Selected team ID | Zustand | Client-only choice. An ID only: the server checks membership on every request (`security.md`) | n/a | No (whether it should survive a restart is decided with the team screens) |
 | Sign-out notice (`none`, `session_ended`, `revoke_unconfirmed`) | Zustand (UI flag) | Tells the signed-out side which screen to open first: `/session-ended`, `/signed-out-offline`, or `/login`. Cleared on sign-in and when the user moves on | n/a | No |
 | Account epoch | A plain in-memory counter (`app/src/auth/epoch.ts`) | Not UI state and must be readable from non-React code. Discards results that belong to a previous account | n/a | No, on purpose |
+| Launch overlay phase (`launch`, `loading`, `done`) | Component state in `LaunchGate` | Derived from "has the session been restored" and one timer. Pure rules in `app/src/motion/launchPhase.ts`, unit-tested. Not in Zustand: nothing else reads it | n/a | No |
 | Connectivity | NetInfo, fed into TanStack's `onlineManager` | The rules need one answer to "are we online" for queries and for the API client | n/a | No |
 | App in foreground | React Native `AppState`, fed into TanStack's `focusManager` | Refetch when the app returns to the foreground (settings across devices, later) | n/a | No |
 | Theme (light/dark) | Follows the device for now | Becomes a per-user server setting in the settings slice. Auth screens stay light-only (forced with `ColorsOverrideProvider`) because the setting does not exist before sign-in (issue #24) | n/a | n/a |
@@ -65,6 +66,19 @@ The app decides which side to show only after the stored session has been checke
 | `GET /auth/me` answers 200 (after one refresh if the access token had expired) | `signed_in` | `signedIn`, `['me']` seeded |
 | The refresh is refused (400 or 401), or `/auth/me` is still 401 after a good refresh | `session_ended`, full local sign-out with that notice | `signedOut`, `/session-ended` |
 | Offline, timeout, 429, 503, an unreadable answer, or a refresh whose answer was lost | `unverified`: **the session is kept** (never replayed, `app-state.md`) | `signedIn`; home shows its own offline or "couldn't load" state with Retry |
+
+## The launch screen (`app/src/ui/LaunchGate.tsx`, `app/src/motion/`)
+
+The Shift-swap mark from the Figma Motion page covers the restore. Its rules, each tested in `app/src/motion/motion.test.ts`:
+
+- **It never adds waiting.** The app is rendered underneath the moment it is ready; the overlay fades out over 150 ms and ignores touches, so
+  nothing waits for the animation. Ready early means a cut to the app, not a finished swap.
+- **It plays only while the session restores:** one swap and back (1.08 s), on the teal of the native splash.
+- **Past one cycle it hands over to the Loading mark** (the teal fades to the app background so the teal-and-grey mark can be seen).
+- **Reduce motion** (`AccessibilityInfo.isReduceMotionEnabled`): no movement. Launch shows the static mark; Loading shows the static mark
+  with a visible "Loading…" label and no spinner.
+- **Size.** The animation starts at the size of the native splash mark (about 98 dp), not the 180 x 120 in Figma, so the mark does not jump
+  between the two. Pinned by `launchMetrics.test.ts` to `app.config.ts` and the splash PNG.
 
 ## Signing in and signing up (`app/src/auth/authActions.ts`)
 
