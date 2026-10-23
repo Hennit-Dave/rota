@@ -183,25 +183,43 @@ export async function enqueueWorkRow(
     },
   });
 
-  const jobId = formatJobId(row.id, row.generation);
-
-  try {
-    const queue = options.queue ?? getProducerQueue(options.queueName);
-    await addWorkJob(queue, row, options.shard);
-  } catch (err: any) {
-    console.warn(
-      `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${options.shard}: ${sanitizeError(err)}`,
-    );
-    // Enqueue timed out, rejected, or queue-construction failed.
-    // Update available_at only for the matching generation while still pending.
-    await prisma.$executeRaw`
-      UPDATE work_rows
-      SET available_at = NOW(), updated_at = NOW()
-      WHERE id = ${row.id}::uuid
-        AND generation = ${row.generation}
-        AND status = 'pending'
-    `;
-  }
+  await enqueueCommittedRow(prisma, row, options.shard, () => options.queue ?? getProducerQueue(options.queueName));
 
   return row;
+}
+
+/**
+ * Enqueue a work row that is ALREADY COMMITTED (jobs.md: Postgres first, then the queue). Used by `enqueueWorkRow` and by requests that write
+ * the row inside their own business transaction (an invitation and its email row commit together, then this runs). Never throws:
+ * on timeout, Valkey rejection or queue-construction failure the row is made eligible at once (`available_at = now()`, only for the matching
+ * generation while still pending), so the reconnect or timed sweep enqueues it. The request still succeeds.
+ */
+export async function enqueueCommittedRow(
+  prisma: PrismaClient,
+  row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>,
+  shard: ShardId,
+  getQueue: () => Queue,
+): Promise<{ enqueued: boolean }> {
+  const jobId = formatJobId(row.id, row.generation);
+  try {
+    await addWorkJob(getQueue(), row, shard);
+    return { enqueued: true };
+  } catch (err: any) {
+    console.warn(
+      `[enqueue:failure] job_id=${jobId} row_id=${row.id} generation=${row.generation} shard=${shard}: ${sanitizeError(err)}`,
+    );
+    try {
+      await prisma.$executeRaw`
+        UPDATE work_rows
+        SET available_at = NOW(), updated_at = NOW()
+        WHERE id = ${row.id}::uuid
+          AND generation = ${row.generation}
+          AND status = 'pending'
+      `;
+    } catch (markErr: any) {
+      // Postgres is the durable fact and the row exists; the timed sweep still finds it once available_at passes.
+      console.error(`[enqueue:mark_eligible_failed] row_id=${row.id} shard=${shard}: ${sanitizeError(markErr)}`);
+    }
+    return { enqueued: false };
+  }
 }

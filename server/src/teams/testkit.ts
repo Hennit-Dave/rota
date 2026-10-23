@@ -4,6 +4,9 @@ import type { AddressInfo } from 'node:net';
 import express, { Router } from 'express';
 import type { Redis } from 'ioredis';
 import { createApp } from '../api/app.js';
+import { createInvitationsRouter } from '../invites/routes.js';
+import type { InviteDeps } from '../invites/service.js';
+import { enqueueCommittedRow } from '../jobs/queue.js';
 import { loadAuthConfig, type AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import { createSession } from '../auth/sessions.js';
@@ -32,6 +35,8 @@ import { teamIdParams } from './schemas.js';
  */
 export interface TeamsTestOptions {
   rateLimits?: RateRuleConfigOverrides;
+  /** Override invite settings (expiry, the app-wide daily cap) for a test. */
+  invites?: Partial<AuthConfig['invites']>;
   /** Point the limiter at a Valkey that is not there, to prove team creation fails closed. */
   deadValkey?: boolean;
 }
@@ -54,6 +59,15 @@ export interface TeamsTestApp {
   clearQueryLog(): void;
   /** Makes the next team INSERT fail, to leave a directory row with no team (the orphan case, ADR 0013). */
   failTeamInserts(on: boolean): void;
+  /** Makes the membership INSERT inside invite acceptance fail (step 3 of ADR 0015), after the directory row was written (step 2). */
+  failMembershipInserts(on: boolean): void;
+  /** Pretends Valkey rejects the enqueue AFTER the invitation committed, so the real fallback (row eligible at once) runs. */
+  failEnqueue(on: boolean): void;
+  /** Work rows the invitation routes asked to enqueue, in order. */
+  enqueued(): Array<{ rowId: string; shard: ShardId }>;
+  /** The invite token (the link's `<teamId>.<secret>`) read from an email work row's frozen payload. */
+  tokenFromEmailRow(rowId: string, teamId: string): Promise<string>;
+  
   seedUser(name?: string): Promise<{ id: string; email: string }>;
   /** A session and access token for a seeded user, without a login. */
   signIn(userId: string): Promise<TestSession>;
@@ -76,19 +90,27 @@ export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise<TeamsTestApp> {
   const base = loadAuthConfig({});
-  const config: AuthConfig = { ...base, rateLimits: { ...base.rateLimits, ...options.rateLimits } };
+  const config: AuthConfig = {
+    ...base,
+    rateLimits: { ...base.rateLimits, ...options.rateLimits },
+    invites: { ...base.invites, ...options.invites },
+  };
 
   const raw = createTestShards({ primaryMax: 3 });
 
   // The app sees instrumented clients: they record every query and can be told to fail a team insert.
   const queries: string[] = [];
   let failInserts = false;
+  let failMembership = false;
+  let failEnqueueOn = false;
+  const enqueuedRows: Array<{ rowId: string; shard: ShardId }> = [];
   const instrument = (client: PrismaClient, shard: ShardId): PrismaClient =>
     client.$extends({
       query: {
         async $allOperations({ model, operation, args, query }) {
           queries.push(`${shard}:${model ? `${model}.` : ''}${operation}`);
           if (failInserts && model === 'Team' && operation === 'create') throw new Error('injected team insert failure');
+          if (failMembership && JSON.stringify(args).includes('INSERT INTO memberships')) throw new Error('injected membership insert failure');
           return query(args);
         },
       },
@@ -111,11 +133,27 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
   const lines: string[] = [];
   const logger = createLogger((l) => lines.push(l));
 
+  // The invitation routes' dependencies. The enqueue is a spy (no real Valkey), or, when told to fail, the REAL fallback with a queue that throws.
+  const invites: InviteDeps = {
+    mail: { from: 'Rota <notification@rota.davebuilds.design>', replyTo: 'rota@davebuilds.design' },
+    config,
+    enqueue: async (prisma, row, shard) => {
+      if (failEnqueueOn) {
+        await enqueueCommittedRow(prisma, row, shard, () => {
+          throw new Error('simulated valkey failure');
+        });
+        return;
+      }
+      enqueuedRows.push({ rowId: row.id, shard });
+    },
+  };
+
   // The harness app: the real router plus the one test-only route. The 403 proof needs an Owner/Manager-only action and none
   // exists yet (the shifts slice adds the real ones), so the route is registered HERE and nowhere in the production server.
   const harnessApp = express();
   installPreRoutes(harnessApp, logger);
-  harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config }));
+  harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config, invites }));
+  harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
   const testOnly = Router();
@@ -131,7 +169,11 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
   harnessApp.use('/_test', testOnly);
   installPostRoutes(harnessApp, logger);
 
-  const productionApp = createApp({ logger, teams: { shards, tokens, limiter, config } });
+  const productionApp = createApp({
+    logger,
+    teams: { shards, tokens, limiter, config, invites },
+    invitations: { shards, tokens, limiter, config, invites },
+  });
 
   const listen = async (app: express.Express) => {
     const server = app.listen(0);
@@ -176,6 +218,16 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     queryLog: () => [...queries],
     clearQueryLog: () => void (queries.length = 0),
     failTeamInserts: (on) => void (failInserts = on),
+    failMembershipInserts: (on) => void (failMembership = on),
+    failEnqueue: (on) => void (failEnqueueOn = on),
+    enqueued: () => [...enqueuedRows],
+    async tokenFromEmailRow(rowId, teamId) {
+      const row = await raw[shardFor(teamId)].primary.workRow.findUniqueOrThrow({ where: { id: rowId } });
+      const html = String((row.payload as { html?: string } | null)?.html ?? '');
+      const match = /\/invite\/([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})/.exec(html);
+      if (!match) throw new Error('no invite link in the work row payload (already scrubbed?)');
+      return match[1]!;
+    },
     async seedUser(name = 'Seeded User') {
       const email = `t-${randomUUID()}@example.com`;
       const user = await raw.A.primary.user.create({ data: { email, name } });
@@ -241,7 +293,14 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
           for (const m of memberships) teamIds.add(m.teamId);
         }
       }
-      for (const teamId of teamIds) await raw[shardFor(teamId)].primary.team.deleteMany({ where: { id: teamId } });
+      for (const teamId of teamIds) {
+        const db = raw[shardFor(teamId)].primary;
+        // Email work rows are not removed by deleting the team (no foreign key from them): remove the ones this team's invitations made.
+        await db.$executeRaw`
+          DELETE FROM work_rows
+          WHERE kind = 'email' AND payload->>'invitationId' IN (SELECT id::text FROM invitations WHERE team_id = ${teamId}::uuid)`;
+        await db.team.deleteMany({ where: { id: teamId } });
+      }
       if (ids.length > 0) await raw.A.primary.user.deleteMany({ where: { id: { in: ids } } });
       await raw.A.primary.$disconnect();
       await raw.B.primary.$disconnect();

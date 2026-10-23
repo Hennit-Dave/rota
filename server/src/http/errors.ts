@@ -14,6 +14,10 @@ export type ErrorCode =
   | 'unauthenticated'
   | 'invalid_credentials'
   | 'forbidden'
+  | 'invite_unavailable'
+  | 'invite_wrong_account'
+  | 'already_member'
+  | 'invite_pending'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -27,6 +31,10 @@ const STATUS: Record<ErrorCode, number> = {
   unauthenticated: 401,
   invalid_credentials: 401,
   forbidden: 403,
+  invite_unavailable: 404,
+  invite_wrong_account: 403,
+  already_member: 409,
+  invite_pending: 409,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -42,6 +50,10 @@ const MESSAGE: Record<ErrorCode, string> = {
   unauthenticated: 'Authentication is required.',
   invalid_credentials: 'Email or password is incorrect.',
   forbidden: 'Your role does not allow this.',
+  invite_unavailable: 'This invitation is not available.',
+  invite_wrong_account: 'This invitation is for a different account.',
+  already_member: 'This person is already on the team.',
+  invite_pending: 'An invitation is already pending for this email.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

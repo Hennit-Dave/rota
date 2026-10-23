@@ -6,6 +6,9 @@ import { createShards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
 import { createProducerConnection } from '../jobs/connection.js';
+import { loadSenderConfig } from '../jobs/mail.js';
+import { closeProducerQueue, enqueueCommittedRow, getProducerQueue } from '../jobs/queue.js';
+import type { InviteDeps } from '../invites/service.js';
 import { sanitizeError } from '../jobs/redact.js';
 import { createRateLimiter } from '../ratelimit/limiter.js';
 import { createApp } from './app.js';
@@ -29,10 +32,12 @@ const logger = createLogger();
 let config: AuthConfig;
 let secret: Uint8Array;
 let port: number;
+let mail: { from: string; replyTo: string };
 try {
   port = readPort();
   config = loadAuthConfig();
   secret = loadJwtSecret();
+  mail = loadSenderConfig();
 } catch (err) {
   console.error(`api cannot start: ${sanitizeError(err)}`);
   process.exit(1);
@@ -70,10 +75,21 @@ if (blocklist.size === 0) {
 const tokens = createTokenService({ secret, config });
 const limiter = createRateLimiter(redis);
 
+// Invitations: the email work row commits with the invitation, then this enqueues it. It never throws: a Valkey failure leaves the row eligible
+// for the sweep (jobs.md). The queue uses its own bounded producer connection.
+const invites: InviteDeps = {
+  mail,
+  config,
+  enqueue: async (prisma, row, shard) => {
+    await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
+  },
+};
+
 const app = createApp({
   logger,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
-  teams: { shards, tokens, limiter, config },
+  teams: { shards, tokens, limiter, config, invites },
+  invitations: { shards, tokens, limiter, config, invites },
 });
 
 const server = app.listen(port, (error) => {
@@ -86,6 +102,7 @@ async function shutdown(signal: NodeJS.Signals) {
   server.closeIdleConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   redis.disconnect();
+  await closeProducerQueue();
   await shards.A.primary.$disconnect();
   await shards.B.primary.$disconnect();
   console.log('api closed');

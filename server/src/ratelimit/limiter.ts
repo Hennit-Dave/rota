@@ -55,7 +55,16 @@ export interface RedisLike {
 
 /** Per-rule overrides of the configured thresholds. Used by tests to shrink a limit. */
 export type RateRuleConfigOverrides = Partial<
-  Record<'loginIp' | 'loginEmail' | 'registerIp' | 'refreshIp' | 'teamCreateUser', { max: number; windowSeconds: number }>
+  Record<| 'loginIp'
+    | 'loginEmail'
+    | 'registerIp'
+    | 'refreshIp'
+    | 'teamCreateUser'
+    | 'inviteSendUser'
+    | 'inviteSendTeam'
+    | 'invitePreviewIp'
+    | 'inviteAcceptUser'
+    | 'inviteAcceptIp', { max: number; windowSeconds: number }>
 >;
 
 export interface RateLimiter {

@@ -22,6 +22,18 @@ export class ContentionError extends Error {
   }
 }
 
+/**
+ * A handler throws this when a retry cannot help (jobs.md: the 23-hour email rule, a rejected request, a spent quota). The processor marks the
+ * row `failed` with the reason, matched on all three ownership fields, and does NOT rethrow: BullMQ must not retry it and the sweeps never retry
+ * `failed` rows. Only an explicit human action revives it.
+ */
+export class TerminalJobError extends Error {
+  constructor(readonly reason: string) {
+    super(`terminal: ${reason}`);
+    this.name = 'TerminalJobError';
+  }
+}
+
 export interface JobContext {
   prisma: PrismaClient;
   row: WorkRow;
@@ -149,6 +161,7 @@ export function createWorkProcessor(
         claimToken: rawRow.claim_token ?? rawRow.claimToken ?? null,
         claimExpiresAt: rawRow.claim_expires_at || rawRow.claimExpiresAt ? new Date(rawRow.claim_expires_at ?? rawRow.claimExpiresAt) : null,
         failureReason: rawRow.failure_reason ?? rawRow.failureReason ?? null,
+        originRequestId: rawRow.origin_request_id ?? rawRow.originRequestId ?? null,
         payload: rawRow.payload ?? null,
         firstAttemptAt: rawRow.first_attempt_at || rawRow.firstAttemptAt ? new Date(rawRow.first_attempt_at ?? rawRow.firstAttemptAt) : null,
         sentAt: rawRow.sent_at || rawRow.sentAt ? new Date(rawRow.sent_at ?? rawRow.sentAt) : null,
@@ -163,7 +176,7 @@ export function createWorkProcessor(
         const durationMs = performance.now() - startTime;
         const err = new Error(`Unsupported job kind: '${row.kind}'`);
         console.error(
-          `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=unsupported_job_kind`,
+          `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=unsupported_job_kind`,
         );
 
         if (row.executionAttempts >= maxAttempts) {
@@ -220,17 +233,34 @@ export function createWorkProcessor(
         if (completed === 0) {
           // Ownership was lost during execution; abort
           console.warn(
-            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=lost_ownership duration_ms=${durationMs.toFixed(2)}`,
+            `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=lost_ownership duration_ms=${durationMs.toFixed(2)}`,
           );
           return;
         }
 
         console.log(
-          `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=done duration_ms=${durationMs.toFixed(2)}`,
+          `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=done duration_ms=${durationMs.toFixed(2)}`,
         );
       } catch (err: any) {
         // Handler failure
         const durationMs = performance.now() - startTime;
+        if (err instanceof TerminalJobError) {
+          const reason = `terminal: ${err.reason}`;
+          await prisma.$executeRaw`
+            UPDATE work_rows
+            SET status = 'failed'::"work_status",
+                failure_reason = ${reason},
+                updated_at = NOW()
+            WHERE id = ${row.id}::uuid
+              AND generation = ${generation}
+              AND claim_token = ${claimToken}::uuid
+              AND status = 'claimed'::"work_status"
+          `;
+          console.error(
+            `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${reason}`,
+          );
+          return;
+        }
         if (row.executionAttempts >= maxAttempts) {
           const sanitizedErr = sanitizeError(err);
           // Failure on attempt ceiling marks row failed; do not release claim
@@ -245,7 +275,7 @@ export function createWorkProcessor(
               AND status = 'claimed'::"work_status"
           `;
           console.error(
-            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'attempt_budget_exhausted'}`,
+            `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'attempt_budget_exhausted'}`,
           );
           throw err;
         } else {
@@ -263,7 +293,7 @@ export function createWorkProcessor(
               AND status = 'claimed'::"work_status"
           `;
           console.warn(
-            `[job:execution] job_id=${job.id} row_id=${row.id} generation=${row.generation} attempts=${row.executionAttempts} outcome=retryable_failure duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'handler_error'}`,
+            `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=retryable_failure duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'handler_error'}`,
           );
           throw err;
         }

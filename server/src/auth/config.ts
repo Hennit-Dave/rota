@@ -33,6 +33,19 @@ export interface AuthConfig {
     registerIp: RateRuleConfig;
     refreshIp: RateRuleConfig;
     teamCreateUser: RateRuleConfig;
+    inviteSendUser: RateRuleConfig;
+    inviteSendTeam: RateRuleConfig;
+    invitePreviewIp: RateRuleConfig;
+    inviteAcceptUser: RateRuleConfig;
+    inviteAcceptIp: RateRuleConfig;
+  };
+  invites: {
+    /** How long an invitation (and its link) lasts, counted from create or resend. */
+    expiryDays: number;
+    /** App-wide cap on invite emails per UTC day (a count, not a window: the window is the UTC day). */
+    globalDailyCap: number;
+    /** https origin of the App Link host. The link is `<base>/invite/<teamId>.<secret>`. */
+    linkBaseUrl: string;
   };
 }
 
@@ -79,8 +92,40 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       refreshIp: rule(env, 'RATE_LIMIT_REFRESH_IP', { max: 60, windowSeconds: 900 }),
       // Approved by Dave 2026-10-23 (Teams and roles plan): 5 new teams per user per hour.
       teamCreateUser: rule(env, 'RATE_LIMIT_TEAM_CREATE_USER', { max: 5, windowSeconds: 3600 }),
+      // Approved by Dave 2026-10-23 (Invites plan). Unauthenticated preview and accept reuse the login-IP baseline (30 per 15 minutes);
+      // the token's entropy is the security, these only bound abuse.
+      inviteSendUser: rule(env, 'RATE_LIMIT_INVITE_SEND_USER', { max: 10, windowSeconds: 3600 }),
+      inviteSendTeam: rule(env, 'RATE_LIMIT_INVITE_SEND_TEAM', { max: 20, windowSeconds: 86_400 }),
+      invitePreviewIp: rule(env, 'RATE_LIMIT_INVITE_PREVIEW_IP', { max: 30, windowSeconds: 900 }),
+      inviteAcceptUser: rule(env, 'RATE_LIMIT_INVITE_ACCEPT_USER', { max: 10, windowSeconds: 3600 }),
+      inviteAcceptIp: rule(env, 'RATE_LIMIT_INVITE_ACCEPT_IP', { max: 30, windowSeconds: 900 }),
+    },
+    invites: {
+      // 7 days (Dave, 2026-10-23, ADR 0015): long enough for a shift worker who checks email every few days, short enough for a token that
+      // grants team access (and is tied to one email address).
+      expiryDays: positiveInt(env, 'INVITE_EXPIRY_DAYS', 7),
+      // 50 per UTC day (Dave, 2026-10-23, ADR 0015): Resend's free plan sends 100 emails per UTC day in total; half is kept for reset,
+      // magic link (slice 2b) and proofs.
+      globalDailyCap: positiveInt(env, 'INVITE_GLOBAL_DAILY_CAP', 50),
+      linkBaseUrl: linkBaseUrl(env),
     },
   };
+}
+
+function linkBaseUrl(env: Env): string {
+  const raw = env.INVITE_LINK_BASE_URL;
+  const value = raw === undefined || raw === '' ? 'https://rota.davebuilds.design' : raw;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('INVITE_LINK_BASE_URL must be an absolute https URL.');
+  }
+  // An App Link is https only, and the link carries a token: never plain http, never a path or query of its own.
+  if (url.protocol !== 'https:' || url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') {
+    throw new Error('INVITE_LINK_BASE_URL must be an https origin with no path, query or credentials.');
+  }
+  return url.origin;
 }
 
 // RFC 7518 section 3.2: an HS256 key must be at least as large as the hash output, 256 bits = 32 bytes.

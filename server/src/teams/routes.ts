@@ -8,7 +8,10 @@ import { jsonBody } from '../http/json.js';
 import { recordRouteBase, type Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
+import { createTeamInvitationsRouter } from '../invites/routes.js';
+import type { InviteDeps } from '../invites/service.js';
 import { createRequireTeamRole } from './middleware.js';
+import { can, invitableRoles } from './permissions.js';
 import { createTeamBody, teamIdParams } from './schemas.js';
 import { createTeam, listMembers, listTeamsForUser } from './service.js';
 
@@ -18,6 +21,7 @@ export interface TeamsDeps {
   limiter: RateLimiter;
   logger: Logger;
   config: AuthConfig;
+  invites: InviteDeps;
 }
 
 const noStore: RequestHandler = (_req, res, next) => {
@@ -28,7 +32,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 /** The team routes (mounted at /teams). The pipelines are the ones in security.md: user routes and team routes. */
 export function createTeamsRouter(deps: TeamsDeps): Router {
-  const { shards, tokens, limiter, logger, config } = deps;
+  const { shards, tokens, limiter, logger, config, invites } = deps;
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
 
@@ -64,7 +68,8 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
   // GET /teams/:teamId: team route. Any member. Not a member, or no such team: the same 404.
   router.get('/:teamId', validateRequest({ params: teamIdParams }), requireAuth, requireTeamRole('team.view'), (req, res) => {
     const { team, role } = req.teamContext!;
-    res.json({ team, role });
+    // What the caller may do here, decided from the permission table. The app shows what the server allows and computes nothing itself.
+    res.json({ team, role, invitableRoles: invitableRoles(role), canManageInvitations: can(role, 'invitations.list') });
   });
 
   // GET /teams/:teamId/members: team route. Any member. Names come from shard A in one batched query.
@@ -81,6 +86,8 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
       res.json({ members });
     },
   );
+
+  router.use('/:teamId/invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
 
   return router;
 }

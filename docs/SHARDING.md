@@ -94,7 +94,7 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 | Admin totals and global search | They cross teams, so they cross shards. | Not designed yet. Anything across teams is a fan-out to both shards. |
 | A reference from a team row to a user | A row on one shard cannot point at a user on shard A with a database constraint. | No foreign keys across databases. The application checks the reference. |
 | A write that touches both shards | `$transaction` is atomic within one shard only. | Split into separate steps that can safely be repeated, recorded as work rows (`jobs.md`). |
-| Finding an invitation | The invite belongs to the team's shard, but the person holding the token does not know the team. | A lookup on shard A from token hash to `team_id`, only if needed. Planned. |
+| Finding an invitation | The invite belongs to the team's shard, but the person holding the token does not know the team. | **Solved without a lookup table (ADR 0015).** The link carries `<teamId>.<secret>`; the team ID is a routing hint that picks the shard, and the query is `WHERE team_id = ? AND token_hash = ?`. An unknown or wrong team ID finds nothing and answers like every other unavailable invite. It also survives a team moving to its own shard. |
 | Schema changes | Both shards must stay identical. | Migrations deploy A then B and `npm run db:parity` compares the applied lists. A migration that reaches only one shard blocks further work. |
 
 ## Built vs not built
@@ -107,5 +107,6 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 | Migration parity check across both shards | Built |
 | Read replicas and the read-routing function | Not built |
 | Teams, memberships and the user-to-teams directory (create, get, list, members) | Built, tested on the test shards |
+| Invitations and their email work rows, written together on the team's shard | Built, tested on the test shards, including a lost invite email on shard B recovered by the sweep |
 | Shifts, swaps, activity feed | Not built |
 | Directory override for a very large team | Not built, documented above |
