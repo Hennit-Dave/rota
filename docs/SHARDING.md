@@ -42,9 +42,9 @@ imports a shard's client directly. Replica clients and the read-routing function
 
 ## What lives only on shard A, and why
 
-**Built:** `users`, `credentials`, `refresh_token_families`, `refresh_tokens`. **Planned** (named in `data.md`,
-no code yet): user-level settings, and a lookup from invite token hash to `team_id` if one is needed to find
-the invitation on its team's shard.
+**Built:** `users`, `credentials`, `refresh_token_families`, `refresh_tokens`, and `user_teams` (the user-to-teams
+directory, below). **Planned** (named in `data.md`, no code yet): user-level settings, and a lookup from invite token
+hash to `team_id` if one is needed to find the invitation on its team's shard.
 
 Why identity is not sharded by team: a person exists before they belong to any team, and may belong to
 several. At login there is no `team_id` to hash, so identity needs one fixed home. Shard A is that home
@@ -58,8 +58,8 @@ there.
 the number of rows: every authenticated request re-checks the session on shard A's primary
 (`docs/ARCHITECTURE.md`, section 5). This load does not depend on how teams are split between the shards.
 
-The team's own shard holds memberships, roles, shifts, swaps, activity, billing and the ledger. Invites belong
-to the team, so the authoritative invitation lives on the team's shard.
+The team's own shard holds the team row, memberships, roles, shifts, swaps, activity, billing and the ledger (built so far:
+`teams` and `memberships`). Invites belong to the team, so the authoritative invitation lives on the team's shard.
 
 ## Hot-shard risk and a very large team
 
@@ -89,7 +89,8 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 
 | Query | Why it is harder | Handling |
 |---|---|---|
-| A user's teams | The user is on shard A, but memberships are on each team's shard, so one user's teams can span both shards. | Not designed yet. |
+| A user's teams | The user is on shard A, but memberships are on each team's shard, so one user's teams can span both shards. | **Built (ADR 0013).** A directory table `user_teams` on shard A is a lookup hint; `GET /teams` reads it, then verifies each team against its own shard's memberships, one read per shard that appears. Written directory-first when joining and membership-first when leaving, so it may over-report (an inert orphan) but never under-report. Orphans are swept by a follow-up job (issue #33). |
+| Listing a team's members with their names | Memberships are on the team's shard, names are on shard A. | **Built.** Memberships from the team's shard, then ONE batched `WHERE id IN (...)` on shard A, never one query per member. |
 | Admin totals and global search | They cross teams, so they cross shards. | Not designed yet. Anything across teams is a fan-out to both shards. |
 | A reference from a team row to a user | A row on one shard cannot point at a user on shard A with a database constraint. | No foreign keys across databases. The application checks the reference. |
 | A write that touches both shards | `$transaction` is atomic within one shard only. | Split into separate steps that can safely be repeated, recorded as work rows (`jobs.md`). |
@@ -105,5 +106,6 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 | Identity on shard A through the primary | Built |
 | Migration parity check across both shards | Built |
 | Read replicas and the read-routing function | Not built |
-| Teams, memberships, shifts, swaps, activity feed | Not built |
+| Teams, memberships and the user-to-teams directory (create, get, list, members) | Built, tested on the test shards |
+| Shifts, swaps, activity feed | Not built |
 | Directory override for a very large team | Not built, documented above |

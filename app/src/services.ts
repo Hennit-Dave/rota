@@ -12,6 +12,7 @@ import { AccountEpoch } from './auth/epoch';
 import { secureTokenStore } from './auth/secureTokenStore';
 import { createSignOutLocal } from './auth/signOut';
 import { useSessionStore } from './state/sessionStore';
+import { createTeamApi } from './teams/teamApi';
 
 /**
  * Composition root: the real instances, built once. Everything below the line is plain, injected, unit-tested code.
@@ -60,6 +61,11 @@ export function getApi() {
     logger,
   });
   return apiClient;
+}
+
+/** The team routes over the one API client. Built on first use, like the client. */
+export function getTeamApi() {
+  return createTeamApi(getApi());
 }
 
 export function getSessionActions() {

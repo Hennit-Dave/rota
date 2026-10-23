@@ -14,6 +14,7 @@ interface Props
     | 'onChangeText'
     | 'placeholder'
     | 'autoCapitalize'
+    | 'autoFocus'
     | 'autoComplete'
     | 'autoCorrect'
     | 'keyboardType'

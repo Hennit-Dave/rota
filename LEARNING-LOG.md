@@ -167,3 +167,9 @@ The server returns an error code, and the app turns it into a clear message. Thi
 
 **What I learned**
 One thing I learned is from missing the grey-dim bug. I was told to record every bug along the way for the build, but the agent went ahead and fixed it. If it had been recorded, it would give me an edge if something like that occurred again. I then told the agent to always stop and show me any bug it encounters before fixing it, so I can record the bug and also record the fix.
+
+## 2026-10-23 — Teams and roles (PR #34)
+
+I built team creation and permission checks. A user can create a team and become its Owner. The server checks their membership and role before allowing an action.
+When joining, the directory record is saved first and membership second. The directory helps find the team, but only membership gives access. If the process stops halfway, the directory record alone cannot let someone in. When leaving, membership is deleted first so access ends immediately, even if cleaning up the directory fails.
+A stranger gets 404 so the response doesn't reveal whether the team exists. A Staff member trying a Manager-only action gets 403 because they already belong to the team, but their role doesn't allow that action.

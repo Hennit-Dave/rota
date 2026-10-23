@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiError, OfflineError } from '../../api/errors';
 import { bannerCopy, homeCopy } from '../../auth/copy';
-import { parseMe } from '../../auth/authResponses';
-import { getApi, getSessionActions, meQueryKey } from '../../services';
+import { useMe } from '../../auth/useMe';
+import { getSessionActions } from '../../services';
+import { useSessionStore } from '../../state/sessionStore';
+import { useTeams } from '../../teams/useTeams';
 import { space } from '../../theme';
 import { Button } from '../../ui/Button';
 import { PageHeader } from '../../ui/PageHeader';
@@ -15,25 +16,25 @@ import { TextAction } from '../../ui/TextAction';
 import { useOnline } from '../../ui/useOnline';
 
 /**
- * PLACEHOLDER home: "Signed in as <name>" with both sign-out flows, so they can be proven end to end. The real home and
- * settings come in later slices. The name is server data (GET /auth/me), seeded at sign-in and refetched when the app
- * returns to the foreground.
+ * PLACEHOLDER home: "Signed in as <name>", the selected team's name, and both sign-out flows, so they can be proven end to end.
+ * The real home and settings come in later slices. The name is server data (GET /auth/me) and so is the team (GET /teams): both
+ * seeded early and refetched when the app returns to the foreground. A signed-in user with no team goes to create-team.
  */
 export default function HomeScreen() {
   const online = useOnline();
   const [busy, setBusy] = useState<'logout' | 'logoutAll' | null>(null);
   const [logoutAllError, setLogoutAllError] = useState<string | null>(null);
 
-  const me = useQuery({
-    queryKey: meQueryKey,
-    queryFn: async ({ signal }) => {
-      const user = parseMe(await getApi().get<unknown>('/auth/me', { signal }));
-      if (!user) throw new ApiError(200, 'invalid_response', 'The server answer could not be read.', null);
-      return user;
-    },
-    // Seeded at sign-in or restore; refetched on foreground by the focus manager. No separate number to explain.
-    refetchOnMount: false,
-  });
+  const me = useMe();
+  const teams = useTeams(me.data?.id);
+  const selectedTeamId = useSessionStore((s) => s.selectedTeamId);
+  const team = teams.data?.find((t) => t.id === selectedTeamId) ?? null;
+
+  // No team yet (a new account, or the server lists none): the next step is to create one.
+  const noTeams = teams.data !== undefined && teams.data.length === 0;
+  useEffect(() => {
+    if (noTeams) router.replace('/create-team');
+  }, [noTeams]);
 
   async function logout() {
     if (busy) return;
@@ -75,10 +76,34 @@ export default function HomeScreen() {
     status = <Text variant="heading">{homeCopy.signedIn}</Text>;
   }
 
+  let teamStatus: React.ReactNode = null;
+  if (team) {
+    teamStatus = (
+      <Text variant="heading" testID="home-team-name">
+        {team.name}
+      </Text>
+    );
+  } else if (teams.isError && online) {
+    const reference = teams.error instanceof ApiError && teams.error.requestId ? `${bannerCopy.referencePrefix}${teams.error.requestId}` : undefined;
+    teamStatus = (
+      <>
+        <StatusBanner tone="error" title={homeCopy.teamCouldNotLoad} reference={reference} />
+        <Button label={homeCopy.retry} variant="secondary" onPress={() => void teams.refetch()} testID="home-teams-retry" />
+      </>
+    );
+  } else if (me.data && !noTeams && online) {
+    teamStatus = (
+      <Text variant="caption" tone="muted">
+        {homeCopy.teamLoading}
+      </Text>
+    );
+  }
+
   return (
     <Screen gap={space[16]}>
-      <PageHeader eyebrowGap={16} title={homeCopy.title} />
+      <PageHeader eyebrowGap={16} title={homeCopy.title} teamName={team?.name} />
       {status}
+      {teamStatus}
       <Text variant="caption" tone="muted">
         {homeCopy.placeholderNote}
       </Text>

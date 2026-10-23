@@ -78,10 +78,30 @@ password policy), ADR 0006 (Argon2id), ADR 0007 (rate limiting). Threat write-up
 | `unauthenticated` | 401 | Any bad, expired, revoked or reused access or refresh token. One code on purpose: the reason is in the server log only |
 | `invalid_credentials` | 401 | Login: unknown email and wrong password look identical |
 | `email_in_use` | 409 | Register: the address already has an account (accepted trade-off, ADR 0005) |
-| `not_found` | 404 | Unknown route |
+| `forbidden` | 403 | A team member whose role may not do this (ADR 0014). Never used for another team's data: that is `not_found` |
+| `not_found` | 404 | Unknown route, or a team the caller is not in (identical to one that does not exist) |
 | `rate_limited` | 429 | Over a limit; `Retry-After` header and `retryAfterSeconds` |
 | `internal_error` | 500 | Unexpected; nothing about it is sent |
 | `service_unavailable` | 503 | Valkey is down (limited routes fail closed), or the database could not start a transaction in time. Safe to retry |
+
+### 5a. Teams and roles API
+
+Team rows and memberships live on **the team's shard** (chosen by the hash of the server-generated `team_id`); the user-to-teams directory
+`user_teams` lives on shard A (ADR 0013). Roles are read from the team shard's **primary** on every request (ADR 0014). The one permission
+table is `server/src/teams/permissions.ts`, mirrored in `docs/SECURITY.md`. Every `:teamId` is canonical lowercase hyphenated or the request is 400.
+
+| Route | Type | Checks, in order | Success |
+|---|---|---|---|
+| `POST /teams` | user | Zod, access token, session check, rate limit (`team_create_user`, 5 per hour), handler | `201 { team, role: "owner" }` |
+| `GET /teams` | user | Zod, access token, session check, handler | `200 { teams: [{ id, name, timeZone, role }] }` |
+| `GET /teams/:teamId` | team | Zod, access token, session check, membership and role (`team.view`) | `200 { team, role }` |
+| `GET /teams/:teamId/members` | team | Zod, access token, session check, membership and role (`members.list`) | `200 { members: [{ userId, name, role, joinedAt }] }` |
+
+- Creating a team writes the directory row on shard A first, then the team and its Owner membership in one transaction on the team's shard.
+  A failure in between leaves an inert directory row (ADR 0013). Exactly one Owner per team is enforced by a partial unique index.
+- `GET /teams` reads the directory, then verifies each team against its own shard's memberships (one read per shard that appears).
+- The member list takes names from shard A in one batched query and never includes email addresses.
+- A team the caller is not in answers `404 not_found`, identical to a team that does not exist; a member without the permission answers `403 forbidden`.
 
 ### 6. Mobile app
 
@@ -94,6 +114,7 @@ app/src/
   api/         API client (one refresh in flight, stale-account discard), errors, config, cache times
   auth/        account epoch, token store (secure-store), local sign-out, logout
   state/       the Zustand store (session status, selected team, UI flags)
+  teams/       team API calls and parsers, the create-team form rules, the time zone list (app side of section 5a)
   theme/       design tokens mirrored from Figma: palette, colours (light/dark), dimensions, typography
   ui/          components built only from the tokens
   services.ts  composition root: the real client, query client, sign-out, query managers

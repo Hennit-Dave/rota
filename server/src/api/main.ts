@@ -67,16 +67,13 @@ if (blocklist.size === 0) {
   logger.warn('password_blocklist_empty', { reason: 'no bundled blocklist yet (ADR 0005)' });
 }
 
+const tokens = createTokenService({ secret, config });
+const limiter = createRateLimiter(redis);
+
 const app = createApp({
   logger,
-  auth: {
-    db: identityDb(shards),
-    tokens: createTokenService({ secret, config }),
-    passwords,
-    limiter: createRateLimiter(redis),
-    config,
-    blocklist,
-  },
+  auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
+  teams: { shards, tokens, limiter, config },
 });
 
 const server = app.listen(port, (error) => {

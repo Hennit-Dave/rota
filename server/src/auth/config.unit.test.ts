@@ -14,6 +14,7 @@ test('defaults are exactly the numbers Dave approved on 2026-10-21', () => {
   assert.deepEqual(c.rateLimits.loginEmail, { max: 5, windowSeconds: 900 });
   assert.deepEqual(c.rateLimits.registerIp, { max: 10, windowSeconds: 3600 });
   assert.deepEqual(c.rateLimits.refreshIp, { max: 60, windowSeconds: 900 });
+  assert.deepEqual(c.rateLimits.teamCreateUser, { max: 5, windowSeconds: 3600 });
 });
 
 test('env overrides apply', () => {

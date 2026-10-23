@@ -22,7 +22,10 @@ rows marked *planned* are filled in by the slice that builds them.
 | Session status (`restoring`, `signedOut`, `signedIn`) | Zustand | Client-only. Rebuilt on launch from a **verified** restore (below): stored tokens plus a successful `GET /auth/me`, or tokens kept when the server could not be asked. It also decides which side of the app exists (`Stack.Protected`) | n/a | No |
 | The signed-in user (`['me']`: id, email, name, emailVerified) | TanStack Query | Server data. Seeded from the sign-in, sign-up or restore answer, so the placeholder home needs no second request. The key has no user ID because the answer *is* "who am I"; sign-out clears the whole cache, so it cannot leak to the next account | TanStack defaults (`staleTime` 0, `gcTime` 5 min), with `refetchOnMount: false`: it is refetched when the app returns to the foreground, not on every screen visit. No number invented for a placeholder screen; set properly with the real home | No |
 | Sign-in and sign-up form fields (name, email, password) | Component state (`useState`) | A password must never sit in the Zustand store, the query cache or a TanStack mutation (which keeps its variables in memory), so sign-in and sign-up are plain async functions, not mutations. Cleared when the screen goes away | n/a | No, and never in a log |
-| Selected team ID | Zustand | Client-only choice. An ID only: the server checks membership on every request (`security.md`) | n/a | No (whether it should survive a restart is decided with the team screens) |
+| The caller's teams (`['teams', userId]`: id, name, timeZone, role) | TanStack Query | Server data, personal, so the key carries the user ID (`app-state.md`). Seeded with the server's answer when a team is created, then refetched; sign-out clears the whole cache | TanStack defaults (`staleTime` 0, `gcTime` 5 min), `refetchOnMount: false` like `['me']`: refetched when the app returns to the foreground, not on every visit. No number invented; set properly with the real home | No |
+| Selected team ID | Zustand | Client-only choice. An ID only: the server checks membership on every request (`security.md`). Set when a team is created and whenever the server's list arrives: kept while the server still lists that team, else the first listed (oldest), else none (`pickSelectedTeamId`) | n/a | **No, decided in the Teams and roles slice.** It is rebuilt from `GET /teams` on every launch, and a stored ID could point at a team the user has since left. Revisit when there is a team picker (a user in several teams) |
+| Create-team form fields (name, time zone) | Component state (`useState`) | Not secret and used by one screen. The create call is a TanStack mutation with `networkMode: 'always'` and `retry: 0`: it runs and fails at once offline, and is never queued or resumed (`app-state.md`) | n/a | No |
+| The time zone list (`app/src/teams/timeZones.ts`) | A fixed list in the app | Display data only, no logic. It is Node 24's `Intl.supportedValuesOf('timeZone')` (the server's runtime), so every entry is accepted; a test keeps it a subset. Hermes' support for that function is not relied on | n/a | n/a (ships with the app) |
 | Sign-out notice (`none`, `session_ended`, `revoke_unconfirmed`) | Zustand (UI flag) | Tells the signed-out side which screen to open first: `/session-ended`, `/signed-out-offline`, or `/login`. Cleared on sign-in and when the user moves on | n/a | No |
 | Account epoch | A plain in-memory counter (`app/src/auth/epoch.ts`) | Not UI state and must be readable from non-React code. Discards results that belong to a previous account | n/a | No, on purpose |
 | Launch overlay phase (`launch`, `loading`, `done`) | Component state in `LaunchGate` | Derived from "has the session been restored" and one timer. Pure rules in `app/src/motion/launchPhase.ts`, unit-tested. Not in Zustand: nothing else reads it | n/a | No |
@@ -110,7 +113,23 @@ stops working, then does the five steps. **Offline, or if the revoke fails,** it
 `revoke_unconfirmed` tells the user the server could not confirm the session ended. A session the server already called invalid skips
 the revoke.
 
+## Teams (`app/src/teams/`, `app/src/app/(app)/`)
+
+- **Create team** (Figma 8:101) is where sign-up lands and where a signed-in user with no team is sent from home. The creator becomes the Owner;
+  the server generates the team ID. Presence is checked on tap; the length limit and the valid time zones are the server's (`400` details come
+  back as field messages, the 80 is the server's number). The button says "Create team" and Figma's "Next step" banner is left out until the
+  billing slice (Dave's decision; Figma still shows "Continue to plan selection").
+- **Home** shows the selected team's name (and "ROTA / TEAM NAME" in the eyebrow, as in Figma). It is server data (`GET /teams`): loading, an error
+  with Retry, and "no team" (which goes to create-team) are all handled.
+- The time zone is chosen from a searchable list (a plain React Native modal, no new native module); the phone's own zone is the starting choice only
+  if it is on the list.
+
 ## Known weaknesses (written down on purpose)
+
+- **Create team has no idempotency key.** A network retry after a lost answer could create a second team. The button is disabled while the request is
+  out, the app never retries it, and the server limits a user to 5 new teams an hour (ADR 0014).
+- **The create-team screen is light-only for now,** like the auth screens: Figma's chevron artwork carries its colour, and the theme becomes a per-user
+  server setting in the settings slice (issue #24).
 
 - **Android focus highlight.** When a focused input is disabled or blurred, Android hands focus to the first focusable view, the page's
   `ScrollView`, and draws its default focus highlight over the page (a uniform 7% dim). React Native's `focusable={false}` is not honoured by
