@@ -173,3 +173,7 @@ One thing I learned is from missing the grey-dim bug. I was told to record every
 I built team creation and permission checks. A user can create a team and become its Owner. The server checks their membership and role before allowing an action.
 When joining, the directory record is saved first and membership second. The directory helps find the team, but only membership gives access. If the process stops halfway, the directory record alone cannot let someone in. When leaving, membership is deleted first so access ends immediately, even if cleaning up the directory fails.
 A stranger gets 404 so the response doesn't reveal whether the team exists. A Staff member trying a Manager-only action gets 403 because they already belong to the team, but their role doesn't allow that action.
+
+## 2026-10-23 — Invites server slice (PR #36)
+
+The invitation and the task to send its email are saved in one transaction, so both are saved or neither is saved. If Resend sends the email but its reply gets lost, the worker retries with the same idempotency key to prevent a duplicate email within Resend's deduplication window. The database separately prevents the same person from having duplicate memberships in one team. If someone accepts an invite but loses the success response, their retry gets 200 again because the server sees that they already accepted it. Nothing new is created, and another person cannot use that accepted invite.
