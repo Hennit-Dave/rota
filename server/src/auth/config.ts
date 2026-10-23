@@ -32,6 +32,7 @@ export interface AuthConfig {
     loginEmail: RateRuleConfig;
     registerIp: RateRuleConfig;
     refreshIp: RateRuleConfig;
+    teamCreateUser: RateRuleConfig;
   };
 }
 
@@ -76,6 +77,8 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       loginEmail: rule(env, 'RATE_LIMIT_LOGIN_EMAIL', { max: 5, windowSeconds: 900 }),
       registerIp: rule(env, 'RATE_LIMIT_REGISTER_IP', { max: 10, windowSeconds: 3600 }),
       refreshIp: rule(env, 'RATE_LIMIT_REFRESH_IP', { max: 60, windowSeconds: 900 }),
+      // Approved by Dave 2026-10-23 (Teams and roles plan): 5 new teams per user per hour.
+      teamCreateUser: rule(env, 'RATE_LIMIT_TEAM_CREATE_USER', { max: 5, windowSeconds: 3600 }),
     },
   };
 }

@@ -55,13 +55,28 @@ If a rule here conflicts with `AGENTS.md`, stop and ask. The tests at the end ar
 ### Where non-team data lives (decided)
 
 - **Shard A holds the global identity tables:** users, credentials, refresh-token records and user-level
-  settings. Record the extra load on A in `SHARDING.md` as a known imbalance.
+  settings, plus the **user→team directory** (`user_teams`, ADR 0013). Record the extra load on A in
+  `SHARDING.md` as a known imbalance.
 - **The team's own shard holds** memberships, roles, shifts, swaps, activity, billing and the ledger.
 - **Invites belong to the team:** the authoritative invitation lives on the team's shard. A global lookup
   on shard A (invite token hash → `team_id`) exists only if needed to locate it.
 - **No foreign keys across databases.** A row on shard B can't reference a user on shard A with a
   database constraint. The application checks references, and cross-database writes are idempotent
-  steps recorded as work rows (`jobs.md`).
+  steps recorded as work rows (`jobs.md`), **except the user→team directory below**.
+- **Exception: the user→team directory (`user_teams`, on shard A; ADR 0013).** It answers "which teams is
+  this user in?" without asking both shards. It is a lookup hint, never proof of membership: the
+  membership on the team's shard is the only authority, and every directory read is verified against it.
+  It is written in a fixed order **instead of** as a work row, because a work row runs after the main write
+  and a team the user has just created must be listable at once:
+  - **Joining (create team, accept an invite): the directory row first, then the membership.**
+  - **Leaving (leave, removed): the membership first, then the directory row.**
+  - The insert is idempotent (`ON CONFLICT DO NOTHING`).
+
+  *Why: whichever step a crash interrupts, what is left is a directory row with no membership, which is
+  inert (reads verify, access never consults the directory). The directory may over-report but never
+  under-report. Every membership writer must follow these orders; a membership written without its
+  directory row is invisible to its user. Orphan rows are swept by a follow-up job.* Any other
+  cross-database write stays a work row.
 
 ## Prisma clients and pools
 

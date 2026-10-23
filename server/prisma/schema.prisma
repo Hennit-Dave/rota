@@ -70,6 +70,7 @@ model User {
 
   credential Credential?
   families   RefreshTokenFamily[]
+  userTeams  UserTeam[]
 
   @@map("users")
 }
@@ -117,4 +118,59 @@ model RefreshToken {
 
   @@index([familyId], map: "refresh_tokens_family_id_idx")
   @@map("refresh_tokens")
+}
+
+// ---- Teams (team-owned, on the shard picked by the hash of team_id; the same migrations run on both shards) ----
+
+enum TeamRole {
+  owner
+  manager
+  staff
+
+  @@map("team_role")
+}
+
+model Team {
+  // No database default: the server generates team_id BEFORE the first insert, because the shard is chosen from it (data.md).
+  id        String   @id @db.Uuid
+  name      String
+  // IANA time zone name, validated by the server against the runtime's list.
+  timeZone  String   @map("time_zone")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+
+  @@map("teams")
+}
+
+// The authoritative record of who is in a team and in which role. Roles are read from here on every request, never from a token.
+// user_id points at a user on shard A, so there is deliberately no foreign key (data.md).
+// Also in the SQL, which Prisma cannot express: a partial unique index "memberships_one_owner_per_team" on (team_id) WHERE role = 'owner'.
+model Membership {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      TeamRole
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId], map: "memberships_team_id_user_id_key")
+  @@map("memberships")
+}
+
+// The user-to-teams directory (ADR 0013). Shard A in practice. A lookup hint, never proof of membership: it may over-report
+// but must never under-report, so a membership is written AFTER its row here and removed BEFORE it. Reads verify against the
+// team's shard. team_id is on another shard, so no foreign key.
+model UserTeam {
+  userId    String   @map("user_id") @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, teamId])
+  @@map("user_teams")
 }

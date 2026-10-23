@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'payload_too_large'
   | 'unauthenticated'
   | 'invalid_credentials'
+  | 'forbidden'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -25,6 +26,7 @@ const STATUS: Record<ErrorCode, number> = {
   payload_too_large: 413,
   unauthenticated: 401,
   invalid_credentials: 401,
+  forbidden: 403,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -39,6 +41,7 @@ const MESSAGE: Record<ErrorCode, string> = {
   payload_too_large: 'The request body is too large.',
   unauthenticated: 'Authentication is required.',
   invalid_credentials: 'Email or password is incorrect.',
+  forbidden: 'Your role does not allow this.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

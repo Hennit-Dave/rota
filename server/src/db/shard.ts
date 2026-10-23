@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 export type ShardId = 'A' | 'B';
 
-const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * Shard function (data.md): SHA-256 of the UTF-8 team_id string, first 4 bytes read as an unsigned

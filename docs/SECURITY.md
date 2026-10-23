@@ -5,14 +5,66 @@ completed in later slices; sections below are added by the slice that builds the
 
 | # | Threat | Status |
 |---|---|---|
-| 1 | Staff calling Manager-only endpoints directly | Not yet written (needs team routes) |
-| 2 | Reading another team's data by changing an ID | Not yet written (needs team routes) |
+| 1 | Staff calling Manager-only endpoints directly | Written below (Teams and roles). The brief's delete-shift test comes with the shifts slice |
+| 2 | Reading another team's data by changing an ID | Written below (Teams and roles) |
 | 3 | A stolen access token | Written below (PR A) |
 | 4 | A stolen refresh token, and reuse | Written below (PR A) |
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
 | 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
 | 7 | Forged or replayed Stripe webhooks | Not yet written (needs payments) |
 | 8 | Theft or reuse of invite and reset tokens | Not yet written (needs invites and reset) |
+
+## Permissions: the one table (threat 1)
+
+One module, `server/src/teams/permissions.ts`, decides every permission; this table mirrors it and `permissions.unit.test.ts` checks the two
+against a hand-written copy. Anything not in the table is refused. Rows without a route yet are for later slices.
+
+| Action | Owner | Manager | Staff | Route today |
+|---|---|---|---|---|
+| `team.view`, `members.list` | yes | yes | yes | `GET /teams/:teamId`, `GET /teams/:teamId/members` |
+| `shifts.view`, `swaps.request`, `preferences.edit` (own) | yes | yes | yes | later |
+| `shifts.edit`, `swaps.approve` | yes | yes | no | later |
+| `invite.staff` | yes | yes | no | later |
+| `invite.manager` | yes | no | no | later |
+| `billing.manage` | yes | no | no | later |
+
+Nobody is invited as Owner, and the database allows only one Owner per team (partial unique index).
+
+## Threat 1: Staff calling Manager-only endpoints directly
+
+**What it is.** A Staff member skips the app and calls an Owner/Manager endpoint (a shift delete, an invite, billing) with their own valid token.
+
+**How it is handled.**
+- The app hides buttons, but **the server decides**. Every team route runs `requireTeamRole(action)` after the token and session check.
+- **The role is read from the database on every request** (the team shard's primary), never from the token, which carries no role. A demotion
+  applies to the very next request.
+- A member whose role may not do the action gets `403 forbidden`; the real reason (`role_staff_cannot_shifts.edit`) is in the server log only.
+
+**What remains.** Only `team.view` and `members.list` have real routes so far, so the proof uses a route that exists only in the test harness.
+The brief's "Staff calls delete-shift and is rejected" test belongs to the shifts slice, which adds the endpoint on this same middleware.
+
+**Proving tests.** `team-security.integration.test.ts`: "ROLE ENFORCEMENT" (Staff 403, Manager and Owner 200, Staff still allowed to view),
+"ROLE FROM THE SERVER, NOT THE TOKEN" (demote a Manager, the same token gets 403). `permissions.unit.test.ts`: the table. The test route is
+checked to be absent from the production app in `teams.integration.test.ts`.
+
+## Threat 2: reading another team's data by changing an ID
+
+**What it is.** A user changes the team ID in a request to see a team they are not in.
+
+**How it is handled.**
+- The team comes from the validated route parameter (a canonical UUID), never from the body or the token. The membership is looked up on **that team's
+  shard** for the **caller's user ID**; no membership means the request stops.
+- **404, not 403.** A team the caller is not in answers exactly like a team that does not exist (same status, same body apart from the request ID), so
+  a response never confirms that another team's resource exists. 403 is only for a member with too little power.
+- Team data is tied to the team's shard; there is no cross-team query on a request path.
+- A removed member loses access on the next request (membership is read from the primary every time), even if the directory still lists them
+  (ADR 0013: the directory is a hint, access never consults it).
+
+**What remains.** Team routes added later must use `requireTeamRole` and filter every query by `team_id`; a route that skips it is the risk.
+
+**Proving tests.** `team-security.integration.test.ts`: "TEAM ISOLATION" (users from team X and team Y, **on different shards**, shown by SQL and the
+shard function: 404 on the team and its members, byte-identical to an unknown ID, in both directions), the Staff variant, and "a removed member
+loses access on the next request". Mutation-checked: making the middleware answer 403 for a stranger, or skipping the role check, fails them.
 
 ## Threat 3: a stolen access token
 
@@ -76,6 +128,7 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `login_email` | 5 | 15 minutes | `RATE_LIMIT_LOGIN_EMAIL_MAX` / `_WINDOW_SECONDS` |
 | `register_ip` | 10 | 1 hour | `RATE_LIMIT_REGISTER_IP_MAX` / `_WINDOW_SECONDS` |
 | `refresh_ip` | 60 | 15 minutes | `RATE_LIMIT_REFRESH_IP_MAX` / `_WINDOW_SECONDS` |
+| `team_create_user` | 5 | 1 hour | `RATE_LIMIT_TEAM_CREATE_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-23) |
 
 - A blocked request is `429 rate_limited` with a `Retry-After` header, and never reaches password verification.
 - If Valkey is unreachable or rejects the write, these routes answer `503 service_unavailable` (fail closed).
