@@ -232,22 +232,49 @@ test('ownership lost: with a wrong claim token the handler makes no call and sta
   assert.equal(resend.calls.length, 0, 'the lease could not be renewed: no external call');
 });
 
-test('two executions of one job at the same time: exactly one claims and sends; the other is told to retry, never "succeeds"', async () => {
+test('two executions of one job that OVERLAP: exactly one claims and sends; the other is told to retry (ContentionError), never "succeeds"', async () => {
   const made = await makeInviteEmail(shards, 'B');
   const resend = new FakeResend();
-  resend.delayMs = 300;
+  // Deterministic overlap: the first execution is held INSIDE the Resend call (it owns a live claim) until the second has been turned away.
+  let enteredSend!: () => void;
+  const insideSend = new Promise<void>((resolve) => (enteredSend = resolve));
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => (release = resolve));
+  resend.onCall = async () => {
+    enteredSend();
+    await hold;
+  };
   const processor = processorFor(resend);
-  const results = await Promise.allSettled([processor(job({ id: made.workRowId }, 'B')), processor(job({ id: made.workRowId }, 'B'))]);
-  const fulfilled = results.filter((r) => r.status === 'fulfilled');
-  const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
-  assert.equal(fulfilled.length, 1);
-  assert.equal(rejected.length, 1);
-  assert.ok(rejected[0]!.reason instanceof ContentionError, 'the loser retries instead of exiting "successfully"');
-  assert.equal(resend.calls.length, 1);
+
+  const first = processor(job({ id: made.workRowId }, 'B'));
+  await insideSend;
+  const second = await processor(job({ id: made.workRowId }, 'B')).then(
+    () => 'resolved' as const,
+    (error: unknown) => error,
+  );
+  assert.ok(second instanceof ContentionError, 'the loser retries instead of exiting "successfully"');
+  assert.equal((await row('B', made.workRowId)).status, 'claimed', 'the first still owns the row while it sends');
+  release();
+  await first;
+
+  assert.equal(resend.calls.length, 1, 'one call to Resend');
   assert.equal(resend.deliveries, 1);
   const r = await row('B', made.workRowId);
   assert.equal(r.status, 'done');
   assert.equal(r.executionAttempts, 1, 'contention does not touch execution_attempts');
+});
+
+test('a second execution that starts AFTER the first has finished exits cleanly and sends nothing (a done row is a stale job)', async () => {
+  const made = await makeInviteEmail(shards, 'B');
+  const resend = new FakeResend();
+  const processor = processorFor(resend);
+  await processor(job({ id: made.workRowId }, 'B'));
+  await processor(job({ id: made.workRowId }, 'B')); // resolves: nothing to do, nothing sent
+  assert.equal(resend.calls.length, 1);
+  assert.equal(resend.deliveries, 1);
+  const r = await row('B', made.workRowId);
+  assert.equal(r.status, 'done');
+  assert.equal(r.executionAttempts, 1);
 });
 
 test('attempt budget: repeated failures end FAILED at the max, every attempt used the same key and payload, and a later job sends nothing', async () => {
