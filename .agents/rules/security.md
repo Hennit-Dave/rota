@@ -15,7 +15,7 @@ Auth tables live on shard A; security-sensitive reads always use the primary (`d
 | Public auth | signup, login, magic-link request and redeem, refresh, reset request, reset submit, invite preview | Zod → rate limit → handler |
 | Invite accept | joining a team | Zod → rate limit → **authenticated identity** (existing account's access token + session check, or an account created in the same onboarding flow) → redeem |
 | User | settings, push-token registration, log out | Zod → access token → session check → applicable rate limits → owns the resource |
-| Team | shifts, swaps, feed, members, billing | Zod → access token → session check → applicable rate limits → membership and role from the team shard primary → handler, every query filtered by `team_id` |
+| Team | shifts, swaps, feed, members, billing | Zod → access token → session check → per-user rate limits → membership and role from the team shard primary → **limits keyed by the team or the whole app** (invites, ADR 0015) → handler, every query filtered by `team_id` |
 | Stripe webhook | `/webhooks/stripe` | Raw body → signature verified **before any parsing** → Zod on the event → record → acknowledge (`AGENTS.md` rule 7, `money.md`) |
 
 - For normal team routes, resolve the team from the validated route parameter and verify membership. For
