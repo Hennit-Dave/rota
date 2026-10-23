@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 import { getShard, type Shards } from '../db/clients.js';
 import { ApiError } from '../http/errors.js';
 import { can, type PermissionAction, type Role } from './permissions.js';
@@ -19,8 +19,10 @@ declare module 'express-serve-static-core' {
  *    revealed. The team comes from the validated route parameter, never from the body or the token.
  *  - A membership whose role does not allow the action: 403.
  */
-export function createRequireTeamRole(deps: { shards: Shards }): (action: PermissionAction) => RequestHandler {
-  return (action) => async (req, _res, next) => {
+export function createRequireTeamRole(deps: { shards: Shards }): (action: PermissionAction | ((req: Request) => PermissionAction)) => RequestHandler {
+  return (actionOrFn) => async (req, _res, next) => {
+    // Some actions depend on the (already validated) request, e.g. inviting a Manager needs `invite.manager`, inviting Staff `invite.staff`.
+    const action = typeof actionOrFn === 'function' ? actionOrFn(req) : actionOrFn;
     const { teamId } = req.validated!.params as { teamId: string };
     const userId = req.auth!.userId;
 

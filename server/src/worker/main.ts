@@ -11,6 +11,9 @@ import {
   formatWorkerError,
   formatWorkerInitError,
 } from '../jobs/redact.js';
+import { createEmailHandler } from '../jobs/email.js';
+import { loadResendConfig } from '../jobs/mail.js';
+import { createResendClient } from '../jobs/resend.js';
 import { createWorkWorker } from '../jobs/worker.js';
 
 console.log('worker starting...');
@@ -28,11 +31,20 @@ try {
   process.exit(1);
 }
 
-// In PR 2, handlers are test handlers; email handler arrives in PR 3
+// The Resend key is a secret that only the worker holds. A missing value stops the worker before it takes any work (same rule as the API's JWT secret).
+let resendConfig: { apiKey: string; timeoutMs: number };
+try {
+  resendConfig = loadResendConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+
 const handlers = {
   test: async (ctx: any) => {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
+  email: createEmailHandler({ resend: createResendClient(resendConfig) }),
 };
 
 const worker = createWorkWorker(shards, handlers, { connection: redis });

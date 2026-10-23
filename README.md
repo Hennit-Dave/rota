@@ -20,8 +20,8 @@ npm run build
 npm run typecheck
 npm test              # runs unit tests (no database, no network)
 npm run test:integration # runs database integration tests (needs .env, guards against non-test DB); also test:integration:slow and test:all, see below
-npm run start:api      # terminal 1: http://localhost:3000/health returns {"ok":true}. Needs AUTH_JWT_SECRET (see below)
-npm run start:worker   # terminal 2: logs "worker running"
+npm run start:api      # terminal 1: http://localhost:3000/health returns {"ok":true}. Needs AUTH_JWT_SECRET, MAIL_FROM and MAIL_REPLY_TO (see below)
+npm run start:worker   # terminal 2: logs "worker running". Needs RESEND_API_KEY (see "Invitations and email")
 ```
 
 `db:generate` needs no `.env`, no database and no network: it reads only `prisma/schema.prisma`. The
@@ -55,6 +55,15 @@ The service must have `maxmemory-policy: noeviction`.
 | `npm run jobs:check-valkey` | `VALKEY_URL` | Connects to Valkey, verifies `noeviction` policy, reports status |
 | `npm run jobs:prove:boxes-4-5` | `VALKEY_URL`, `SHARD_A_DATABASE_URL`, `SHARD_B_DATABASE_URL` | Proves Box 4 (immediate execution on Shards A & B with timing) and Box 5 (delayed fire strictly at/after run_at, exponential backoff) |
 | `npm run jobs:prove:crash` | `VALKEY_URL`, `SHARD_A_DATABASE_URL` | Proves Box 6 (abrupt SIGKILL termination mid-claim and recovery upon lease expiry) |
+
+### Invitations and email (server; needs `MAIL_FROM`, `MAIL_REPLY_TO` for the API and `RESEND_API_KEY` for the worker)
+
+An Owner or Manager invites someone by email into a role. The API writes the invitation and its email work row together, and the **worker** sends the
+email through Resend (never the request). Both processes refuse to start without their mail settings: `MAIL_FROM` (`Rota <notification@rota.davebuilds.design>`)
+and `MAIL_REPLY_TO` (`rota@davebuilds.design`) for the API, and `RESEND_API_KEY` (a secret, worker only) for the worker. Names are in `.env.example`.
+Optional: `INVITE_EXPIRY_DAYS` (7), `INVITE_GLOBAL_DAILY_CAP` (50 invite emails per UTC day: Resend's free plan sends 100 a day in total),
+`INVITE_LINK_BASE_URL` (`https://rota.davebuilds.design`). Tests use a fake Resend and never send real mail. Decisions: `docs/decisions/0015-invitations.md`,
+`docs/decisions/0016-email-sending-job.md`. The link only opens the app once `rota.davebuilds.design` is hosted (issue #35).
 
 ### Authentication (server only; needs `AUTH_JWT_SECRET`, `VALKEY_URL` and the shard URLs in `.env`)
 

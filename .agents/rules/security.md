@@ -15,7 +15,7 @@ Auth tables live on shard A; security-sensitive reads always use the primary (`d
 | Public auth | signup, login, magic-link request and redeem, refresh, reset request, reset submit, invite preview | Zod → rate limit → handler |
 | Invite accept | joining a team | Zod → rate limit → **authenticated identity** (existing account's access token + session check, or an account created in the same onboarding flow) → redeem |
 | User | settings, push-token registration, log out | Zod → access token → session check → applicable rate limits → owns the resource |
-| Team | shifts, swaps, feed, members, billing | Zod → access token → session check → applicable rate limits → membership and role from the team shard primary → handler, every query filtered by `team_id` |
+| Team | shifts, swaps, feed, members, billing | Zod → access token → session check → per-user rate limits → membership and role from the team shard primary → **limits keyed by the team or the whole app** (invites, ADR 0015) → handler, every query filtered by `team_id` |
 | Stripe webhook | `/webhooks/stripe` | Raw body → signature verified **before any parsing** → Zod on the event → record → acknowledge (`AGENTS.md` rule 7, `money.md`) |
 
 - For normal team routes, resolve the team from the validated route parameter and verify membership. For
@@ -26,6 +26,11 @@ Auth tables live on shard A; security-sensitive reads always use the primary (`d
 - **Another team's resource → 404**, so its existence isn't revealed. **Your team, insufficient role → 403.**
 - Roles are loaded from the database on each request, never from the token. *Why: a demotion must take
   effect immediately.*
+- **A limit keyed by the team, or by the whole app, runs after the membership and role check** (ADR 0015),
+  not before it as the table above lists for per-user limits. *Why: a limit keyed by a team the caller has
+  not proven to belong to lets any signed-in user burn another team's daily budget, or the app-wide cap, by
+  calling that team's URL.* Per-user limits still run first. A request refused for role or membership never
+  counts toward a team or app-wide limit.
 - One permission table, in one server module and in `SECURITY.md`. At minimum: Owner alone manages
   billing; Owner and Manager edit shifts and approve swaps; Staff view shifts, request swaps, edit own
   preferences.
@@ -63,9 +68,19 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
   **clears its existing password and revokes all its sessions**, then issues the new session. Whoever set
   that password may not own the address. Never trust an unverified account because its email matches.
 - If it was already verified, nothing is cleared.
+- **Exception: accepting an invite (ADR 0015).** Acceptance already requires a signed-in session of the
+  account whose address matches the invitation, so there is nobody to evict. It marks the address verified
+  and does **nothing else**: it never clears the password and never revokes a session. *Why: signup
+  verification is deferred, so every account is unverified; clearing on every acceptance would wipe the
+  accepter's own password.* **Accepted gap:** an address someone else pre-registered (unverified) blocks the
+  real person from creating an account with it. The invite can only be accepted by the account that holds
+  the address, so only password reset or magic link (slice 2b) can take such an account over. Until 2b
+  exists that person has no way in. The clearing rule above still applies to magic link and reset.
 - **Invite ordering across shards:** (1) validate the invite on the team's shard without consuming it;
-  (2) run the shard A verification above; (3) on the team's shard, consume the invite, claim the seat and
-  create the membership in one transaction. Team access exists only after step 3.
+  (2) on shard A, mark the address verified (no clearing for an invite, see above) and write the
+  `user_teams` directory row **first** (ADR 0013); (3) on the team's shard, consume the invite, claim the
+  seat (when billing exists) and create the membership in one transaction. Team access exists only after
+  step 3.
 - **Recovery:** if step 3 fails after step 2, the invite is unconsumed and redemption can be retried.
   Step 2 is a no-op once verified (it must not revoke the session it just issued); membership is unique per
   team and user, so a retry never joins twice.
@@ -124,12 +139,19 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
     Merely opening a page never consumes or verifies anything: email scanners open links automatically.
   - **Signup email verification is deferred** (documented initial policy). An unverified address grants no
     trusted identity privileges and can't satisfy an email-bound invite except through that redemption.
-  - **Link invites** are bearer links: whoever holds the link may use it, once.
+  - **Link invites** are bearer links: whoever holds the link may use it, once. *(Not built: the design
+  removed them, Figma 292:1026.)*
 - **Seat capacity is claimed atomically** in the consumption transaction: one conditional update on the
   team's billing row (e.g. `seats_used = seats_used + 1 WHERE seats_used < seat_limit`). Zero rows → the
   team is full, nothing is consumed. *Why: two separate checks could both take the last seat.* Seat limits
   per plan are in `money.md`.
-- The deep link carries only the opaque token. Team and role come from the server's invite row.
+- The deep link carries `<teamId>.<secret>` (ADR 0015). The team ID is only a **routing hint**: it picks the
+  shard, as for every team route, and the query is `WHERE team_id = ? AND token_hash = ?`. The secret is the
+  credential, and only its hash is stored. Team and role come from the server's invite row, never from the
+  link. **Unknown, malformed, wrong-team, expired, used and revoked tokens all answer identically**
+  (`404 invite_unavailable`), **except** that the one account that already accepted this exact token, and
+  still has the membership, gets the same success again so a retry is safe (ADR 0015); it writes nothing. *Why: no token-hash lookup table on shard A, and it keeps working if a large
+  team is moved to its own shard.*
 
 ## Request validation (brief, Requirement 4; scope from `AGENTS.md`)
 
@@ -195,9 +217,10 @@ Also covered, not counted: hostile cursor and limit input, secrets in Git histor
     two different hashes.
 11. **Reset:** works once; reuse and expiry fail; afterwards all sessions are rejected; known and unknown
     emails get identical responses.
-12. **Invites:** single use; expired and wrong-team tokens fail; a Manager can't grant Manager; an email
-    mismatch fails; opening the preview consumes nothing; acceptance without an authenticated identity
-    fails; two concurrent acceptances for the last seat → exactly one succeeds.
+12. **Invites:** single use; expired, revoked and wrong-team tokens fail with one identical answer; a Manager
+    can't grant Manager; an email mismatch fails; opening the preview consumes nothing; acceptance without an
+    authenticated identity fails; two concurrent acceptances by the same person → one membership. *(Two
+    acceptances for the last seat → exactly one succeeds arrives with seat limits in the billing slice.)*
 13. **Validation:** unknown key, non-UUID path ID, oversized `limit`, tampered cursor → 400 each.
 14. **Rate limits:** repeated logins → 429 **without running password verification**; with Valkey down,
     login → 503.
@@ -205,8 +228,8 @@ Also covered, not counted: hostile cursor and limit input, secrets in Git histor
 16. **Magic link:** works once; reuse and expiry fail; a `GET` of the link consumes nothing; unknown and
     known emails get identical responses.
 17. **Account takeover blocked:** register someone else's email (unverified), keep a session; the real owner
-    redeems a magic link → the old password fails and the old session is rejected. Repeat with an
-    email-bound invite redemption. Then retry an invite whose step 3 failed → one membership, and the new
-    session survives.
+    redeems a magic link → the old password fails and the old session is rejected *(slice 2b)*. For an
+    **invite**, acceptance verifies the address and clears nothing (ADR 0015): the password and sessions stay
+    intact. Retry an invite whose step 3 failed → one membership, and the session survives.
 18. **Redaction:** after login, refresh and reset, captured logs and Sentry events contain no password,
     hash or token, including magic-link tokens.

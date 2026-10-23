@@ -54,3 +54,23 @@ test('a bad secret error never contains the secret', () => {
     assert.ok(!String((e as Error).message).includes(short));
   }
 });
+
+test('invite settings: 7 days, 50 invite emails per UTC day app-wide, the production link host, and the approved limits', () => {
+  const c = loadAuthConfig({});
+  assert.deepEqual(c.invites, { expiryDays: 7, globalDailyCap: 50, linkBaseUrl: 'https://rota.davebuilds.design' });
+  assert.deepEqual(c.rateLimits.inviteSendUser, { max: 10, windowSeconds: 3600 });
+  assert.deepEqual(c.rateLimits.inviteSendTeam, { max: 20, windowSeconds: 86_400 });
+  assert.deepEqual(c.rateLimits.invitePreviewIp, { max: 30, windowSeconds: 900 });
+  assert.deepEqual(c.rateLimits.inviteAcceptUser, { max: 10, windowSeconds: 3600 });
+  assert.deepEqual(c.rateLimits.inviteAcceptIp, { max: 30, windowSeconds: 900 });
+});
+
+test('invite overrides apply, and a bad value stops the server', () => {
+  const c = loadAuthConfig({ INVITE_EXPIRY_DAYS: '3', INVITE_GLOBAL_DAILY_CAP: '5', INVITE_LINK_BASE_URL: 'https://example.test/' });
+  assert.deepEqual(c.invites, { expiryDays: 3, globalDailyCap: 5, linkBaseUrl: 'https://example.test' });
+  assert.throws(() => loadAuthConfig({ INVITE_EXPIRY_DAYS: '0' }), /INVITE_EXPIRY_DAYS/);
+  assert.throws(() => loadAuthConfig({ INVITE_GLOBAL_DAILY_CAP: 'many' }), /INVITE_GLOBAL_DAILY_CAP/);
+  for (const bad of ['http://rota.davebuilds.design', 'https://rota.davebuilds.design/invite', 'https://rota.davebuilds.design/?x=1', 'https://u:p@rota.davebuilds.design', 'not a url']) {
+    assert.throws(() => loadAuthConfig({ INVITE_LINK_BASE_URL: bad }), /INVITE_LINK_BASE_URL/, bad);
+  }
+});

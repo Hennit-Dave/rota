@@ -18,6 +18,7 @@ export const PERMISSIONS = {
   'preferences.edit': ['owner', 'manager', 'staff'],
   'shifts.edit': ['owner', 'manager'],
   'swaps.approve': ['owner', 'manager'],
+  'invitations.list': ['owner', 'manager'],
   'invite.manager': ['owner'],
   'invite.staff': ['owner', 'manager'],
   'billing.manage': ['owner'],
@@ -29,4 +30,12 @@ export function can(role: Role, action: PermissionAction): boolean {
   // Types forbid an unknown action, but this is the security boundary: anything not in the table is refused.
   if (!Object.hasOwn(PERMISSIONS, action)) return false;
   return (PERMISSIONS[action] as readonly Role[]).includes(role);
+}
+
+/** The roles `role` may invite, from the table: Owner invites Manager or Staff, Manager invites Staff only, nobody invites an Owner. */
+export function invitableRoles(role: Role): Array<'manager' | 'staff'> {
+  const out: Array<'manager' | 'staff'> = [];
+  if (can(role, 'invite.manager')) out.push('manager');
+  if (can(role, 'invite.staff')) out.push('staff');
+  return out;
 }

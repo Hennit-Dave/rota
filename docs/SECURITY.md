@@ -12,7 +12,7 @@ completed in later slices; sections below are added by the slice that builds the
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
 | 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
 | 7 | Forged or replayed Stripe webhooks | Not yet written (needs payments) |
-| 8 | Theft or reuse of invite and reset tokens | Not yet written (needs invites and reset) |
+| 8 | Theft or reuse of invite and reset tokens | Invite tokens written below (Invites, slice 2a); reset tokens come with slice 2b |
 
 ## Permissions: the one table (threat 1)
 
@@ -65,6 +65,28 @@ checked to be absent from the production app in `teams.integration.test.ts`.
 **Proving tests.** `team-security.integration.test.ts`: "TEAM ISOLATION" (users from team X and team Y, **on different shards**, shown by SQL and the
 shard function: 404 on the team and its members, byte-identical to an unknown ID, in both directions), the Staff variant, and "a removed member
 loses access on the next request". Mutation-checked: making the middleware answer 403 for a stranger, or skipping the role check, fails them.
+
+## Threat 8 (invite tokens): theft or reuse of an invitation link
+
+**What it is.** An invitation link is a credential that lets someone join a team in a role. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump.
+
+**How it is handled** (ADR 0015).
+- The link is `https://rota.davebuilds.design/invite/<teamId>.<secret>`. The secret is 32 random bytes (base64url, 43 characters); **only its SHA-256 is stored**. The team ID is a routing hint only.
+- **Single use**, consumed by one conditional update (`accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`), so two simultaneous acceptances give one membership.
+- **Tied to one email address.** Accepting needs a signed-in account whose address equals the invited address (`403 invite_wrong_account` otherwise, nothing granted). So a forwarded or leaked link alone does not let anyone else join.
+- **Expires after 7 days** from creation or resend. A resend gives a new secret and kills the old link at once; a revoke kills it too.
+- **One answer for every unusable link:** unknown, malformed, wrong team ID, expired, used and revoked all give the identical `404 invite_unavailable`, so a response never reveals which. The one exception is the **account that already accepted** this exact link and still has the membership: it gets the same success again (a retry after a lost response, or a double submit), and nothing is written. Everyone else, including a different signed-in account, still gets the identical 404.
+- **Opening a link consumes nothing:** the preview is a `POST` (the token never sits in an access log) and changes no row; only an explicit accept does.
+- The role comes only from the invitation row. Nobody can be invited as Owner (validation, the permission table, and a database CHECK). A Manager can invite Staff only.
+- **Never in logs:** the logger cannot carry a token, a link or an address. The raw secret exists only in the link and in the email job's stored payload until the email is sent or skipped, then the body is scrubbed from the row.
+
+**Accepted gaps (written down on purpose).**
+- **A pre-registered address blocks the real person until reset exists.** Signup verification is deferred, so anyone can register someone else's address. The invite can only be accepted by the account that holds that address, and only password reset or magic link (slice 2b) can take such an account over. Until 2b, that person cannot join. Accepting an invite deliberately does **not** clear the password or revoke sessions (ADR 0015; `security.md` amended).
+- The raw token sits in the work row's payload until the job finishes, and stays on a row that ended `failed` (a human may retry it). Because acceptance is tied to the invited address and the token lasts 7 days, that alone does not let a reader join the team.
+- The invite email goes out from a verified domain with a team name and inviter name that people type themselves, so an Owner could write a misleading team name. Names are escaped and single-line; team creation is rate limited.
+- Until `rota.davebuilds.design` is hosted (issue #35) a link tapped in a real inbox goes nowhere; the flow is proven with adb.
+
+**Proving tests.** `invites.integration.test.ts`: "create" (hash only, the secret never in the invitations row), "unavailable is ONE answer", "accept" (role from the invitation, nothing cleared, session intact), "accept needs a signed-in account...", "two simultaneous accepts", "a join that fails halfway", "preview consumes nothing", "REDACTION". `invites-limits.integration.test.ts`. `tokens.unit.test.ts`.
 
 ## Threat 3: a stolen access token
 
@@ -129,6 +151,14 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `register_ip` | 10 | 1 hour | `RATE_LIMIT_REGISTER_IP_MAX` / `_WINDOW_SECONDS` |
 | `refresh_ip` | 60 | 15 minutes | `RATE_LIMIT_REFRESH_IP_MAX` / `_WINDOW_SECONDS` |
 | `team_create_user` | 5 | 1 hour | `RATE_LIMIT_TEAM_CREATE_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-23) |
+| `invite_send_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_SEND_USER_MAX` / `_WINDOW_SECONDS` (create and resend; approved 2026-10-23) |
+| `invite_send_team` | 20 | 24 hours | `RATE_LIMIT_INVITE_SEND_TEAM_MAX` / `_WINDOW_SECONDS` (per team; counted **after** the membership check; approved 2026-10-23) |
+| `invite_send_global` | 50 | UTC day | `INVITE_GLOBAL_DAILY_CAP` (app-wide; counted only for requests that passed every other check; resets at 00:00 UTC; approved 2026-10-23) |
+| `invite_preview_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_PREVIEW_IP_MAX` / `_WINDOW_SECONDS` |
+| `invite_accept_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_ACCEPT_IP_MAX` / `_WINDOW_SECONDS` |
+| `invite_accept_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_ACCEPT_USER_MAX` / `_WINDOW_SECONDS` |
+
+The app-wide invite cap exists because Resend's free plan sends 100 emails per UTC day in total, shared with password reset and magic link (slice 2b) and any proof sends (ADR 0015). A limit keyed by the team or the whole app runs **after** the membership and role check, so a stranger cannot spend another team's budget (`security.md`).
 
 - A blocked request is `429 rate_limited` with a `Retry-After` header, and never reaches password verification.
 - If Valkey is unreachable or rejects the write, these routes answer `503 service_unavailable` (fail closed).

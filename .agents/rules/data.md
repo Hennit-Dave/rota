@@ -58,8 +58,10 @@ If a rule here conflicts with `AGENTS.md`, stop and ask. The tests at the end ar
   settings, plus the **user→team directory** (`user_teams`, ADR 0013). Record the extra load on A in
   `SHARDING.md` as a known imbalance.
 - **The team's own shard holds** memberships, roles, shifts, swaps, activity, billing and the ledger.
-- **Invites belong to the team:** the authoritative invitation lives on the team's shard. A global lookup
-  on shard A (invite token hash → `team_id`) exists only if needed to locate it.
+- **Invites belong to the team:** the authoritative invitation lives on the team's shard. **No global
+  lookup on shard A is needed:** the invite link carries `<teamId>.<secret>`, so the team's shard is known
+  and the invitation is found with `WHERE team_id = ? AND token_hash = ?` (ADR 0015). An invitation and its
+  email work row are written in one transaction on the team's shard.
 - **No foreign keys across databases.** A row on shard B can't reference a user on shard A with a
   database constraint. The application checks references, and cross-database writes are idempotent
   steps recorded as work rows (`jobs.md`), **except the user→team directory below**.

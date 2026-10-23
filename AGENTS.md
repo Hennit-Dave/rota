@@ -149,7 +149,7 @@ queue-loss recovery depends on already exists (ADR 0004); only its end-to-end pr
 - [ ] Queue-loss recovery: delete disposable queued jobs from Valkey; the independent reconciliation
       process restores them from Postgres. A worker restart alone doesn't prove this.
 - [ ] Queue-loss recovery repeated with the deployed worker
-- [ ] One email from the worker through Resend. Proven with the invite feature.
+- [x] One email from the worker through Resend. Proven with the invite feature (2026-10-23, PR #36; Dave confirmed it arrived, not in spam, sender, reply-to, subject, body and expiry correct).
 - [ ] Password blocklist data: bundle a list of common/compromised passwords whose data licence is confirmed (or write our
       own), with its source and licence notice. The mechanism exists but the list is empty, so NIST SP 800-63B-4 3.1.1.2's
       blocklist SHALL is not yet met (ADR 0005).

@@ -80,6 +80,10 @@ password policy), ADR 0006 (Argon2id), ADR 0007 (rate limiting). Threat write-up
 | `email_in_use` | 409 | Register: the address already has an account (accepted trade-off, ADR 0005) |
 | `forbidden` | 403 | A team member whose role may not do this (ADR 0014). Never used for another team's data: that is `not_found` |
 | `not_found` | 404 | Unknown route, or a team the caller is not in (identical to one that does not exist) |
+| `invite_unavailable` | 404 | An invitation link that cannot be used, whatever the reason (unknown, malformed, wrong team ID, expired, used, revoked) |
+| `invite_wrong_account` | 403 | A signed-in holder of a valid link whose account is not the invited address. Nothing is granted |
+| `already_member` | 409 | Inviting an address that is already on the team |
+| `invite_pending` | 409 | Inviting an address that already has a pending invitation |
 | `rate_limited` | 429 | Over a limit; `Retry-After` header and `retryAfterSeconds` |
 | `internal_error` | 500 | Unexpected; nothing about it is sent |
 | `service_unavailable` | 503 | Valkey is down (limited routes fail closed), or the database could not start a transaction in time. Safe to retry |
@@ -102,6 +106,30 @@ table is `server/src/teams/permissions.ts`, mirrored in `docs/SECURITY.md`. Ever
 - `GET /teams` reads the directory, then verifies each team against its own shard's memberships (one read per shard that appears).
 - The member list takes names from shard A in one batched query and never includes email addresses.
 - A team the caller is not in answers `404 not_found`, identical to a team that does not exist; a member without the permission answers `403 forbidden`.
+
+### 5b. Invitations API and the email job
+
+An invitation is team-owned: it lives on the team's shard, and so does its email work row, **written in the same transaction** (the foreign key
+`invitations.email_work_row_id` is same-database); only after the commit is the job enqueued, and an enqueue failure never fails the request
+(the row becomes eligible at once for the sweep). Decisions: ADR 0015 (invites), ADR 0016 (the email job). Link: `https://rota.davebuilds.design/invite/<teamId>.<secret>`.
+
+| Route | Type | Checks, in order | Success |
+|---|---|---|---|
+| `POST /teams/:teamId/invitations` | team | Zod, token, session, per-user limit, membership and `invite.<role>`, team limit, app-wide cap | `201 { invitation }` |
+| `GET /teams/:teamId/invitations` | team | Zod, token, session, membership and `invitations.list` | `200 { invitations: [{ id, email, role, expiresAt, emailStatus, canResend, canRevoke }] }` |
+| `POST /teams/:teamId/invitations/:id/resend` | team | as create, for that invitation's role | `200 { invitation }` (new token, new email row) |
+| `DELETE /teams/:teamId/invitations/:id` | team | Zod, token, session, membership and `invite.staff` gate, then the invitation's own role | `204` |
+| `POST /invitations/preview` `{ token }` | public | Zod, IP limit, optional session | `200 { team, role, inviter, email, account }` |
+| `POST /invitations/accept` `{ token }` | invite accept | Zod, IP limit, token, session, user limit | `200 { team, role }` |
+
+- **Accept is idempotent for the account that already accepted** (same `200 { team, role }`, nothing written); every other caller of a spent link gets the identical `404 invite_unavailable` (ADR 0015).
+- `emailStatus` is `queued`, `sent` or `failed`, read from the invitation's latest email work row. Resend and Revoke stay available in every state.
+- `GET /teams/:teamId` also returns `invitableRoles` and `canManageInvitations`, computed from the permission table; the app offers only those.
+- Errors: `404 invite_unavailable` (unknown, malformed, wrong team, expired, used, revoked: one identical answer), `403 invite_wrong_account`,
+  `409 already_member`, `409 invite_pending`, `403 forbidden`, `404 not_found`, `429`, `503`.
+- **The worker** runs the `email` job: `work_rows.payload` is the frozen Resend request; the job stamps `first_attempt_at` before the first call, sends with
+  the key `email-<rowId>`, records `sent_at` and Resend's message ID, and scrubs the body and link. Terminal failures (the 23-hour rule, a spent daily quota,
+  a rejected request) mark the row `failed` without retrying. The worker needs `RESEND_API_KEY`; the API needs `MAIL_FROM` and `MAIL_REPLY_TO`.
 
 ### 6. Mobile app
 

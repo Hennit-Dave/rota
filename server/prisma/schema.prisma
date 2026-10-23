@@ -40,6 +40,9 @@ model WorkRow {
   claimExpiresAt    DateTime?  @map("claim_expires_at") @db.Timestamptz(6)
   failureReason     String?    @map("failure_reason")
 
+  // The request that created this work (observability.md). ADR 0002 deferred it until the first job started by a request: invitation email.
+  originRequestId   String?    @map("origin_request_id") @db.Uuid
+
   // Email only (jobs.md, External effects).
   payload           Json?
   firstAttemptAt    DateTime?  @map("first_attempt_at") @db.Timestamptz(6)
@@ -48,6 +51,8 @@ model WorkRow {
 
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  invitations Invitation[]
 
   // Timed sweep: pending rows past available_at; claimed rows with an expired lease.
   @@index([status, availableAt], map: "work_rows_status_available_at_idx")
@@ -140,6 +145,7 @@ model Team {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships Membership[]
+  invitations Invitation[]
 
   @@map("teams")
 }
@@ -173,4 +179,33 @@ model UserTeam {
 
   @@id([userId, teamId])
   @@map("user_teams")
+}
+
+// An email invitation to join a team in a role. Team-owned: lives on the team's shard. Only the SHA-256 of the secret is stored; the raw
+// secret exists in the link and, until the email job finishes, in the frozen work-row payload (ADR 0015, ADR 0016). A resend rotates
+// token_hash and expires_at on the same row. user ids point at shard A, so there is no foreign key (data.md).
+// Also in the SQL, which Prisma cannot express: CHECK "invitations_role_not_owner" (role <> 'owner'), CHECK "invitations_email_normalised"
+// (email = lower(btrim(email))), and the partial unique index
+// "invitations_one_pending_per_email" on (team_id, email) WHERE accepted_at IS NULL AND revoked_at IS NULL.
+model Invitation {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String    @map("team_id") @db.Uuid
+  // Stored trimmed and lowercased by the application; the database refuses anything else (CHECK).
+  email             String
+  role              TeamRole
+  tokenHash         Bytes     @unique @map("token_hash")
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
+  invitedByUserId   String    @map("invited_by_user_id") @db.Uuid
+  acceptedAt        DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedByUserId  String?   @map("accepted_by_user_id") @db.Uuid
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
+  // The latest email work row (a resend moves it). The pending list reads its state: queued, sent, or email not sent.
+  emailWorkRowId    String?   @map("email_work_row_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  emailWorkRow WorkRow? @relation(fields: [emailWorkRowId], references: [id], onDelete: SetNull)
+
+  @@map("invitations")
 }
