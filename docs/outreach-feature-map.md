@@ -13,6 +13,7 @@ Rows start as **planned**. A row becomes **ready** only when its evidence exists
 | Cursor-paginated activity feed at 10,000+ records, load tested at 200 users | Any product with large feeds or timelines | `EXPLAIN ANALYZE` before/after, load test report | planned |
 | Offline viewing with cross-device settings sync | Mobile-first workforce and field-service tools | PR, offline clip | planned |
 | Role-based permissions and team isolation, proven by tests | HR and multi-tenant B2B SaaS | [PR #34](https://github.com/Hennit-Dave/rota/pull/34): isolation across two shards (404), role enforcement (403), demotion with the same token | built (PR #34) |
+| Email invitations that send exactly once: single-use hashed tokens, a durable background job with idempotency keys, queue-loss recovery | B2B SaaS with team onboarding, and any product that sends transactional email | [PR #36](https://github.com/Hennit-Dave/rota/pull/36) (server half): a lost invite email on shard B restored by the sweep, one real Resend send, mutation-checked security tests | built (PR #36, server half) |
 
 The first three starting rows come from the build prompt; the rest are proposals. Edit freely; only
 measured, linked evidence goes in the evidence column.
