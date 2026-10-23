@@ -80,10 +80,10 @@ export const signedOutOfflineCopy = {
   title: 'You are signed out', // 100:232
   subtitle: 'You were signed out while offline. Connect to the internet, then sign in again.',
   bannerTitle: 'Offline',
-  // Changed from Figma's "Sign in once you're online to end the session everywhere", which is not true: signing in does
-  // not end the old session, only Log out of all devices does (docs/STATE.md, "Offline logout leaves the server session alive").
+  // Matches Figma exactly. Signing in does not end the old session, only Log out of all devices does
+  // (docs/STATE.md, "Offline logout leaves the server session alive"). The subtitle already says signing in needs a connection.
   bannerBody:
-    'Signing in needs a connection. You’re signed out on this phone. Sign in once you’re online, then use Log out of all devices to end it everywhere.',
+    'You’re signed out on this phone. Sign in once you’re online, then use Log out of all devices to end the session everywhere.',
   retry: 'Try again',
   close: 'Close',
 } as const;
