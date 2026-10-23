@@ -114,6 +114,7 @@ app/src/
   api/         API client (one refresh in flight, stale-account discard), errors, config, cache times
   auth/        account epoch, token store (secure-store), local sign-out, logout
   state/       the Zustand store (session status, selected team, UI flags)
+  teams/       team API calls and parsers, the create-team form rules, the time zone list (app side of section 5a)
   theme/       design tokens mirrored from Figma: palette, colours (light/dark), dimensions, typography
   ui/          components built only from the tokens
   services.ts  composition root: the real client, query client, sign-out, query managers

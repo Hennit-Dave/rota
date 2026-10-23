@@ -1,11 +1,12 @@
 import { SvgXml } from 'react-native-svg';
 import * as xml from './icons/figmaIcons';
 
-export type IconName = 'eye' | 'eyeOff' | 'alert' | 'statusError' | 'statusWarning' | 'statusInfo' | 'spinner';
+export type IconName = 'eye' | 'eyeOff' | 'chevronDown' | 'alert' | 'statusError' | 'statusWarning' | 'statusInfo' | 'spinner';
 
 const sources: Record<IconName, string> = {
   eye: xml.eyeXml,
   eyeOff: xml.eyeOffXml,
+  chevronDown: xml.chevronDownXml,
   alert: xml.alertXml,
   statusError: xml.statusErrorXml,
   statusWarning: xml.statusWarningXml,

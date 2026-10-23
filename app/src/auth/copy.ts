@@ -93,15 +93,40 @@ export const placeholderCopy = {
   badge: 'Coming soon',
   forgotPassword: { title: 'Reset your password', body: 'Password reset is built in a later slice.' },
   magicLink: { title: 'Sign-in link', body: 'Signing in by email link is built in a later slice.' },
-  createTeam: { title: 'Create your team', body: 'Creating a team is built in a later slice.' },
   back: 'Back',
   skip: 'Skip for now',
+} as const;
+
+/** Create team, Figma 8:101. The button and the missing "Next step" banner are Dave's call (plan, 2026-10-23): plan selection does not exist yet. */
+export const createTeamCopy = {
+  title: 'Your team starts here', // 8:101
+  subtitle: 'Owner onboarding',
+  nameLabel: 'Team name',
+  nameHelper: 'Your team sees this name.',
+  timeZoneLabel: 'Team time zone',
+  timeZoneHelper: 'Shift times use this time zone.',
+  timeZonePlaceholder: 'Choose a time zone', // not in Figma yet
+  submit: 'Create team', // Figma still says "Continue to plan selection"; Dave updates Figma until the billing slice
+  submitting: 'Creating team…', // not in Figma yet
+  nameRequired: 'Enter a team name.', // not in Figma yet
+  nameTooLong: (max: number) => `Use ${max} characters or fewer.`, // not in Figma yet, number from the server's details
+  timeZoneRequired: 'Choose a time zone.', // not in Figma yet
+  timeZoneInvalid: 'Choose a time zone from the list.', // not in Figma yet
+  picker: {
+    title: 'Team time zone',
+    searchLabel: 'Search time zones',
+    searchPlaceholder: 'For example Lagos or London',
+    empty: 'No time zone matches your search.',
+    close: 'Close',
+  }, // not in Figma yet
 } as const;
 
 export const homeCopy = {
   title: 'Home',
   signedInAs: (name: string) => `Signed in as ${name}`,
   signedIn: 'Signed in',
+  teamLoading: 'Loading your team…',
+  teamCouldNotLoad: 'We couldn’t load your team.',
   logout: 'Log out',
   loggingOut: 'Logging out…',
   logoutAll: 'Log out of all devices',
