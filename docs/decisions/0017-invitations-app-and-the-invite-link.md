@@ -46,6 +46,23 @@ approves separately) are issue #37.
 10. **Leaving the invitation screen leaves nothing behind.** Every exit (Accept, Back to Rota, Back to login, Close, the already-member redirect) goes through one helper: pop back to the screen
     behind it if there is one, otherwise replace itself. A bare `replace('/')` over Home made a second Home, so Back needed an extra press per copy (tested; both cases).
 
+## Team directory, invite form and role sheet (checkpoint 2)
+
+11. **Reached from Home, no tab bar yet (Dave, 2026-10-24).** Figma's directory sits under a four-tab bar, but Schedule, Swaps and Settings have no screens, so a tab bar would be three dead tabs.
+    The placeholder home gets a "Team" button instead. "Create a shift" is omitted for the same reason, and the Invitations block with "Manage invitations" belongs to the next step.
+12. **The server decides what is offered.** "Invite a teammate" shows only when `invitableRoles` (from `GET /teams/:id`, the permission table) is not empty; the role sheet lists exactly those roles
+    (an Owner: Manager or Staff; a Manager: Staff only, shown disabled as in Figma 103:2462; never Owner). A Staff member who reaches the form by a link is told "You can't invite people to this
+    team" and nothing can be sent. Only the address and the role are ever sent.
+13. **Every state of the Team screen ends.** A query that is paused offline, or switched off because nothing is selected, would leave "Loading your team…" for ever. The roster queries run offline
+    (`networkMode: 'always'`), and `directoryStatus` decides every case: ready, loading, failed (error with Try again), or no team (back to Home, which goes on to Create team). It includes the case found
+    on the emulator where the API is down at launch, so "who am I" fails, so the team list never starts, so no team is selected. The roster is the whole list in one answer, so it has loading, empty and error
+    states but no pages and no end-of-list marker.
+14. **Parts built from the design, not invented.** The role sheet is a plain React Native `Modal` (no new native module) with the Figma sheet (20 px top corners, 52 px options, check icon downloaded from
+    Figma as Icon/Check) over a scrim that is the `text` token at 40% opacity (Figma 291:977). "Invite a teammate" is the white outlined button of Figma 8:202, added to `Button` as `outline`. Copy that has
+    no Figma frame ("You can't invite people to this team", the loading text) is marked "not in Figma yet".
+15. **Send is one request, like Accept.** The same synchronous latch refuses a second tap before React re-renders; three quick taps created one invitation. The email is sent later by the worker, so the
+    app only says "Email queued".
+
 ## Consequences
 
 - One invitation screen reaches every state in the Figma frames, signed in or signed out; the three states Figma has no frame for (loading, rate limited, generic error) reuse the login patterns and
@@ -59,9 +76,13 @@ approves separately) are issue #37.
 
 ## Evidence
 
-Unit tests (app `npm test`, 167): the link and response parsers, the failure mapping, the screen states, `routeAfterAuth`, the accepted-team seeding, the preview query settings, the latch, `goBackTo`,
+Unit tests (app `npm test`, 196): the link and response parsers, the failure mapping, the screen states, `routeAfterAuth`, the accepted-team seeding, the preview query settings, the latch, `goBackTo`,
 and the offline and timeout behaviour of the preview call. Server (`invites.integration.test.ts`): "preview mirrors accept". On the emulator (development build, local API on the test shards, worker
 off so the invite links stay in the work rows): signed-out invitation; login from an invitation; signup from an invitation (never Create team); Accept landing on the invited team for an account that
 already had another; wrong account, then log out and sign in correctly; unavailable (revoked, expired, unknown, no token) signed in and signed out with the right button; the replay; the `https` link;
 warm start; offline and recovery; three taps on Accept sending one request; Back from Home needing one press. Bugs found and fixed on the way: the link opened after an Accept was undone by a hidden
-invitation screen (issue #38); a double Accept request; offline waiting for ever; a second Home behind Home. The stale Valkey connection seen on the local API is issue #39 (not part of this PR).
+invitation screen (issue #38); a double Accept request; offline waiting for ever; a second Home behind Home; the Team screen waiting for ever when the team list could not load. The stale Valkey connection seen on the local API is issue #39 (not part of this PR).
+
+Checkpoint 2, on the emulator against the test shards: the Owner's directory and form (empty address; an address the server rejects; already on the team; already invited; the role sheet; a Manager invitation stored
+as `manager`; Resend writing a second email row; three quick taps creating one invitation; offline); the Manager's disabled Staff role; the Staff view with no Invite button and a refused direct link; the empty-team
+card; the rate-limited banner with the server's wait; the error state with the team known; and the API down at launch (the endless "Loading your team…", recorded broken, then fixed).
