@@ -331,6 +331,7 @@ test('preview consumes nothing and changes no row, however many times it is open
   const anon = await app.post('/invitations/preview', { token });
   assert.equal(anon.status, 200);
   assert.deepEqual(anon.body, {
+    status: 'pending',
     team: { name: 'The Olive Room' },
     role: 'staff',
     inviter: { name: 'Dave Hennit', role: 'owner' },
@@ -521,8 +522,54 @@ test('the replay is for that account ONLY: a different account, nobody, and a to
   assert.deepEqual(strip(asOther), strip(unknown), 'a stranger to the spent link cannot tell it from an unknown one');
   assert.deepEqual(strip(wrongTeam), strip(unknown));
   assert.equal((await app.post('/invitations/accept', { token })).status, 401, 'nobody signed in');
-  assert.equal((await app.post('/invitations/preview', { token })).status, 404, 'and the preview of a spent link is "unavailable" for everyone');
+  assert.equal((await app.post('/invitations/preview', { token })).status, 404, 'and the preview of a spent link is "unavailable" with nobody signed in');
   assert.equal(await db(teamId).membership.count({ where: { teamId, userId: someoneElse.id } }), 0);
+});
+
+test('preview mirrors accept: the account that already accepted gets 200 already_member (the accept answer, plus a status); everyone else keeps the identical 404 (ADR 0017)', async () => {
+  const { teamId, shard, ownerH } = await setup({ shard: 'B' });
+  const other = await setup();
+  const invited = await app.seedUser('Amara Okafor');
+  const someoneElse = await app.seedUser('Someone Else');
+  const created = (await invite(teamId, ownerH, { email: invited.email, role: 'staff' })).body.invitation;
+  const token = await app.tokenFromEmailRow((await db(teamId).invitation.findUniqueOrThrow({ where: { id: created.id } })).emailWorkRowId!, teamId);
+  const invitedH = bearer((await app.signIn(invited.id)).accessToken);
+
+  assert.equal((await app.post('/invitations/preview', { token }, invitedH)).body.status, 'pending', 'before accepting it is the ordinary preview');
+  const accepted = await app.post('/invitations/accept', { token }, invitedH);
+  assert.equal(accepted.status, 200);
+
+  const rowBefore = await app.raw[shard].primary.$queryRaw<unknown[]>`SELECT * FROM invitations WHERE id = ${created.id}::uuid`;
+  const membershipsBefore = await app.raw[shard].primary.$queryRaw<unknown[]>`SELECT * FROM memberships WHERE team_id = ${teamId}::uuid`;
+  const replay = await app.post('/invitations/preview', { token }, invitedH);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.body, { status: 'already_member', ...accepted.body }, 'the accept answer, plus a status');
+  assert.deepEqual(await app.raw[shard].primary.$queryRaw<unknown[]>`SELECT * FROM invitations WHERE id = ${created.id}::uuid`, rowBefore, 'a replay writes nothing');
+  assert.deepEqual(await app.raw[shard].primary.$queryRaw<unknown[]>`SELECT * FROM memberships WHERE team_id = ${teamId}::uuid`, membershipsBefore);
+
+  // Reports the membership as it is now.
+  await app.setRole(teamId, invited.id, 'manager');
+  assert.equal((await app.post('/invitations/preview', { token }, invitedH)).body.role, 'manager');
+
+  // Everyone else keeps the identical answer, byte for byte, whether signed in or not.
+  const unknown = await app.post('/invitations/preview', { token: `${teamId}.${Buffer.alloc(32, 5).toString('base64url')}` }, invitedH);
+  const asOther = await app.post('/invitations/preview', { token }, bearer((await app.signIn(someoneElse.id)).accessToken));
+  const asNobody = await app.post('/invitations/preview', { token });
+  const asStale = await app.post('/invitations/preview', { token }, bearer('aaa.bbb.ccc'));
+  const wrongTeam = await app.post('/invitations/preview', { token: `${other.teamId}.${token.split('.')[1]}` }, invitedH);
+  for (const res of [unknown, asOther, asNobody, asStale, wrongTeam]) {
+    assert.equal(res.status, 404);
+    assert.equal(res.body.error.code, 'invite_unavailable');
+  }
+  for (const res of [asOther, asNobody, asStale, wrongTeam]) assert.deepEqual(strip(res), strip(unknown));
+
+  // No membership any more, or a revoked invitation: an ordinary "unavailable" even for the account that accepted.
+  await app.raw[shard].primary.membership.delete({ where: { teamId_userId: { teamId, userId: invited.id } } });
+  assert.equal((await app.post('/invitations/preview', { token }, invitedH)).status, 404, 'membership gone');
+  await app.raw[shard].primary.membership.create({ data: { teamId, userId: invited.id, role: 'staff' } });
+  assert.equal((await app.post('/invitations/preview', { token }, invitedH)).status, 200, 'membership back (control)');
+  await app.raw[shard].primary.$executeRaw`UPDATE invitations SET revoked_at = NOW() WHERE id = ${created.id}::uuid`;
+  assert.equal((await app.post('/invitations/preview', { token }, invitedH)).status, 404, 'revoked');
 });
 
 test('a join that fails halfway (directory written, membership not): the invitation is NOT consumed, the retry completes it, and the session survives', async () => {

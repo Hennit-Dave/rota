@@ -347,7 +347,8 @@ async function findAcceptedBy(
   return { team: { id: r.team_id, name: r.team_name, timeZone: r.time_zone }, role: r.role as Role };
 }
 
-export interface InvitePreview {
+export interface PendingInvitePreview {
+  status: 'pending';
   team: { name: string };
   role: InvitableRole;
   inviter: { name: string; role: Role | null };
@@ -356,22 +357,41 @@ export interface InvitePreview {
   account: 'matches' | 'different' | 'none';
 }
 
-/** Shows what the link is for. Consumes nothing, grants nothing: opening a link (or an email scanner fetching it) changes no row. */
+/** The caller already accepted this exact token and is still a member (ADR 0017): the same team and role the accept answer gives, so the app can go there. */
+export interface AlreadyMemberPreview {
+  status: 'already_member';
+  team: { id: string; name: string; timeZone: string };
+  role: Role;
+}
+
+export type InvitePreview = PendingInvitePreview | AlreadyMemberPreview;
+
+/**
+ * Shows what the link is for. Consumes nothing, grants nothing: opening a link (or an email scanner fetching it) changes no row.
+ * Mirrors accept's idempotency (ADR 0017): the one account that already accepted this exact token and still has the membership gets
+ * `already_member`, so someone who taps their email link again is sent to their team, not told "no team access was granted".
+ * Everyone else, signed in or not, keeps the identical `invite_unavailable`.
+ */
 export async function previewInvitation(shards: Shards, input: { token: string; viewerUserId: string | null }): Promise<InvitePreview> {
   const inv = await findPending(shards, input.token);
-  if (!inv) throw new ApiError('invite_unavailable');
+  if (!inv) {
+    const replay = input.viewerUserId ? await findAcceptedBy(shards, input.token, input.viewerUserId) : null;
+    if (replay) return { status: 'already_member', ...replay };
+    throw new ApiError('invite_unavailable');
+  }
   const identity = identityDb(shards);
   const inviter = await identity.user.findUnique({ where: { id: inv.invitedByUserId }, select: { name: true } });
   const inviterMembership = await getShard(shards, inv.teamId).primary.membership.findUnique({
     where: { teamId_userId: { teamId: inv.teamId, userId: inv.invitedByUserId } },
     select: { role: true },
   });
-  let account: InvitePreview['account'] = 'none';
+  let account: PendingInvitePreview['account'] = 'none';
   if (input.viewerUserId) {
     const viewer = await identity.user.findUnique({ where: { id: input.viewerUserId }, select: { email: true } });
     account = viewer && viewer.email === inv.email ? 'matches' : 'different';
   }
   return {
+    status: 'pending',
     team: { name: inv.teamName },
     role: inv.role,
     inviter: { name: inviter?.name ?? '', role: inviterMembership?.role ?? null },

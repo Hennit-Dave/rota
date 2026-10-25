@@ -150,7 +150,9 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
   credential, and only its hash is stored. Team and role come from the server's invite row, never from the
   link. **Unknown, malformed, wrong-team, expired, used and revoked tokens all answer identically**
   (`404 invite_unavailable`), **except** that the one account that already accepted this exact token, and
-  still has the membership, gets the same success again so a retry is safe (ADR 0015); it writes nothing. *Why: no token-hash lookup table on shard A, and it keeps working if a large
+  still has the membership, gets the same success again so a retry is safe (ADR 0015); it writes nothing. **The preview mirrors this** (ADR 0017): the same
+  account, with a valid session, gets `200 { status: "already_member", team, role }` instead of the 404, so the app takes it to its team; every other caller of a
+  spent link, signed in or not, still gets the identical 404. *Why: no token-hash lookup table on shard A, and it keeps working if a large
   team is moved to its own shard.*
 
 ## Request validation (brief, Requirement 4; scope from `AGENTS.md`)
