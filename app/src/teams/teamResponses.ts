@@ -10,22 +10,22 @@ export interface TeamSummary {
   role: TeamRole;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isRole(value: unknown): value is TeamRole {
+export function isRole(value: unknown): value is TeamRole {
   return value === 'owner' || value === 'manager' || value === 'staff';
 }
 
-function parseSummary(value: unknown): TeamSummary | null {
+export function parseSummary(value: unknown): TeamSummary | null {
   if (!isRecord(value)) return null;
   const { id, name, timeZone, role } = value;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof timeZone !== 'string' || !isRole(role)) return null;
   return { id, name, timeZone, role };
 }
 
-const unreadable = () => new ApiError(200, 'invalid_response', 'The server answer could not be read.', null);
+export const unreadable = () => new ApiError(200, 'invalid_response', 'The server answer could not be read.', null);
 
 /** `{ teams: [...] }` as GET /teams answers. Throws if any part cannot be read: half a list is worse than an error. */
 export function parseTeamsList(body: unknown): TeamSummary[] {

@@ -1,9 +1,10 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
 import { View } from 'react-native';
 import { describeAuthFailure, type AuthFailure, type FieldErrors, type FieldName } from '../../auth/authFailure';
 import { bannerCopy, credentialsCopy, loginCopy } from '../../auth/copy';
 import { firstInvalidField, loginFieldOrder, validateLogin } from '../../auth/validation';
+import { inviteAuthParams, readInviteAuthParams, routeAfterAuth } from '../../invites/inviteAuthParams';
 import { getAuthActions } from '../../services';
 import { space } from '../../theme';
 import { Button } from '../../ui/Button';
@@ -26,7 +27,10 @@ type Failure = Exclude<AuthFailure, { kind: 'fields' }>;
 export default function LoginScreen() {
   const online = useOnline();
   const focusSink = useFocusSink();
-  const [email, setEmail] = useState('');
+  // Opened from an invitation: the invited address is filled in (editable), "Create an account" keeps the invitation, and signing in
+  // returns to it (ADR 0017).
+  const invite = readInviteAuthParams(useLocalSearchParams<{ inviteToken?: string; inviteEmail?: string }>());
+  const [email, setEmail] = useState(invite.email);
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -54,6 +58,10 @@ export default function LoginScreen() {
     try {
       // On success the session store flips to signed in and the signed-in side replaces this screen.
       await getAuthActions().login(email.trim(), password);
+      // Starting the session threw away this screen and Expo Router put Home on top of the invitation screen it came from. From an invitation,
+      // go back to THAT screen (dismissTo, not a new copy: a second copy would leave the first running underneath, ADR 0017).
+      const next = routeAfterAuth('login', invite);
+      if (next.kind === 'invite') router.dismissTo({ pathname: '/invite/[token]', params: { token: next.token } });
     } catch (error) {
       setSubmitting(false);
       const result = describeAuthFailure('login', error);
@@ -192,7 +200,7 @@ export default function LoginScreen() {
         <TextAction
           label={loginCopy.createAccount}
           disabled={submitting}
-          onPress={() => router.replace('/signup')}
+          onPress={() => router.replace({ pathname: '/signup', params: inviteAuthParams(invite) })}
           testID="login-signup"
         />
       </View>
