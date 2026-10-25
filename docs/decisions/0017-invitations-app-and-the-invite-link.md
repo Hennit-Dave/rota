@@ -49,7 +49,7 @@ approves separately) are issue #37.
 ## Team directory, invite form and role sheet (checkpoint 2)
 
 11. **Reached from Home, no tab bar yet (Dave, 2026-10-24).** Figma's directory sits under a four-tab bar, but Schedule, Swaps and Settings have no screens, so a tab bar would be three dead tabs.
-    The placeholder home gets a "Team" button instead. "Create a shift" is omitted for the same reason, and the Invitations block with "Manage invitations" belongs to the next step.
+    The placeholder home gets a "Team" button instead. "Create a shift" is omitted for the same reason.
 12. **The server decides what is offered.** "Invite a teammate" shows only when `invitableRoles` (from `GET /teams/:id`, the permission table) is not empty; the role sheet lists exactly those roles
     (an Owner: Manager or Staff; a Manager: Staff only, shown disabled as in Figma 103:2462; never Owner). A Staff member who reaches the form by a link is told "You can't invite people to this
     team" and nothing can be sent. Only the address and the role are ever sent.
@@ -62,6 +62,22 @@ approves separately) are issue #37.
     no Figma frame ("You can't invite people to this team", the loading text) is marked "not in Figma yet".
 15. **Send is one request, like Accept.** The same synchronous latch refuses a second tap before React re-renders; three quick taps created one invitation. The email is sent later by the worker, so the
     app only says "Email queued".
+
+## Pending invitations, resend and revoke (checkpoint 3)
+
+16. **The server decides who may do what to each row.** The list is only asked for when `canManageInvitations` is true (a Staff member is refused and sees "You can't manage invitations for this team").
+    Each row's Resend and Revoke exist only where the server's `canResend` and `canRevoke` are true: a Manager sees an Owner's Manager invitation with no buttons, shown on the emulator.
+17. **"Email not sent" is the server's `failed`.** Queued and sent both read "Pending". It appears when the worker has given up (shown with a deliberately wrong Resend key, set on the command line only, which
+    Resend refused with a 401; nothing was sent); Resend writes a new email row and the row reads "Pending" again. The list is refreshed on mount, on returning to the app, and after every send, resend and
+    revoke. It does not poll: a number of seconds would be invented.
+18. **One action at a time.** While Resend runs, every Resend and Revoke on the screen is disabled and the running one shows the spinner (Figma 292:804, note 232:415), decided synchronously by a latch.
+    `Button` gained the red `danger` variant and its loading look now follows Figma whatever the variant.
+19. **Revoke asks first and the route carries only an ID.** The confirmation (Figma 292:988) reads the address from the server's list, so a stale or unknown ID says "This invitation is no longer pending" and
+    refreshes the list, instead of acting on a guess. A 403 and a 404 are told apart in words ("not allowed" and "no longer pending").
+20. **The directory previews one invitation.** The Invitations block shows the oldest pending invitation (the design shows one) and "Manage invitations" has the whole list. **Dave to confirm the "one"**: it is a
+    layout choice, not a rule, and the server sends them oldest first.
+21. **Every state ends**, as on the Team screen: loading (skeletons), empty ("No pending invitations" with an Invite button), error with Try again (including the permission answer failing), not allowed, and a
+    list already on screen staying on screen if a refresh fails (`pendingListStatus`, tested).
 
 ## Consequences
 
@@ -76,7 +92,7 @@ approves separately) are issue #37.
 
 ## Evidence
 
-Unit tests (app `npm test`, 196): the link and response parsers, the failure mapping, the screen states, `routeAfterAuth`, the accepted-team seeding, the preview query settings, the latch, `goBackTo`,
+Unit tests (app `npm test`, 211): the link and response parsers, the failure mapping, the screen states, `routeAfterAuth`, the accepted-team seeding, the preview query settings, the latch, `goBackTo`,
 and the offline and timeout behaviour of the preview call. Server (`invites.integration.test.ts`): "preview mirrors accept". On the emulator (development build, local API on the test shards, worker
 off so the invite links stay in the work rows): signed-out invitation; login from an invitation; signup from an invitation (never Create team); Accept landing on the invited team for an account that
 already had another; wrong account, then log out and sign in correctly; unavailable (revoked, expired, unknown, no token) signed in and signed out with the right button; the replay; the `https` link;
@@ -86,3 +102,8 @@ invitation screen (issue #38); a double Accept request; offline waiting for ever
 Checkpoint 2, on the emulator against the test shards: the Owner's directory and form (empty address; an address the server rejects; already on the team; already invited; the role sheet; a Manager invitation stored
 as `manager`; Resend writing a second email row; three quick taps creating one invitation; offline); the Manager's disabled Staff role; the Staff view with no Invite button and a refused direct link; the empty-team
 card; the rate-limited banner with the server's wait; the error state with the team known; and the API down at launch (the endless "Loading your team…", recorded broken, then fixed).
+
+Checkpoint 3, on the emulator against the test shards: the Owner's pending list (the red "Email not sent · Staff" row from a real refused send, Resend turning it back to "Pending" with a second email row, and the
+loading look of Resend with every other button faint); Revoke's confirmation, Keep, and Revoke setting `revoked` and dropping the row; the empty state and its Invite button; the Manager's list (no buttons on an Owner's
+Manager invitation, buttons on her own Staff one); the Staff member refused by a direct link and with no Invitations block; the error state with the API down and recovery; and Resend and Revoke failing with the API down
+(the "We couldn't resend/revoke the invitation" banners) and succeeding after. Not captured on the device: the loading skeleton (the list answered faster than the screenshots; the state is unit-tested).
