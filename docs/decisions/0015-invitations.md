@@ -1,6 +1,7 @@
 # 0015: Invitations: the token, who may accept, expiry, limits, and what changes in security.md
 
 - **Status:** accepted (2026-10-23; Dave approved the plan and decisions A to G, and amended `security.md` for A and E through this ADR)
+- **Amended by ADR 0017 (2026-10-25), point 3a only:** the preview of a spent link now answers `200 { status: "already_member" }` to the one account that already accepted it; everyone else still gets the identical 404.
 - **Date:** 2026-10-23
 - **Decided by:** Dave
 - **Related:** ADR 0013 (directory), ADR 0014 (permissions), ADR 0016 (the email job), `.agents/rules/security.md`, `.agents/rules/data.md`, issues #33 and #35, Figma 05 Team and 03 Authentication invite frames

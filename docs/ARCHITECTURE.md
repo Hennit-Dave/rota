@@ -119,10 +119,10 @@ An invitation is team-owned: it lives on the team's shard, and so does its email
 | `GET /teams/:teamId/invitations` | team | Zod, token, session, membership and `invitations.list` | `200 { invitations: [{ id, email, role, expiresAt, emailStatus, canResend, canRevoke }] }` |
 | `POST /teams/:teamId/invitations/:id/resend` | team | as create, for that invitation's role | `200 { invitation }` (new token, new email row) |
 | `DELETE /teams/:teamId/invitations/:id` | team | Zod, token, session, membership and `invite.staff` gate, then the invitation's own role | `204` |
-| `POST /invitations/preview` `{ token }` | public | Zod, IP limit, optional session | `200 { team, role, inviter, email, account }` |
+| `POST /invitations/preview` `{ token }` | public | Zod, IP limit, optional session | `200 { status: 'pending', team, role, inviter, email, account }`, or for the account that already accepted `200 { status: 'already_member', team: { id, name, timeZone }, role }` |
 | `POST /invitations/accept` `{ token }` | invite accept | Zod, IP limit, token, session, user limit | `200 { team, role }` |
 
-- **Accept is idempotent for the account that already accepted** (same `200 { team, role }`, nothing written); every other caller of a spent link gets the identical `404 invite_unavailable` (ADR 0015).
+- **Accept and preview are idempotent for the account that already accepted** (accept: the same `200 { team, role }`; preview: `200 { status: 'already_member', team, role }`; nothing written either way); every other caller of a spent link gets the identical `404 invite_unavailable` (ADR 0015, ADR 0017).
 - `emailStatus` is `queued`, `sent` or `failed`, read from the invitation's latest email work row. Resend and Revoke stay available in every state.
 - `GET /teams/:teamId` also returns `invitableRoles` and `canManageInvitations`, computed from the permission table; the app offers only those.
 - Errors: `404 invite_unavailable` (unknown, malformed, wrong team, expired, used, revoked: one identical answer), `403 invite_wrong_account`,
@@ -143,6 +143,7 @@ app/src/
   auth/        account epoch, token store (secure-store), local sign-out, logout
   state/       the Zustand store (session status, selected team, UI flags)
   teams/       team API calls and parsers, the create-team form rules, the time zone list (app side of section 5a)
+  invites/     the invite link: preview and accept calls, parsers, failure mapping, the screen's states, return after sign-in (ADR 0017)
   theme/       design tokens mirrored from Figma: palette, colours (light/dark), dimensions, typography
   ui/          components built only from the tokens
   services.ts  composition root: the real client, query client, sign-out, query managers
@@ -157,6 +158,7 @@ app/src/
   only in `palette.json`, which `app.config.ts` also reads so the splash and notification colours come from the same source.
 - **Deep links.** Scheme `rota`, and https App Links on `rota.davebuilds.design` for `/invite`, `/magic`, `/reset` and `/checkout`
   (verification goes live when `assetlinks.json` is hosted). Opening a link consumes nothing.
+- **The invite link** opens `invite/[token]`, a root route outside both session guards (so it works signed in or out). Sign in and Create account open on top of it carrying the token as route params, and once the session starts they return to it with `dismissTo`; Accept puts the accepted team in the teams list and selects it. Every exit goes through `goBackTo`. Details and the bugs that shaped it: ADR 0017.
 - **Native modules** are fixed at build time. Everything the whole app needs is installed up front so the limited EAS build quota is spent
   once (`expo-builds.md`, ADR 0011).
 
