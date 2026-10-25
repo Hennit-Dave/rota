@@ -2,6 +2,9 @@ import { ApiError } from '../api/errors';
 
 export type TeamRole = 'owner' | 'manager' | 'staff';
 
+/** The roles an invitation can grant: never Owner (a team has exactly one, ADR 0014). */
+export type InvitableRole = 'manager' | 'staff';
+
 /** A team the caller is in, as GET /teams and POST /teams answer. Server data, never trusted for access (the server checks every request). */
 export interface TeamSummary {
   id: string;
@@ -55,3 +58,45 @@ export function pickSelectedTeamId(teams: readonly TeamSummary[], current: strin
 }
 
 export const teamsQueryKey = (userId: string) => ['teams', userId] as const;
+
+const isInvitableRole = (value: unknown): value is InvitableRole => value === 'manager' || value === 'staff';
+
+/**
+ * GET /teams/:teamId: the team, the caller's role in it, and what the caller may do here. `invitableRoles` and `canManageInvitations` come
+ * from the server's permission table; the app shows what it allows and decides nothing (AGENTS.md rule 3).
+ */
+export interface TeamDetail {
+  team: { id: string; name: string; timeZone: string };
+  role: TeamRole;
+  invitableRoles: InvitableRole[];
+  canManageInvitations: boolean;
+}
+
+export function parseTeamDetail(body: unknown): TeamDetail {
+  if (!isRecord(body) || !isRecord(body.team)) throw unreadable();
+  const { id, name, timeZone } = body.team;
+  const { role, invitableRoles, canManageInvitations } = body;
+  if (typeof id !== 'string' || typeof name !== 'string' || typeof timeZone !== 'string' || !isRole(role)) throw unreadable();
+  if (!Array.isArray(invitableRoles) || !invitableRoles.every(isInvitableRole) || typeof canManageInvitations !== 'boolean') throw unreadable();
+  return { team: { id, name, timeZone }, role, invitableRoles: [...invitableRoles], canManageInvitations };
+}
+
+/** A member as GET /teams/:teamId/members lists them. */
+export interface Member {
+  userId: string;
+  name: string;
+  role: TeamRole;
+}
+
+/** `{ members: [...] }`. Throws if any part cannot be read: half a roster is worse than an error. */
+export function parseMembers(body: unknown): Member[] {
+  if (!isRecord(body) || !Array.isArray(body.members)) throw unreadable();
+  return body.members.map((item) => {
+    if (!isRecord(item) || typeof item.userId !== 'string' || typeof item.name !== 'string' || !isRole(item.role)) throw unreadable();
+    return { userId: item.userId, name: item.name, role: item.role };
+  });
+}
+
+/** Personal responses, so the keys carry the user ID (app-state.md): sign-out clears the whole cache, and another account can never read these. */
+export const teamDetailQueryKey = (userId: string, teamId: string) => ['team', userId, teamId] as const;
+export const membersQueryKey = (userId: string, teamId: string) => ['members', userId, teamId] as const;

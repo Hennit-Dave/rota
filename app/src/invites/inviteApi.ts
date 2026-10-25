@@ -1,6 +1,7 @@
 import type { createApiClient } from '../api/client';
 import type { TeamSummary } from '../teams/teamResponses';
-import { parseAcceptResponse, parseInvitePreview, type InvitePreview } from './inviteResponses';
+import { parseAcceptResponse, parseInvitationResponse, parseInvitePreview, type InvitationView, type InvitePreview } from './inviteResponses';
+import type { InvitableRole } from '../teams/teamResponses';
 
 type Client = Pick<ReturnType<typeof createApiClient>, 'post'>;
 
@@ -18,6 +19,21 @@ export function createInviteApi(client: Client) {
      */
     async preview(token: string, options: { signedIn: boolean; signal?: AbortSignal }): Promise<InvitePreview> {
       return parseInvitePreview(await client.post<unknown>('/invitations/preview', { token }, { auth: options.signedIn, signal: options.signal }));
+    },
+    /**
+     * POST /teams/:teamId/invitations. Only the address and the role are sent: the team comes from the path, the inviter from the session, and the
+     * server decides whether this person may grant that role (security.md). The email is sent from a background job, never from this request.
+     */
+    async createInvitation(teamId: string, input: { email: string; role: InvitableRole }): Promise<InvitationView> {
+      return parseInvitationResponse(
+        await client.post<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations`, { email: input.email.trim(), role: input.role }),
+      );
+    },
+    /** POST …/resend: the same invitation gets a new link (the old one stops working) and a new email. */
+    async resendInvitation(teamId: string, invitationId: string): Promise<InvitationView> {
+      return parseInvitationResponse(
+        await client.post<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations/${encodeURIComponent(invitationId)}/resend`),
+      );
     },
     /** Joins the team in the role the invitation holds. Safe to repeat for the same account (the server answers the same again). */
     async accept(token: string): Promise<TeamSummary> {

@@ -1,6 +1,6 @@
-import { isRecord, isRole, parseSummary, unreadable, type TeamRole, type TeamSummary } from '../teams/teamResponses';
+import { isRecord, isRole, parseSummary, unreadable, type InvitableRole, type TeamRole, type TeamSummary } from '../teams/teamResponses';
 
-export type InvitedRole = 'manager' | 'staff';
+export type InvitedRole = InvitableRole;
 
 /** A live invitation, as POST /invitations/preview describes it. `account` is the server's comparison of the caller with the invited address. */
 export interface PendingInvitePreview {
@@ -53,4 +53,32 @@ export function parseInvitePreview(body: unknown): InvitePreview {
     email,
     account,
   };
+}
+
+/** An invitation the team's Owner or Manager sent. `emailStatus` and the two `can…` flags are the server's: the app only displays them. */
+export interface InvitationView {
+  id: string;
+  email: string;
+  role: InvitedRole;
+  expiresAt: string;
+  emailStatus: 'queued' | 'sent' | 'failed';
+  canResend: boolean;
+  canRevoke: boolean;
+}
+
+const isEmailStatus = (value: unknown): value is InvitationView['emailStatus'] => value === 'queued' || value === 'sent' || value === 'failed';
+
+/** One invitation as the server describes it. */
+export function parseInvitation(value: unknown): InvitationView {
+  if (!isRecord(value)) throw unreadable();
+  const { id, email, role, expiresAt, emailStatus, canResend, canRevoke } = value;
+  if (typeof id !== 'string' || typeof email !== 'string' || !isInvitedRole(role) || typeof expiresAt !== 'string') throw unreadable();
+  if (!isEmailStatus(emailStatus) || typeof canResend !== 'boolean' || typeof canRevoke !== 'boolean') throw unreadable();
+  return { id, email, role, expiresAt, emailStatus, canResend, canRevoke };
+}
+
+/** `{ invitation }` as POST /teams/:id/invitations and POST …/resend answer. */
+export function parseInvitationResponse(body: unknown): InvitationView {
+  if (!isRecord(body)) throw unreadable();
+  return parseInvitation(body.invitation);
 }

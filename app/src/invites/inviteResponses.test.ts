@@ -62,3 +62,18 @@ test('the accept answer becomes a team summary, and a damaged one throws', () =>
   assert.throws(() => parseAcceptResponse({ team: { id: teamId, name: 'x', timeZone: 'y' } }), ApiError);
   assert.throws(() => parseAcceptResponse(null), ApiError);
 });
+
+import { parseInvitationResponse } from './inviteResponses';
+
+const invitation = { id: 'i1', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
+
+test('an invitation answer is read field by field', () => {
+  assert.deepEqual(parseInvitationResponse({ invitation }), invitation);
+  assert.equal(parseInvitationResponse({ invitation: { ...invitation, emailStatus: 'failed', role: 'manager', canResend: false } }).emailStatus, 'failed');
+});
+
+test('an invitation that cannot be read throws (an owner role, an unknown email state, a missing flag)', () => {
+  for (const bad of [null, {}, { invitation: null }, { invitation: { ...invitation, role: 'owner' } }, { invitation: { ...invitation, emailStatus: 'lost' } }, { invitation: { ...invitation, canRevoke: 'yes' } }, { invitation: { ...invitation, expiresAt: 5 } }]) {
+    assert.throws(() => parseInvitationResponse(bad), (e) => e instanceof ApiError && e.code === 'invalid_response', JSON.stringify(bad));
+  }
+});

@@ -65,3 +65,24 @@ test('an unreadable success answer is an error, not a team', async () => {
   const h = makeHarness({ handler: () => json(201, { nope: true }) });
   await assert.rejects(createTeamApi(h.client).createTeam({ name: 'x', timeZone: 'Africa/Lagos' }), (e: unknown) => e instanceof ApiError && e.code === 'invalid_response');
 });
+
+test('getTeam: GET /teams/:teamId with the access token and no body; the answer carries what the server allows', async () => {
+  const h = makeHarness({
+    handler: () => json(200, { team: { id: created.team.id, name: 'The Olive Room', timeZone: 'Africa/Lagos', createdAt: '2026-10-23T10:00:00.000Z' }, role: 'manager', invitableRoles: ['staff'], canManageInvitations: true }),
+  });
+  const detail = await createTeamApi(h.client).getTeam(created.team.id);
+  assert.deepEqual(detail.invitableRoles, ['staff']);
+  assert.equal(h.calls[0]?.path, `/teams/${created.team.id}`);
+  assert.equal(h.calls[0]?.method, 'GET');
+  assert.equal(h.calls[0]?.authorization, 'Bearer old');
+  assert.equal(h.calls[0]?.body, undefined);
+});
+
+test('listMembers: GET /teams/:teamId/members; a stranger\'s 404 reaches the screen unchanged', async () => {
+  const h = makeHarness({ handler: () => json(200, { members: [{ userId: 'u1', name: 'Dave Hennit', role: 'owner', joinedAt: '2026-10-23T10:00:00.000Z' }] }) });
+  const members = await createTeamApi(h.client).listMembers(created.team.id);
+  assert.deepEqual(members, [{ userId: 'u1', name: 'Dave Hennit', role: 'owner' }]);
+  assert.equal(h.calls[0]?.path, `/teams/${created.team.id}/members`);
+  const gone = makeHarness({ handler: () => json(404, { error: { code: 'not_found', message: 'x', requestId: 'req-1' } }) });
+  await assert.rejects(createTeamApi(gone.client).listMembers(created.team.id), (e) => e instanceof ApiError && e.status === 404);
+});

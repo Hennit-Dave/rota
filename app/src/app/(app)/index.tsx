@@ -5,6 +5,7 @@ import { bannerCopy, homeCopy } from '../../auth/copy';
 import { useMe } from '../../auth/useMe';
 import { getSessionActions } from '../../services';
 import { useSessionStore } from '../../state/sessionStore';
+import { teamCopy } from '../../teams/teamCopy';
 import { useTeams } from '../../teams/useTeams';
 import { space } from '../../theme';
 import { Button } from '../../ui/Button';
@@ -16,7 +17,7 @@ import { TextAction } from '../../ui/TextAction';
 import { useOnline } from '../../ui/useOnline';
 
 /**
- * PLACEHOLDER home: "Signed in as <name>", the selected team's name, and both sign-out flows, so they can be proven end to end.
+ * PLACEHOLDER home (with a "Team" button as the way into the team directory until the tab bar exists): "Signed in as <name>", the selected team's name, and both sign-out flows, so they can be proven end to end.
  * The real home and settings come in later slices. The name is server data (GET /auth/me) and so is the team (GET /teams): both
  * seeded early and refetched when the app returns to the foreground. A signed-in user with no team goes to create-team.
  */
@@ -108,6 +109,7 @@ export default function HomeScreen() {
         {homeCopy.placeholderNote}
       </Text>
       {logoutAllError ? <StatusBanner tone="error" title={logoutAllError} /> : null}
+      {team ? <Button label={teamCopy.homeEntry} variant="outline" onPress={() => router.push('/team')} testID="home-team" /> : null}
       <Spacer />
       {__DEV__ ? <TextAction label="API check (development only)" onPress={() => router.push('/dev-api')} /> : null}
       <Button

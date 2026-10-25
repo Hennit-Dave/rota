@@ -13,7 +13,7 @@ export type CreateTeamFailure =
 const generic = (reference: string | null): CreateTeamFailure => ({ kind: 'generic', message: bannerCopy.generic, reference });
 
 /** Defensive: `details` crosses the network, so it is checked rather than trusted. */
-function readDetails(details: unknown): Array<{ path: string; code: string; max?: number }> {
+export function readDetails(details: unknown): Array<{ path: string; code: string; max?: number }> {
   if (!Array.isArray(details)) return [];
   const out: Array<{ path: string; code: string; max?: number }> = [];
   for (const item of details) {

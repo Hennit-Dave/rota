@@ -71,3 +71,31 @@ test('preview that the server never answers: it ends with a timed-out NetworkErr
   await assert.rejects(createInviteApi(h.client).preview(token, { signedIn: false }), (e: unknown) => e instanceof NetworkError && e.timedOut);
   await assert.rejects(createInviteApi(h.client).accept(token), (e: unknown) => e instanceof NetworkError && e.timedOut);
 });
+
+const sentInvitation = { id: 'i1', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
+
+test('createInvitation: POST /teams/:teamId/invitations sends only the address (trimmed) and the role, with the access token', async () => {
+  const h = makeHarness({ handler: () => json(201, { invitation: sentInvitation }) });
+  const result = await createInviteApi(h.client).createInvitation(teamId, { email: '  sofia@example.com ', role: 'staff' });
+  assert.equal(result.emailStatus, 'queued');
+  assert.equal(h.calls[0]?.path, `/teams/${teamId}/invitations`);
+  assert.equal(h.calls[0]?.method, 'POST');
+  assert.equal(h.calls[0]?.authorization, 'Bearer old');
+  assert.deepEqual(h.calls[0]?.body, { email: 'sofia@example.com', role: 'staff' }, 'no team, user, or permission is ever sent');
+});
+
+test('resendInvitation: POST …/invitations/:id/resend with no body', async () => {
+  const h = makeHarness({ handler: () => json(200, { invitation: sentInvitation }) });
+  await createInviteApi(h.client).resendInvitation(teamId, 'i1');
+  assert.equal(h.calls[0]?.path, `/teams/${teamId}/invitations/i1/resend`);
+  assert.equal(h.calls[0]?.method, 'POST');
+  assert.equal(h.calls[0]?.body, undefined);
+});
+
+test('create: the server\'s 409s and 429 reach the screen unchanged; offline sends nothing', async () => {
+  const conflict = makeHarness({ handler: () => json(409, { error: { code: 'already_member', message: 'x', requestId: 'req-1' } }) });
+  await assert.rejects(createInviteApi(conflict.client).createInvitation(teamId, { email: 'a@b.co', role: 'staff' }), (e) => e instanceof ApiError && e.status === 409 && e.code === 'already_member');
+  const offline = makeHarness({ handler: () => json(201, { invitation: sentInvitation }), online: () => false });
+  await assert.rejects(createInviteApi(offline.client).createInvitation(teamId, { email: 'a@b.co', role: 'staff' }), OfflineError);
+  assert.equal(offline.calls.length, 0);
+});
