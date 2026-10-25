@@ -99,3 +99,26 @@ test('create: the server\'s 409s and 429 reach the screen unchanged; offline sen
   await assert.rejects(createInviteApi(offline.client).createInvitation(teamId, { email: 'a@b.co', role: 'staff' }), OfflineError);
   assert.equal(offline.calls.length, 0);
 });
+
+test('listInvitations: GET /teams/:teamId/invitations with the access token', async () => {
+  const h = makeHarness({ handler: () => json(200, { invitations: [sentInvitation] }) });
+  const list = await createInviteApi(h.client).listInvitations(teamId);
+  assert.equal(list.length, 1);
+  assert.equal(h.calls[0]?.path, `/teams/${teamId}/invitations`);
+  assert.equal(h.calls[0]?.method, 'GET');
+  assert.equal(h.calls[0]?.authorization, 'Bearer old');
+});
+
+test('revokeInvitation: DELETE …/invitations/:id with no body; the 204 is success; a 404 reaches the screen unchanged', async () => {
+  const ok = makeHarness({ handler: () => new Response(null, { status: 204 }) });
+  await createInviteApi(ok.client).revokeInvitation(teamId, 'i1');
+  assert.equal(ok.calls[0]?.path, `/teams/${teamId}/invitations/i1`);
+  assert.equal(ok.calls[0]?.method, 'DELETE');
+  assert.equal(ok.calls[0]?.authorization, 'Bearer old');
+  assert.equal(ok.calls[0]?.body, undefined);
+  const gone = makeHarness({ handler: () => json(404, { error: { code: 'not_found', message: 'x', requestId: 'req-3' } }) });
+  await assert.rejects(createInviteApi(gone.client).revokeInvitation(teamId, 'i1'), (e) => e instanceof ApiError && e.status === 404 && e.code === 'not_found');
+  const offline = makeHarness({ handler: () => new Response(null, { status: 204 }), online: () => false });
+  await assert.rejects(createInviteApi(offline.client).revokeInvitation(teamId, 'i1'), OfflineError);
+  assert.equal(offline.calls.length, 0);
+});

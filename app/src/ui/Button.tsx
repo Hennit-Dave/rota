@@ -9,7 +9,7 @@ import { useReduceMotion } from './useReduceMotion';
 interface Props {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'outline';
+  variant?: 'primary' | 'secondary' | 'outline' | 'danger';
   /** Spinner and `loadingLabel`; every action on the screen is disabled while loading (Figma note 232:415). */
   loading?: boolean;
   loadingLabel?: string;
@@ -32,14 +32,14 @@ function Spinner() {
   );
 }
 
-/** Rota Button (Figma 5:12): Primary, Secondary, Disabled and Loading, plus the white outlined "Secondary action" of the team screens (Figma 8:202, "Invite a teammate"). 52 px tall at default text size, and it grows with the font. */
+/** Rota Button (Figma 5:12): Primary, Secondary, Disabled and Loading, plus the white outlined "Secondary action" of the team screens (Figma 8:202, "Invite a teammate") and the red "Destructive" (5:6: Revoke). Disabled always uses the faint mint look (Figma 292:804). 52 px tall at default text size, and it grows with the font. */
 export function Button({ label, onPress, variant = 'primary', loading = false, loadingLabel, disabled = false, testID }: Props) {
   const colors = useColors();
   const reduceMotion = useReduceMotion();
   const inactive = disabled || loading;
-  // Disabled uses the secondary look at 45% opacity; Loading keeps the primary look with a spinner.
+  // Disabled uses the secondary look at 45% opacity; Loading shows the primary look with a spinner, whatever the variant (Figma 292:804).
   const outline = variant === 'outline';
-  const quiet = variant === 'secondary' || (disabled && !loading && !outline);
+  const quiet = (variant === 'secondary' && !loading) || (disabled && !loading && !outline);
   return (
     <Pressable
       testID={testID}
@@ -53,7 +53,7 @@ export function Button({ label, onPress, variant = 'primary', loading = false, l
         borderRadius: radius[12],
         paddingVertical: space[16],
         paddingHorizontal: space[16],
-        backgroundColor: outline ? colors.surface : quiet ? colors.accent : colors.action,
+        backgroundColor: outline ? colors.surface : quiet ? colors.accent : variant === 'danger' ? colors.danger : colors.action,
         borderWidth: outline ? 1 : 0,
         borderColor: colors.border,
         opacity: disabled && !loading ? 0.45 : pressed ? 0.85 : 1,

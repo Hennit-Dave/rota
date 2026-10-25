@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { bannerCopy } from '../../../auth/copy';
 import { useMe } from '../../../auth/useMe';
 import { createInviteApi } from '../../../invites/inviteApi';
+import { invitationsQueryKey } from '../../../invites/useInvitations';
 import { inviteFormCopy } from '../../../invites/inviteFormCopy';
 import { roleChoice, validateInviteEmail } from '../../../invites/inviteFormState';
 import { roleLabel } from '../../../invites/inviteCopy';
@@ -71,7 +72,10 @@ function InviteForm() {
     networkMode: 'always', // never queued offline (app-state.md): it fails at once and can be tapped again
     retry: 0,
     mutationFn: (input: { email: string; role: InvitableRole }) => sendInvitation(teamId as string, input),
-    onSuccess: (invitation) => setSent(invitation),
+    onSuccess: (invitation) => {
+      setSent(invitation);
+      if (userId && teamId) void queryClient.invalidateQueries({ queryKey: invitationsQueryKey(userId, teamId) });
+    },
     onError: (error) => {
       const result = describeSendInviteFailure(error);
       if (result === null) return;
@@ -106,6 +110,7 @@ function InviteForm() {
     return (
       <InviteSent
         invitation={sent}
+        userId={userId}
         teamId={teamId}
         teamName={teamName}
         online={online}
@@ -215,12 +220,13 @@ function InviteForm() {
 /** Invitation sent (Figma 8:229). Resend gives the same invitation a new link and a new email (the old link stops working). */
 function InviteSent(props: {
   invitation: InvitationView;
+  userId: string | undefined;
   teamId: string | null;
   teamName: string | undefined;
   online: boolean;
   onChange: (invitation: InvitationView) => void;
 }) {
-  const { invitation, teamId, teamName, online, onChange } = props;
+  const { invitation, userId, teamId, teamName, online, onChange } = props;
   const copy = inviteFormCopy.sent;
   const [problem, setProblem] = useState<SendInviteFailure | null>(null);
   const [resendLatch] = useState(createLatch);
@@ -230,7 +236,10 @@ function InviteSent(props: {
     retry: 0,
     mutationFn: () => resendInvitation(teamId as string, invitation.id),
     onMutate: () => setProblem(null),
-    onSuccess: (next) => onChange(next),
+    onSuccess: (next) => {
+      onChange(next);
+      if (userId && teamId) void queryClient.invalidateQueries({ queryKey: invitationsQueryKey(userId, teamId) });
+    },
     onError: (error) => setProblem(describeSendInviteFailure(error)),
     onSettled: () => resendLatch.release(),
   });

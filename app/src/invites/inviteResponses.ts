@@ -82,3 +82,9 @@ export function parseInvitationResponse(body: unknown): InvitationView {
   if (!isRecord(body)) throw unreadable();
   return parseInvitation(body.invitation);
 }
+
+/** `{ invitations: [...] }` as GET /teams/:id/invitations answers (oldest first). Throws if any part cannot be read. */
+export function parseInvitationsList(body: unknown): InvitationView[] {
+  if (!isRecord(body) || !Array.isArray(body.invitations)) throw unreadable();
+  return body.invitations.map(parseInvitation);
+}

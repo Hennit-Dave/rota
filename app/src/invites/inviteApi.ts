@@ -1,9 +1,9 @@
 import type { createApiClient } from '../api/client';
 import type { TeamSummary } from '../teams/teamResponses';
-import { parseAcceptResponse, parseInvitationResponse, parseInvitePreview, type InvitationView, type InvitePreview } from './inviteResponses';
+import { parseAcceptResponse, parseInvitationResponse, parseInvitationsList, parseInvitePreview, type InvitationView, type InvitePreview } from './inviteResponses';
 import type { InvitableRole } from '../teams/teamResponses';
 
-type Client = Pick<ReturnType<typeof createApiClient>, 'post'>;
+type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post' | 'request'>;
 
 /**
  * The two invite routes that start from a link (docs/ARCHITECTURE.md 5a). Plain functions over the API client, so they are unit-tested
@@ -28,6 +28,14 @@ export function createInviteApi(client: Client) {
       return parseInvitationResponse(
         await client.post<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations`, { email: input.email.trim(), role: input.role }),
       );
+    },
+    /** GET /teams/:teamId/invitations: the pending invitations, oldest first, each with the server's email state and what the caller may do with it. */
+    async listInvitations(teamId: string, signal?: AbortSignal): Promise<InvitationView[]> {
+      return parseInvitationsList(await client.get<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations`, { signal }));
+    },
+    /** DELETE …/invitations/:id: the link stops working at once (204, no body). The server decides who may revoke what. */
+    async revokeInvitation(teamId: string, invitationId: string): Promise<void> {
+      await client.request(`/teams/${encodeURIComponent(teamId)}/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE' });
     },
     /** POST …/resend: the same invitation gets a new link (the old one stops working) and a new email. */
     async resendInvitation(teamId: string, invitationId: string): Promise<InvitationView> {

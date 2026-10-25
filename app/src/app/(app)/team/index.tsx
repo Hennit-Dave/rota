@@ -1,9 +1,12 @@
 import { router } from 'expo-router';
 import { useEffect } from 'react';
+import { View } from 'react-native';
 import { ApiError, OfflineError } from '../../../api/errors';
 import { bannerCopy } from '../../../auth/copy';
 import { useMe } from '../../../auth/useMe';
 import { roleLabel } from '../../../invites/inviteCopy';
+import { directoryInvitationCaption, invitationsCopy } from '../../../invites/invitationsCopy';
+import { useInvitations } from '../../../invites/useInvitations';
 import { useSessionStore } from '../../../state/sessionStore';
 import { canInvite, directoryStatus, showEmptyTeamCard } from '../../../teams/directory';
 import { teamCopy } from '../../../teams/teamCopy';
@@ -17,6 +20,7 @@ import { PersonCard } from '../../../ui/PersonCard';
 import { Screen } from '../../../ui/Screen';
 import { StatusBanner } from '../../../ui/StatusBanner';
 import { Text } from '../../../ui/Text';
+import { TextAction } from '../../../ui/TextAction';
 import { useOnline } from '../../../ui/useOnline';
 
 /**
@@ -41,6 +45,8 @@ function TeamDirectory() {
   const teams = useTeams(userId);
   const detail = useTeamDetail(userId, teamId);
   const members = useMembers(userId, teamId);
+  // Only Owners and Managers may list invitations (the server says so); a failure here never blocks the roster, the pending screen has its own error state.
+  const invitations = useInvitations(userId, teamId, detail.data?.canManageInvitations === true);
 
   const teamName = detail.data?.team.name ?? teams.data?.find((t) => t.id === teamId)?.name;
   const status = directoryStatus({
@@ -67,6 +73,19 @@ function TeamDirectory() {
           <PersonCard key={member.userId} title={member.name} caption={roleLabel[member.role]} testID={`member-${member.userId}`} />
         ))}
         {showEmptyTeamCard(members.data, userId) ? <EmptyCard title={teamCopy.emptyTitle} body={teamCopy.emptyBody} testID="team-empty" /> : null}
+        {invitations.data && invitations.data.length > 0 ? (
+          <View style={{ gap: space[8] }}>
+            <Text variant="label">{invitationsCopy.directory.heading}</Text>
+            {/* A preview of the oldest pending invitation, as in the design; "Manage invitations" has the whole list. */}
+            <PersonCard
+              title={invitations.data[0]!.email}
+              caption={directoryInvitationCaption(invitations.data[0]!).text}
+              captionTone={directoryInvitationCaption(invitations.data[0]!).tone}
+              testID="team-invitation-preview"
+            />
+            <TextAction label={invitationsCopy.directory.manage} onPress={() => router.push('/team/invitations')} testID="team-manage-invitations" />
+          </View>
+        ) : null}
       </>
     );
   } else if (failed) {

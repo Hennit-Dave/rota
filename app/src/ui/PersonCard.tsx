@@ -5,11 +5,13 @@ import { Text } from './Text';
 interface Props {
   title: string;
   caption: string;
+  /** Figma "Email not sent · Staff" is Caption in the danger colour (294:3986). */
+  captionTone?: 'muted' | 'danger';
   testID?: string;
 }
 
 /** Rota Member row (Figma 5:55, "Teammate" 32:1312): a white card with a bottom border, the name in Label and the role or state in Caption. */
-export function PersonCard({ title, caption, testID }: Props) {
+export function PersonCard({ title, caption, captionTone = 'muted', testID }: Props) {
   const colors = useColors();
   return (
     <View
@@ -26,7 +28,7 @@ export function PersonCard({ title, caption, testID }: Props) {
       }}
     >
       <Text variant="label">{title}</Text>
-      <Text variant="caption" tone="muted">
+      <Text variant="caption" tone={captionTone}>
         {caption}
       </Text>
     </View>

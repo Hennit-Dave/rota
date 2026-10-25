@@ -77,3 +77,17 @@ test('an invitation that cannot be read throws (an owner role, an unknown email 
     assert.throws(() => parseInvitationResponse(bad), (e) => e instanceof ApiError && e.code === 'invalid_response', JSON.stringify(bad));
   }
 });
+
+import { parseInvitationsList } from './inviteResponses';
+
+test('the pending list is read in the order the server sends it (oldest first), and an empty list is fine', () => {
+  const second = { ...invitation, id: 'i2', email: 'priya@example.com', role: 'manager', emailStatus: 'sent' };
+  assert.deepEqual(parseInvitationsList({ invitations: [invitation, second] }).map((i) => i.id), ['i1', 'i2']);
+  assert.deepEqual(parseInvitationsList({ invitations: [] }), []);
+});
+
+test('one unreadable invitation makes the whole list an error (half a list would hide someone)', () => {
+  assert.throws(() => parseInvitationsList({ invitations: [invitation, { ...invitation, role: 'owner' }] }), ApiError);
+  assert.throws(() => parseInvitationsList({}), ApiError);
+  assert.throws(() => parseInvitationsList(null), ApiError);
+});
