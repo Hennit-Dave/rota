@@ -51,6 +51,8 @@ export const fieldCopy = {
   passwordTooShort: (min: number) => `Use at least ${min} characters.`,
   passwordTooLong: (max: number) => `Use ${max} characters or fewer.`, // 229:455
   passwordCommon: 'This password is easy to guess. Try another.', // 231:391
+  confirmRequired: 'Confirm your password.', // not in Figma yet
+  confirmMismatch: 'The two passwords do not match.', // not in Figma yet
 } as const;
 
 /**
@@ -88,13 +90,59 @@ export const signedOutOfflineCopy = {
   close: 'Close',
 } as const;
 
-/** Screens that are placeholders for later slices, clearly marked. Not in Figma. */
-export const placeholderCopy = {
-  badge: 'Coming soon',
-  forgotPassword: { title: 'Reset your password', body: 'Password reset is built in a later slice.' },
-  magicLink: { title: 'Sign-in link', body: 'Signing in by email link is built in a later slice.' },
-  back: 'Back',
-  skip: 'Skip for now',
+/**
+ * Password reset and magic link (slice 2b, ADR 0020). Figma frames: magic 8:47 (sent), magic-confirm 8:61, reset 8:74 (request), reset-new 8:86.
+ * Lines marked "not in Figma yet" have no frame: they reuse the login patterns and are listed in the pull request.
+ */
+export const recoveryCopy = {
+  forgot: {
+    title: 'Forgot your password?', // 8:74
+    subtitle: 'We’ll email instructions if your account exists.',
+    submit: 'Send reset link',
+    submitting: 'Sending…', // not in Figma yet
+  },
+  sent: {
+    title: 'Check your inbox', // 8:47
+    magicSubtitle: 'We’ll send a sign-in link if an account exists.',
+    resetSubtitle: 'We’ll email instructions if your account exists.', // the reset "sent" state has no frame: the 8:47 layout with the 8:74 wording
+    cardTitle: 'Open your email',
+    magicBody: (email: string) => `A sign-in link has been requested for ${email}.`,
+    resetBody: (email: string) => `A password reset link has been requested for ${email}.`, // not in Figma yet
+    resend: 'Resend link',
+    resending: 'Sending…', // not in Figma yet
+    resent: 'We sent another link if the account exists.', // not in Figma yet
+    backToLogin: 'Back to log in',
+  },
+  confirm: {
+    title: 'Sign in to Rota', // 8:61
+    subtitle: 'Check the link, then continue when you are ready.',
+    bannerTitle: 'One-time sign-in link',
+    bannerBody: 'Opening this link does not sign you in. Tap Continue to Rota to finish.',
+    submit: 'Continue to Rota',
+    submitting: 'Signing in…', // not in Figma yet
+  },
+  resetNew: {
+    title: 'Set a new password', // 8:86
+    passwordLabel: 'New password',
+    confirmLabel: 'Confirm password',
+    submit: 'Save password',
+    submitting: 'Saving…', // not in Figma yet
+  },
+  // The expired / used / replaced / unknown link, for both kinds. Layout of invite-expired 8:146; no frame of its own.
+  unavailable: {
+    magicTitle: 'This sign-in link isn’t available', // not in Figma yet
+    resetTitle: 'This reset link isn’t available', // not in Figma yet
+    subtitle: 'Request a new link and use the newest email.',
+    bannerTitle: 'Nothing was changed',
+    bannerBody: 'This link may have expired or been used already.',
+    magicAction: 'Email me a new sign-in link',
+    resetAction: 'Request a new reset link',
+    backToLogin: 'Back to log in',
+    backToRota: 'Back to Rota', // for someone already signed in (same rule as the invitation screen)
+  },
+  offline: 'You’re offline. Connect to the internet and try again.', // not in Figma yet
+  // Shown on the login screen after a successful reset (login pattern, "info" tone). Not in Figma yet.
+  passwordUpdated: { title: 'Password updated', body: 'Log in with your new password.' },
 } as const;
 
 /** Create team, Figma 8:101. The button and the missing "Next step" banner are Dave's call (plan, 2026-10-23): plan selection does not exist yet. */

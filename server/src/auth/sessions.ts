@@ -201,12 +201,18 @@ export async function revokeAllFamilies(
   db: TransactionRunner,
   input: { userId: string; config: Pick<AuthConfig, 'transactionMaxWaitMs'> },
 ): Promise<number> {
-  return authTransaction(db, input.config, async (tx) => {
-    await tx.$queryRaw`SELECT id FROM refresh_token_families WHERE user_id = ${input.userId}::uuid ORDER BY id FOR UPDATE`;
-    return tx.$executeRaw`
-      UPDATE refresh_token_families
-      SET revoked_at = now(), revoked_reason = 'logout_all'
-      WHERE user_id = ${input.userId}::uuid AND revoked_at IS NULL
-    `;
-  });
+  return authTransaction(db, input.config, (tx) => revokeFamiliesOf(tx, input.userId, 'logout_all'));
+}
+
+/**
+ * The locking and revoking of revokeAllFamilies, inside a transaction the caller already holds, with the reason it records. Password reset and
+ * the account-verification rule for magic link (security.md) revoke every session in the same transaction that changes the account.
+ */
+export async function revokeFamiliesOf(tx: TransactionClient, userId: string, reason: string): Promise<number> {
+  await tx.$queryRaw`SELECT id FROM refresh_token_families WHERE user_id = ${userId}::uuid ORDER BY id FOR UPDATE`;
+  return tx.$executeRaw`
+    UPDATE refresh_token_families
+    SET revoked_at = now(), revoked_reason = ${reason}
+    WHERE user_id = ${userId}::uuid AND revoked_at IS NULL
+  `;
 }

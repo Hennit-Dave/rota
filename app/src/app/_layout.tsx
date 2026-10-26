@@ -46,6 +46,11 @@ export default function RootLayout() {
               {/* An invite link opens here whether or not anyone is signed in (ADR 0017). Sign in and Create account open on top of it. */}
               <Stack.Screen name="invite/[token]" />
               <Stack.Screen name="invite/index" />
+              {/* Magic-link and reset links open here too (ADR 0020). Opening one consumes nothing; the button on the screen does. */}
+              <Stack.Screen name="magic/[token]" />
+              <Stack.Screen name="magic/index" />
+              <Stack.Screen name="reset/[token]" />
+              <Stack.Screen name="reset/index" />
               {/* Development-only check screens, reachable from either side. */}
               <Stack.Screen name="dev-api" />
               <Stack.Screen name="dev-check" />

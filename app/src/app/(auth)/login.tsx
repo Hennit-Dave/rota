@@ -2,10 +2,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
 import { View } from 'react-native';
 import { describeAuthFailure, type AuthFailure, type FieldErrors, type FieldName } from '../../auth/authFailure';
-import { bannerCopy, credentialsCopy, loginCopy } from '../../auth/copy';
-import { firstInvalidField, loginFieldOrder, validateLogin } from '../../auth/validation';
+import { bannerCopy, credentialsCopy, loginCopy, recoveryCopy } from '../../auth/copy';
+import { firstInvalidField, forgotFieldOrder, loginFieldOrder, validateEmailOnly, validateLogin } from '../../auth/validation';
 import { inviteAuthParams, readInviteAuthParams, routeAfterAuth } from '../../invites/inviteAuthParams';
-import { getAuthActions } from '../../services';
+import { getAuthActions, getRecoveryApi } from '../../services';
 import { space } from '../../theme';
 import { Button } from '../../ui/Button';
 import { PageHeader } from '../../ui/PageHeader';
@@ -29,7 +29,10 @@ export default function LoginScreen() {
   const focusSink = useFocusSink();
   // Opened from an invitation: the invited address is filled in (editable), "Create an account" keeps the invitation, and signing in
   // returns to it (ADR 0017).
-  const invite = readInviteAuthParams(useLocalSearchParams<{ inviteToken?: string; inviteEmail?: string }>());
+  const params = useLocalSearchParams<{ inviteToken?: string; inviteEmail?: string; passwordReset?: string }>();
+  const invite = readInviteAuthParams(params);
+  // Back from a successful password reset (ADR 0020): say so, once, above the form. Not in Figma yet.
+  const passwordUpdated = params.passwordReset === '1';
   const [email, setEmail] = useState(invite.email);
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -77,8 +80,39 @@ export default function LoginScreen() {
   }
 
   const clearError = (field: FieldName) => setFieldErrors((current) => ({ ...current, [field]: undefined }));
-  const openPlaceholder = (feature: 'forgot-password' | 'magic-link') =>
-    router.push({ pathname: '/coming-soon', params: { feature } });
+  const openForgotPassword = () => router.push({ pathname: '/forgot-password', params: { email: email.trim() } });
+
+  /**
+   * "Email me a sign-in link" uses the address already typed above (Figma magic 8:47 shows it as "requested for ..."). The request answers the same
+   * for every address; the next screen is "Check your inbox" either way.
+   */
+  async function requestMagicLink() {
+    if (submitting) return;
+    const errors = validateEmailOnly({ email });
+    setFieldErrors(errors);
+    if (firstInvalidField(forgotFieldOrder, errors)) {
+      focusField('email');
+      return;
+    }
+    focusSink();
+    setSubmitting(true);
+    setFailure(null);
+    try {
+      await getRecoveryApi().requestMagicLink(email);
+      router.push({ pathname: '/magic-sent', params: { email: email.trim() } });
+    } catch (error) {
+      const result = describeAuthFailure('login', error);
+      if (!result) return;
+      if (result.kind === 'fields') {
+        setFieldErrors(result.fields);
+        focusField(firstInvalidField(forgotFieldOrder, result.fields));
+      } else {
+        setFailure(result);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   const credentialsLayout = online && failure?.kind === 'credentials';
 
@@ -167,6 +201,7 @@ export default function LoginScreen() {
   return (
     <Screen>
       <PageHeader title={loginCopy.title} subtitle={loginCopy.subtitle} />
+      {passwordUpdated ? <StatusBanner tone="info" title={recoveryCopy.passwordUpdated.title} body={recoveryCopy.passwordUpdated.body} testID="login-password-updated" /> : null}
       <View style={{ gap: space[16] }}>
         {emailField}
         <View style={{ gap: space[8] }}>
@@ -174,7 +209,7 @@ export default function LoginScreen() {
           <TextAction
             label={loginCopy.forgotPassword}
             disabled={submitting}
-            onPress={() => openPlaceholder('forgot-password')}
+            onPress={openForgotPassword}
             testID="login-forgot"
           />
         </View>
@@ -192,7 +227,7 @@ export default function LoginScreen() {
         <Text variant="caption" tone="muted">
           {loginCopy.alternativePrompt}
         </Text>
-        <TextAction label={loginCopy.magicLink} disabled={submitting} onPress={() => openPlaceholder('magic-link')} testID="login-magic" />
+        <TextAction label={loginCopy.magicLink} disabled={submitting} onPress={() => void requestMagicLink()} testID="login-magic" />
       </View>
       <Spacer />
       <View style={{ gap: space[8] }}>

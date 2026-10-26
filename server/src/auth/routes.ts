@@ -25,14 +25,14 @@ export interface AuthDeps {
   now?: () => Date;
 }
 
-interface UserRow {
+export interface UserRow {
   id: string;
   email: string;
   name: string;
   emailVerifiedAt: Date | null;
 }
 
-function userView(u: UserRow) {
+export function userView(u: UserRow) {
   return { id: u.id, email: u.email, name: u.name, emailVerified: u.emailVerifiedAt !== null };
 }
 
@@ -46,20 +46,24 @@ const noStore: RequestHandler = (_req, res, next) => {
   next();
 };
 
+/** The answer to every call that starts a session (login, register, refresh, magic-link redemption). */
+export async function buildSessionResponse(tokens: TokenService, userId: string, familyId: string, refreshToken: string) {
+  const access = await tokens.sign({ userId, familyId });
+  return {
+    accessToken: access.token,
+    accessTokenExpiresAt: access.expiresAt.toISOString(),
+    refreshToken,
+  };
+}
+
 export function createAuthRouter(deps: AuthDeps): Router {
   const { db, tokens, passwords, limiter, logger, config, blocklist } = deps;
   const now = deps.now ?? (() => new Date());
   const schemas = createAuthSchemas(config, blocklist);
   const requireAuth = createRequireAuth({ tokens, db });
 
-  async function sessionResponse(userId: string, familyId: string, refreshToken: string) {
-    const access = await tokens.sign({ userId, familyId });
-    return {
-      accessToken: access.token,
-      accessTokenExpiresAt: access.expiresAt.toISOString(),
-      refreshToken,
-    };
-  }
+  const sessionResponse = (userId: string, familyId: string, refreshToken: string) =>
+    buildSessionResponse(tokens, userId, familyId, refreshToken);
 
   const router = Router();
   router.use(recordRouteBase);

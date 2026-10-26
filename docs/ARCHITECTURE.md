@@ -132,6 +132,10 @@ An invitation is team-owned: it lives on the team's shard, and so does its email
   the key `email-<rowId>`, records `sent_at` and Resend's message ID, and scrubs the body and link. Terminal failures (the 23-hour rule, a spent daily quota,
   a rejected request) mark the row `failed` without retrying. The worker needs `RESEND_API_KEY`; the API needs `MAIL_FROM` and `MAIL_REPLY_TO`.
 
+### 5c. Password reset and magic link
+
+Four public routes under `/auth` (ADR 0020), each Zod, then rate limit, then handler: `POST /auth/magic-link/request`, `/auth/magic-link/redeem`, `/auth/password-reset/request`, `/auth/password-reset/submit`. Tokens live in `auth_tokens` on shard A, hash only; the email work row is written in the same transaction (the invite pipeline: frozen payload, one idempotency key per row, the email job skips a link that is used, replaced or expired). A request answers `202` immediately and makes the token in a tracked background step (so a known and an unknown address take the same time); shutdown drains it. A magic link starts a session like login (and, for an unverified address, clears the password and revokes every session first); a reset sets the password, revokes every session and signs nobody in. Link host: `https://rota.davebuilds.design/magic/<token>` and `/reset/<token>` (App Links, ADR 0009, ADR 0019).
+
 ### 6. Mobile app
 
 Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and
@@ -157,6 +161,7 @@ app/src/
 - **Design tokens** mirror Figma's three variable collections one-to-one (`Rota / Primitives` -> `palette.json`, `Rota / Colour` ->
   `colors.ts` with Light and Dark, `Rota / Dimensions` -> `dimensions.ts`) and the six text styles -> `typography.ts`. Raw hex values exist
   only in `palette.json`, which `app.config.ts` also reads so the splash and notification colours come from the same source.
+- **Reset and magic link** (ADR 0020). `/forgot-password` (Figma 8:74, then the "Check your inbox" layout) and `/magic-sent` (8:47) sit on the signed-out side; `/magic/[token]` (8:61) and `/reset/[token]` (8:86) are reachable signed in or out, like `/invite/[token]`. Opening a link consumes nothing; the button's `POST` does. The token stays in memory in the route.
 - **Deep links.** Scheme `rota`, and https App Links on `rota.davebuilds.design` for `/invite`, `/magic`, `/reset` and `/checkout`
   (verification goes live when the GitHub Pages site in `site/` is deployed and its DNS record is live, ADR 0019). Opening a link consumes nothing.
 - **Team directory and invite form** (`app/(app)/team/`): reached from the placeholder home's "Team" button until the tab bar exists (its other tabs have no screens yet). The roster and what the caller may do come from the server (`GET /teams/:id` and `…/members`); "Invite a teammate" shows only when `invitableRoles` is not empty, and the role sheet offers exactly those roles. Every state has a screen: loading, empty (only you), error with Try again (including when the team list itself could not load), offline. For an Owner or Manager the directory previews the oldest pending invitation and links to **Pending invitations**: every pending invitation with the server's email state ("Email not sent" in red when the worker gave up), and Resend and Revoke exactly where the server says the caller may (a Manager sees an Owner's Manager invitation without buttons). Revoke has its own confirmation. "Create a shift" waits for shifts.

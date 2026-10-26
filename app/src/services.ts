@@ -13,6 +13,7 @@ import { secureTokenStore } from './auth/secureTokenStore';
 import { createSignOutLocal } from './auth/signOut';
 import { useSessionStore } from './state/sessionStore';
 import { createInviteApi } from './invites/inviteApi';
+import { createRecoveryApi } from './recovery/recoveryApi';
 import { createTeamApi } from './teams/teamApi';
 
 /**
@@ -72,6 +73,11 @@ export function getTeamApi() {
 /** The two invite-link routes (preview, accept) over the one API client. */
 export function getInviteApi() {
   return createInviteApi(getApi());
+}
+
+/** The reset and magic-link requests (ADR 0020) over the one API client. Built on first use, like the client. */
+export function getRecoveryApi() {
+  return createRecoveryApi(getApi());
 }
 
 export function getSessionActions() {

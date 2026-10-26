@@ -64,7 +64,13 @@ export type RateRuleConfigOverrides = Partial<
     | 'inviteSendTeam'
     | 'invitePreviewIp'
     | 'inviteAcceptUser'
-    | 'inviteAcceptIp', { max: number; windowSeconds: number }>
+    | 'inviteAcceptIp'
+    | 'magicRequestIp'
+    | 'magicRequestEmail'
+    | 'magicRedeemIp'
+    | 'resetRequestIp'
+    | 'resetRequestEmail'
+    | 'resetSubmitIp', { max: number; windowSeconds: number }>
 >;
 
 export interface RateLimiter {

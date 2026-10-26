@@ -12,7 +12,7 @@ completed in later slices; sections below are added by the slice that builds the
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
 | 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
 | 7 | Forged or replayed Stripe webhooks | Not yet written (needs payments) |
-| 8 | Theft or reuse of invite and reset tokens | Invite tokens written below (Invites, slice 2a); reset tokens come with slice 2b |
+| 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens written below (Invites, slice 2a); reset and magic-link tokens in "Threat 8b" (slice 2b) |
 
 ## Permissions: the one table (threat 1)
 
@@ -81,7 +81,7 @@ loses access on the next request". Mutation-checked: making the middleware answe
 - **Never in logs:** the logger cannot carry a token, a link or an address. The raw secret exists only in the link and in the email job's stored payload until the email is sent or skipped, then the body is scrubbed from the row.
 
 **Accepted gaps (written down on purpose).**
-- **A pre-registered address blocks the real person until reset exists.** Signup verification is deferred, so anyone can register someone else's address. The invite can only be accepted by the account that holds that address, and only password reset or magic link (slice 2b) can take such an account over. Until 2b, that person cannot join. Accepting an invite deliberately does **not** clear the password or revoke sessions (ADR 0015; `security.md` amended).
+- **A pre-registered address blocks the invitation until the real owner takes the account over.** Signup verification is deferred, so anyone can register someone else's address. The invite can only be accepted by the account that holds that address; password reset or a magic link (slice 2b, below) is how the real owner takes such an account over. Accepting an invite deliberately does **not** clear the password or revoke sessions (ADR 0015; `security.md` amended).
 - The raw token sits in the work row's payload until the job finishes, and stays on a row that ended `failed` (a human may retry it). Because acceptance is tied to the invited address and the token lasts 7 days, that alone does not let a reader join the team.
 - The invite email goes out from a verified domain with a team name and inviter name that people type themselves, so an Owner could write a misleading team name. Names are escaped and single-line; team creation is rate limited.
 - The link host is GitHub Pages (`site/`, ADR 0019). Until its DNS record is live and Android reports the domain verified, a link tapped in a real inbox opens the browser; the proof is `adb shell pm get-app-links` plus a tapped link (issue #35). The landing page shown without the app is static, shows no token and sends no referrer, but the host's own request logs still see the path.
@@ -89,6 +89,29 @@ loses access on the next request". Mutation-checked: making the middleware answe
 - **Proof limits:** adb proofs put the link in the emulator's system log (the adb daemon logs the shell command), so device logs are never attached to a PR. Test data only.
 
 **Proving tests.** `invites.integration.test.ts`: "create" (hash only, the secret never in the invitations row), "unavailable is ONE answer", "accept" (role from the invitation, nothing cleared, session intact), "accept needs a signed-in account...", "two simultaneous accepts", "a join that fails halfway", "preview consumes nothing", "preview mirrors accept", "REDACTION". `invites-limits.integration.test.ts`. `tokens.unit.test.ts`.
+
+## Threat 8b (reset and magic-link tokens): theft, reuse, enumeration and takeover
+
+**What it is.** A reset or magic-link token is a credential that sets a password or starts a session. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump; and the request that asks for it can be used to find out which addresses have accounts.
+
+**How it is handled** (ADR 0020).
+- The token is 32 random bytes (base64url); **only its SHA-256 is stored** in `auth_tokens` on shard A. **Single use**, consumed by one conditional update (`used_at IS NULL AND expires_at > now()`), so two simultaneous redemptions give one winner. **Magic link 10 minutes, reset 1 hour** (config). A newer request replaces an older unused token of the same purpose; a successful reset kills every other outstanding token of that user.
+- **One answer for every dead link** (unknown, malformed, used, replaced, expired): `404 link_unavailable`.
+- **Opening a link consumes nothing.** The link opens an app screen; only the screen's `POST` redeems it, so an email scanner fetching the link changes nothing. The app never stores, logs or caches the token.
+- **No enumeration.** A request answers `202 { ok: true }` whether or not the address has an account, **and in the same time**: the token is made after the answer is sent (measured 135 ms against 134 ms; before, 1020 ms against 152 ms). The per-address and per-IP limits count unknown addresses too, so a 429 reveals nothing, and the daily email cap is counted only for emails that would really be made.
+- **Takeover blocked.** Redeeming a magic link for an **unverified** address verifies it, **clears the existing password and revokes every session** in the same transaction (whoever registered it first may not own it); a reset also verifies the address. A verified account loses nothing when it redeems a magic link.
+- **A reset ends every session** (all families revoked under the same lock as refresh, reason `password_reset`) and **does not sign anyone in**.
+- **Rate limits** (`magic_request_ip` 30 and `magic_request_email` 5 per 15 minutes, `magic_redeem_ip` 30 per 15 minutes, the same for reset, `reset_submit_ip`), fail closed with `503` when Valkey is down, and a blocked attempt never reaches an Argon2 run. Daily cap: 30 emails per UTC day, shared with nothing else but Resend's 100 (invites keep 50).
+- **Never in logs:** the logger cannot carry a token or an address; the tests check the captured logs. The raw token exists only in the link inside the frozen email payload until the email job has sent or skipped it, then the body is scrubbed.
+
+**Accepted gaps (written down on purpose).**
+- **Recovery can be starved.** Someone who knows real addresses can use up the 30 daily emails, or an address's 5 requests per 15 minutes, and delay a real person (ADR 0020).
+- **A request replaces the link a person was about to use.** The newest email is the one that works.
+- **An email can be lost after the answer** if the process dies or the database refuses between the answer and the commit; the person asks again and the failure is logged.
+- **The host's request logs see the token** in the URL path (ADR 0019). The landing page shows and sends nothing.
+- **When Sentry is initialised for the app, route params and `/magic/` and `/reset/` URLs must be scrubbed from breadcrumbs**, as for `/invite/`.
+
+**Proving tests.** `recovery.integration.test.ts` (security.md tests 11, 16, 17 and 18) and `recovery.unit.test.ts`; the app's `authActions`, `authFailure`, `validation`, `recoveryApi` and `linkToken` tests.
 
 ## Threat 3: a stolen access token
 
@@ -187,8 +210,8 @@ The app-wide invite cap exists because Resend's free plan sends 100 emails per U
 - Login never says which of email or password was wrong: one `401 invalid_credentials`, and an unknown email still runs one
   Argon2 verification against a dummy hash so timing does not reveal accounts.
 - **Accepted trade-off: `409 email_in_use` at sign-up reveals that an address has an account.** Sign-up verification is deferred,
-  so there is no way to answer identically. The route is rate limited. **Squatting risk until magic link / verification
-  lands:** anyone can register someone else's address (unverified) and hold the account.
+  so there is no way to answer identically. The route is rate limited. **Squatting risk:** anyone can register someone else's
+  address (unverified) and hold the account until the real owner redeems a magic link or a reset (below), which verifies the address and ends the squatter's password and sessions.
 
 ## Signing secret
 

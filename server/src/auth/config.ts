@@ -12,6 +12,10 @@ export interface RateRuleConfig {
 
 export interface AuthConfig {
   accessTokenMinutes: number;
+  /** How long an emailed magic-link token lasts. */
+  magicLinkMinutes: number;
+  /** How long an emailed password-reset token lasts. */
+  passwordResetMinutes: number;
   refreshIdleDays: number;
   sessionAbsoluteDays: number;
   /** 0: the same process issues and verifies, so there is no cross-host skew (ADR 0005). */
@@ -38,6 +42,16 @@ export interface AuthConfig {
     invitePreviewIp: RateRuleConfig;
     inviteAcceptUser: RateRuleConfig;
     inviteAcceptIp: RateRuleConfig;
+    magicRequestIp: RateRuleConfig;
+    magicRequestEmail: RateRuleConfig;
+    magicRedeemIp: RateRuleConfig;
+    resetRequestIp: RateRuleConfig;
+    resetRequestEmail: RateRuleConfig;
+    resetSubmitIp: RateRuleConfig;
+  };
+  recovery: {
+    /** App-wide cap on reset and magic-link emails per UTC day, counted only for requests that will really send one. */
+    globalDailyCap: number;
   };
   invites: {
     /** How long an invitation (and its link) lasts, counted from create or resend. */
@@ -72,6 +86,11 @@ function rule(env: Env, prefix: string, defaults: RateRuleConfig): RateRuleConfi
 export function loadAuthConfig(env: Env = process.env): AuthConfig {
   return {
     accessTokenMinutes: positiveInt(env, 'AUTH_ACCESS_TOKEN_MINUTES', 15),
+    // 10 minutes (Dave, 2026-10-26, ADR 0020): NIST SP 800-63B-4 requires an out-of-band authentication to complete within 10 minutes.
+    magicLinkMinutes: positiveInt(env, 'AUTH_MAGIC_LINK_MINUTES', 10),
+    // 1 hour (Dave, 2026-10-26, ADR 0020): our judgment, below NIST SP 800-63B-4's 24-hour ceiling for a recovery code sent by email. OWASP gives
+    // no number ("an appropriate period").
+    passwordResetMinutes: positiveInt(env, 'AUTH_PASSWORD_RESET_MINUTES', 60),
     refreshIdleDays: positiveInt(env, 'AUTH_REFRESH_IDLE_DAYS', 30),
     sessionAbsoluteDays: positiveInt(env, 'AUTH_SESSION_ABSOLUTE_DAYS', 90),
     clockSkewSeconds: 0,
@@ -99,6 +118,19 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       invitePreviewIp: rule(env, 'RATE_LIMIT_INVITE_PREVIEW_IP', { max: 30, windowSeconds: 900 }),
       inviteAcceptUser: rule(env, 'RATE_LIMIT_INVITE_ACCEPT_USER', { max: 10, windowSeconds: 3600 }),
       inviteAcceptIp: rule(env, 'RATE_LIMIT_INVITE_ACCEPT_IP', { max: 30, windowSeconds: 900 }),
+      // Approved by Dave 2026-10-26 (slice 2b, ADR 0020): they mirror the login rules. A request is limited per IP (30 per 15 minutes) and per
+      // email (5 per 15 minutes, counted whether or not the address has an account, so a 429 reveals nothing); redeeming a magic link and
+      // submitting a reset are limited per IP (30 per 15 minutes).
+      magicRequestIp: rule(env, 'RATE_LIMIT_MAGIC_REQUEST_IP', { max: 30, windowSeconds: 900 }),
+      magicRequestEmail: rule(env, 'RATE_LIMIT_MAGIC_REQUEST_EMAIL', { max: 5, windowSeconds: 900 }),
+      magicRedeemIp: rule(env, 'RATE_LIMIT_MAGIC_REDEEM_IP', { max: 30, windowSeconds: 900 }),
+      resetRequestIp: rule(env, 'RATE_LIMIT_RESET_REQUEST_IP', { max: 30, windowSeconds: 900 }),
+      resetRequestEmail: rule(env, 'RATE_LIMIT_RESET_REQUEST_EMAIL', { max: 5, windowSeconds: 900 }),
+      resetSubmitIp: rule(env, 'RATE_LIMIT_RESET_SUBMIT_IP', { max: 30, windowSeconds: 900 }),
+    },
+    recovery: {
+      // 30 per UTC day (Dave, 2026-10-26, ADR 0020): Resend's free plan sends 100 emails per UTC day in total and invitations keep 50 of them (ADR 0015).
+      globalDailyCap: positiveInt(env, 'AUTH_EMAIL_GLOBAL_DAILY_CAP', 30),
     },
     invites: {
       // 7 days (Dave, 2026-10-23, ADR 0015): long enough for a shift worker who checks email every few days, short enough for a token that
