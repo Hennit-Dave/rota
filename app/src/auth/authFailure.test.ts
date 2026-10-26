@@ -140,3 +140,34 @@ test('generic: 5xx and 503 carry the request ID as the reference; a timeout has 
 test('a result for a previous account shows nothing', () => {
   assert.equal(describeAuthFailure('login', new StaleAccountError()), null);
 });
+
+test('reset: an unknown, used or expired link is link_unavailable (one answer); on login it is just generic', () => {
+  const error = new ApiError(404, 'link_unavailable', 'x', 'req-1');
+  assert.deepEqual(describeAuthFailure('reset', error), { kind: 'link_unavailable' });
+  assert.equal(describeAuthFailure('login', error)?.kind, 'generic');
+});
+
+test('reset: the new password gets the signup policy messages, with numbers from the server', () => {
+  assert.deepEqual(describeAuthFailure('reset', validation([{ path: 'password', code: 'too_short', min: 15 }])), {
+    kind: 'fields',
+    fields: { password: 'Use at least 15 characters.' },
+  });
+  assert.deepEqual(describeAuthFailure('reset', validation([{ path: 'password', code: 'password_common' }])), {
+    kind: 'fields',
+    fields: { password: fieldCopy.passwordCommon },
+  });
+  assert.deepEqual(describeAuthFailure('reset', validation([{ path: 'password', code: 'too_long', max: 128 }])), {
+    kind: 'fields',
+    fields: { password: 'Use 128 characters or fewer.' },
+  });
+});
+
+test('reset: rate limit, offline, stale account and anything else read like the login screen', () => {
+  assert.deepEqual(describeAuthFailure('reset', new ApiError(429, 'rate_limited', 'x', 'r', undefined, 720)), {
+    kind: 'rate_limited',
+    message: bannerCopy.rateLimited(formatRetryWait(720)!),
+  });
+  assert.equal(describeAuthFailure('reset', new OfflineError())?.kind, 'offline');
+  assert.equal(describeAuthFailure('reset', new StaleAccountError()), null);
+  assert.equal(describeAuthFailure('reset', new ApiError(503, 'service_unavailable', 'x', 'req-2'))?.kind, 'generic');
+});

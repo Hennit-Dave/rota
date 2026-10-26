@@ -23,6 +23,8 @@ const payloadSchema = z.object({
   html: z.string().min(1),
   text: z.string().min(1),
   invitationId: z.string().regex(/^[0-9a-f-]{36}$/).optional(),
+  // Magic-link and password-reset emails (ADR 0020): the auth token this email was made for.
+  authTokenId: z.string().regex(/^[0-9a-f-]{36}$/).optional(),
   tokenHashHex: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 
@@ -74,6 +76,20 @@ export function createEmailHandler(deps: { resend: ResendClient }): JobHandler {
     }
 
     // 2 and 3. first_attempt_at, committed before the call, never reset; and the 23-hour rule against it.
+    if (payload.authTokenId && payload.tokenHashHex) {
+      // A magic link or reset email is only worth sending while its token can still be used: not redeemed, not replaced by a newer request,
+      // not expired, not killed by a successful reset (ADR 0020). Same rule as the invitation check above.
+      const live = await prisma.$queryRaw<Array<{ ok: number }>>`
+        SELECT 1 AS ok FROM auth_tokens
+        WHERE id = ${payload.authTokenId}::uuid AND token_hash = decode(${payload.tokenHashHex}, 'hex')
+          AND used_at IS NULL AND expires_at > NOW()`;
+      if (live.length === 0) {
+        await scrubPayload(ctx);
+        console.log(`${logBase} outcome=skipped reason=auth_token_not_live`);
+        return; // the processor marks the row done; sent_at stays null
+      }
+    }
+
     const stamped = await prisma.$queryRaw<Array<{ expired: boolean }>>`
       UPDATE work_rows
       SET first_attempt_at = COALESCE(first_attempt_at, NOW()), updated_at = NOW()

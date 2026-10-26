@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'invalid_credentials'
   | 'forbidden'
   | 'invite_unavailable'
+  | 'link_unavailable'
   | 'invite_wrong_account'
   | 'already_member'
   | 'invite_pending'
@@ -32,6 +33,7 @@ const STATUS: Record<ErrorCode, number> = {
   invalid_credentials: 401,
   forbidden: 403,
   invite_unavailable: 404,
+  link_unavailable: 404,
   invite_wrong_account: 403,
   already_member: 409,
   invite_pending: 409,
@@ -51,6 +53,7 @@ const MESSAGE: Record<ErrorCode, string> = {
   invalid_credentials: 'Email or password is incorrect.',
   forbidden: 'Your role does not allow this.',
   invite_unavailable: 'This invitation is not available.',
+  link_unavailable: 'This link is not available.',
   invite_wrong_account: 'This invitation is for a different account.',
   already_member: 'This person is already on the team.',
   invite_pending: 'An invitation is already pending for this email.',

@@ -1,4 +1,5 @@
 import express from 'express';
+import { createRecoveryRouter, type RecoveryRouteDeps } from '../auth/recoveryRoutes.js';
 import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
@@ -9,6 +10,8 @@ export interface AppDeps {
   logger?: Logger;
   /** When given, mounts /auth. Left out by tests that only need the bare app. */
   auth?: Omit<AuthDeps, 'logger'>;
+  /** When given, mounts magic link and password reset under /auth (ADR 0020). */
+  recovery?: Omit<RecoveryRouteDeps, 'logger'>;
   /** When given, mounts /teams. */
   teams?: Omit<TeamsDeps, 'logger'>;
   /** When given, mounts /invitations (preview and accept). */
@@ -27,6 +30,9 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.auth) {
     app.use('/auth', createAuthRouter({ ...deps.auth, logger }));
+  }
+  if (deps.recovery) {
+    app.use('/auth', createRecoveryRouter({ ...deps.recovery, logger }));
   }
   if (deps.teams) {
     app.use('/teams', createTeamsRouter({ ...deps.teams, logger }));

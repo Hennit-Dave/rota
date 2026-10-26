@@ -53,6 +53,7 @@ model WorkRow {
   updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   invitations Invitation[]
+  authTokens  AuthToken[]
 
   // Timed sweep: pending rows past available_at; claimed rows with an expired lease.
   @@index([status, availableAt], map: "work_rows_status_available_at_idx")
@@ -76,6 +77,7 @@ model User {
   credential Credential?
   families   RefreshTokenFamily[]
   userTeams  UserTeam[]
+  authTokens AuthToken[]
 
   @@map("users")
 }
@@ -99,7 +101,7 @@ model RefreshTokenFamily {
   userId            String    @map("user_id") @db.Uuid
   absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
   revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(6)
-  // logout | logout_all | reuse_detected
+  // logout | logout_all | reuse_detected | password_reset | address_verified (a magic link verified an address that was unverified)
   revokedReason     String?   @map("revoked_reason")
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -208,4 +210,34 @@ model Invitation {
   emailWorkRow WorkRow? @relation(fields: [emailWorkRowId], references: [id], onDelete: SetNull)
 
   @@map("invitations")
+}
+
+// ---- Password reset and magic link (identity data: shard A only, like users; the same migrations run on both shards) ----
+
+enum AuthTokenPurpose {
+  magic_link
+  password_reset
+
+  @@map("auth_token_purpose")
+}
+
+// One emailed, single-use, expiring token (security.md). Only the SHA-256 of the secret is stored; the secret exists only in the link inside the
+// frozen email payload until the email job has sent or skipped it. `used_at` is set by redemption, and also when a newer request replaces an
+// older unused token, or when a reset succeeds (every outstanding token of that user dies).
+model AuthToken {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  purpose        AuthTokenPurpose
+  tokenHash      Bytes            @unique @map("token_hash")
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(6)
+  usedAt         DateTime?        @map("used_at") @db.Timestamptz(6)
+  // The email work row (written in the same transaction on shard A). The email job skips a send whose token is used or expired.
+  emailWorkRowId String?          @map("email_work_row_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailWorkRow WorkRow? @relation(fields: [emailWorkRowId], references: [id], onDelete: SetNull)
+
+  @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
+  @@map("auth_tokens")
 }

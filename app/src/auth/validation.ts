@@ -9,6 +9,26 @@ import type { FieldErrors, FieldName } from './authFailure';
 export const loginFieldOrder: readonly FieldName[] = ['email', 'password'];
 export const signupFieldOrder: readonly FieldName[] = ['name', 'email', 'password'];
 
+export const forgotFieldOrder: readonly FieldName[] = ['email'];
+export const resetFieldOrder: readonly FieldName[] = ['password', 'confirm'];
+
+/** The forgot-password and magic-link requests need only an address; whether it is shaped like one is the server's call (details). */
+export function validateEmailOnly(input: { email: string }): FieldErrors {
+  return input.email.trim() === '' ? { email: fieldCopy.emailInvalid } : {};
+}
+
+/**
+ * The new-password form. Length and the blocklist are the server's decision and come back as `details`; the app only checks that the two
+ * entries are there and match, because a mismatch is a typo the server cannot see (it is only sent the password).
+ */
+export function validateNewPassword(input: { password: string; confirm: string }): FieldErrors {
+  const errors: FieldErrors = {};
+  if (input.password === '') errors.password = fieldCopy.passwordTooShort(PASSWORD_HELPER_MIN);
+  if (input.confirm === '') errors.confirm = fieldCopy.confirmRequired;
+  else if (input.password !== '' && input.confirm !== input.password) errors.confirm = fieldCopy.confirmMismatch;
+  return errors;
+}
+
 export function validateLogin(input: { email: string; password: string }): FieldErrors {
   const errors: FieldErrors = {};
   if (input.email.trim() === '') errors.email = fieldCopy.emailInvalid;

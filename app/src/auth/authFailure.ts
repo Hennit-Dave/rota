@@ -2,14 +2,16 @@ import { ApiError, OfflineError, StaleAccountError } from '../api/errors';
 import { bannerCopy, fieldCopy, PASSWORD_HELPER_MIN } from './copy';
 import { formatRetryWait } from './retryWait';
 
-export type AuthScreen = 'login' | 'signup';
-export type FieldName = 'name' | 'email' | 'password';
+export type AuthScreen = 'login' | 'signup' | 'reset';
+export type FieldName = 'name' | 'email' | 'password' | 'confirm';
 export type FieldErrors = Partial<Record<FieldName, string>>;
 
 /** What a failed sign-in or sign-up looks like on screen. The server's error code decides which; the app only picks words. */
 export type AuthFailure =
   | { kind: 'fields'; fields: FieldErrors }
   | { kind: 'credentials' }
+  /** A magic or reset link that is unknown, used, replaced or expired: the server gives one answer for all of them (ADR 0020). */
+  | { kind: 'link_unavailable' }
   | { kind: 'email_in_use' }
   | { kind: 'rate_limited'; message: string }
   | { kind: 'offline'; message: string }
@@ -76,6 +78,8 @@ export function describeAuthFailure(screen: AuthScreen, error: unknown): AuthFai
     switch (error.code) {
       case 'invalid_credentials':
         return screen === 'login' ? { kind: 'credentials' } : generic(error.requestId);
+      case 'link_unavailable':
+        return screen === 'login' ? generic(error.requestId) : { kind: 'link_unavailable' };
       case 'email_in_use':
         return screen === 'signup' ? { kind: 'email_in_use' } : generic(error.requestId);
       case 'rate_limited': {

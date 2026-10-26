@@ -97,3 +97,66 @@ test('if secure-store refuses the write the user is not signed in, and the error
   await assert.rejects(actions.login('a@b.c', 'pw'), TokenSaveError);
   assert.equal(signedIn.length, 0);
 });
+
+test('redeemMagicLink: the token goes in the body of a public POST, and the session is stored and signed in like a login', async () => {
+  const { h, signedIn, actions } = setup(() => json(200, answer));
+  const result = await actions.redeemMagicLink('M'.repeat(43));
+  assert.deepEqual(result, user);
+  assert.equal(h.calls[0]?.path, '/auth/magic-link/redeem', 'the token is in the body, never the path');
+  assert.equal(h.calls[0]?.authorization, null);
+  assert.deepEqual(h.calls[0]?.body, { token: 'M'.repeat(43) });
+  assert.deepEqual(h.tokens.current(), { accessToken: 'A1', refreshToken: 'R1' });
+  assert.deepEqual(signedIn, [user]);
+});
+
+test('redeemMagicLink: an unavailable link stores nothing and signs nobody in, and it is not a refresh', async () => {
+  const { h, signedIn, actions } = setup(() => json(404, { error: { code: 'link_unavailable', message: 'x', requestId: 'req-1' } }));
+  await assert.rejects(actions.redeemMagicLink('M'.repeat(43)), (e: unknown) => e instanceof ApiError && e.code === 'link_unavailable');
+  assert.equal(h.tokens.current(), null);
+  assert.equal(h.refreshCalls(), 0);
+  assert.equal(signedIn.length, 0);
+});
+
+test('redeemMagicLink: signing out while the request is in flight discards the session it returns', async () => {
+  const gate = deferred();
+  const { h, signedIn, actions } = setup(async () => {
+    await gate.promise;
+    return json(200, answer);
+  });
+  const pending = actions.redeemMagicLink('M'.repeat(43));
+  h.epoch.bump();
+  gate.resolve();
+  await assert.rejects(pending, StaleAccountError);
+  assert.equal(h.tokens.writes.length, 0);
+  assert.equal(signedIn.length, 0);
+});
+
+test('redeemMagicLink with a session to replace: it is replaced AFTER the server accepts the link and BEFORE the new tokens are stored', async () => {
+  const order: string[] = [];
+  const { h, signedIn, actions } = setup(() => {
+    order.push('server answered');
+    return json(200, answer);
+  });
+  await actions.redeemMagicLink('M'.repeat(43), {
+    replacingSession: async () => {
+      order.push('old session replaced');
+      assert.equal(h.tokens.writes.length, 0, 'the new tokens are not stored yet');
+      h.epoch.bump(); // a real sign-out bumps the epoch; the new session must still be accepted
+    },
+  });
+  assert.deepEqual(order, ['server answered', 'old session replaced']);
+  assert.deepEqual(h.tokens.current(), { accessToken: 'A1', refreshToken: 'R1' });
+  assert.deepEqual(signedIn, [user]);
+});
+
+test('redeemMagicLink with a session to replace: a link the server rejects leaves that session alone', async () => {
+  let replaced = 0;
+  const { h, signedIn, actions } = setup(() => json(404, { error: { code: 'link_unavailable', message: 'x', requestId: 'req-1' } }));
+  await assert.rejects(
+    actions.redeemMagicLink('M'.repeat(43), { replacingSession: async () => void replaced++ }),
+    (e: unknown) => e instanceof ApiError && e.code === 'link_unavailable',
+  );
+  assert.equal(replaced, 0, 'the signed-in account was not logged out');
+  assert.equal(h.tokens.writes.length, 0);
+  assert.equal(signedIn.length, 0);
+});

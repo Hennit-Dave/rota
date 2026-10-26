@@ -13,6 +13,8 @@ import { createBlocklist, type PasswordBlocklist } from './blocklist.js';
 import { loadAuthConfig, type AuthConfig } from './config.js';
 import { argon2Hasher, createPasswordService, type PasswordHasher } from './password.js';
 import { createSession } from './sessions.js';
+import type { RecoveryDeps } from './recovery.js';
+import { createTaskTracker, type TaskTracker } from './tasks.js';
 import { createTokenService, type TokenService } from './tokens.js';
 
 /**
@@ -25,6 +27,10 @@ export interface TestAppOptions {
   blocklist?: PasswordBlocklist;
   /** Point the limiter at a Valkey that is not there, to prove the routes fail closed. */
   deadValkey?: boolean;
+  /** Makes the enqueue throw, to show what happens when the step after the answer fails. */
+  failEnqueue?: boolean;
+  /** Overrides for the recovery settings (the daily email cap). */
+  recovery?: Partial<AuthConfig['recovery']>;
 }
 
 export interface Reply {
@@ -54,6 +60,16 @@ export interface TestApp {
   now(): Date;
   /** How many Argon2 verifications have run since the app started. */
   verifyCount(): number;
+  /** How many Argon2 hashes have been made since the app started (signup, reset). */
+  hashCount(): number;
+  /** Waits for the work a reset or magic-link request does after its answer (the token, the email row, the job). Call it before reading those rows. */
+  settle(): Promise<void>;
+  /** Makes the enqueue wait until the returned function is called, to show what a request does NOT wait for. */
+  holdEnqueue(): () => void;
+  /** Work rows the recovery routes asked to enqueue (nothing is really enqueued), in order. */
+  enqueued(): string[];
+  /** The email work rows written for a user's recovery tokens, newest first, with the raw link read from the frozen payload. */
+  recoveryEmails(userId: string): Promise<Array<{ workRowId: string; tokenId: string; purpose: string; to: string; subject: string; link: string; secret: string }>>;
   logLines(): string[];
   newEmail(): string;
   seedUser(opts?: { email?: string; password?: string; name?: string }): Promise<{ id: string; email: string; password: string }>;
@@ -66,7 +82,11 @@ export interface TestApp {
 
 export async function startAuthTestApp(options: TestAppOptions = {}): Promise<TestApp> {
   const base = loadAuthConfig({});
-  const config: AuthConfig = { ...base, rateLimits: { ...base.rateLimits, ...options.rateLimits } };
+  const config: AuthConfig = {
+    ...base,
+    rateLimits: { ...base.rateLimits, ...options.rateLimits },
+    recovery: { ...base.recovery, ...options.recovery },
+  };
 
   const shards = createTestShards({ primaryMax: 3 });
   const db = identityDb(shards);
@@ -80,8 +100,9 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
   const limiter = createRateLimiter(redis, { prefix, onKey: (k) => touchedKeys.add(k) });
 
   let verifies = 0;
+  let hashes = 0;
   const counting: PasswordHasher = {
-    hash: (p) => argon2Hasher.hash(p),
+    hash: (p) => (hashes++, argon2Hasher.hash(p)),
     verify: async (h, p) => (verifies++, argon2Hasher.verify(h, p)),
   };
   const passwords = createPasswordService(counting);
@@ -94,9 +115,22 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
 
   const lines: string[] = [];
   const logger = createLogger((l) => lines.push(l));
+  const queued: string[] = [];
+  let gate: Promise<void> | null = null;
+  const tasks: TaskTracker = createTaskTracker((err) => lines.push(JSON.stringify({ level: 'error', msg: 'recovery_task_failed', reason: String(err) })));
+  const recovery: RecoveryDeps = {
+    mail: { from: 'Rota <notification@example.test>', replyTo: 'rota@example.test' },
+    enqueue: async (_prisma, row) => {
+      if (gate) await gate;
+      if (options.failEnqueue) throw new Error('enqueue failed (test)');
+      queued.push(row.id);
+    },
+  };
+  const blocklist = options.blocklist ?? createBlocklist([]);
   const app = createApp({
     logger,
-    auth: { db, tokens, passwords, limiter, config, blocklist: options.blocklist ?? createBlocklist([]), now },
+    auth: { db, tokens, passwords, limiter, config, blocklist, now },
+    recovery: { db, tokens, passwords, limiter, config, blocklist, recovery, tasks, now },
   });
   const server = app.listen(0);
   await new Promise<void>((r) => server.once('listening', () => r()));
@@ -134,6 +168,35 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
     advanceClock: (ms) => void (offsetMs += ms),
     now,
     verifyCount: () => verifies,
+    hashCount: () => hashes,
+    settle: () => tasks.drain(),
+    holdEnqueue() {
+      let release!: () => void;
+      gate = new Promise<void>((r) => (release = r));
+      return () => {
+        gate = null;
+        release();
+      };
+    },
+    enqueued: () => [...queued],
+    async recoveryEmails(userId) {
+      const rows = await db.$queryRaw<Array<{ id: string; purpose: string; work_row_id: string; payload: any }>>`
+        SELECT t.id, t.purpose::text AS purpose, w.id AS work_row_id, w.payload
+        FROM auth_tokens t JOIN work_rows w ON w.id = t.email_work_row_id
+        WHERE t.user_id = ${userId}::uuid ORDER BY t.created_at DESC`;
+      return rows.map((r) => {
+        const link: string = String(r.payload.text).match(/https?:\/\/\S+/)![0];
+        return {
+          workRowId: r.work_row_id,
+          tokenId: r.id,
+          purpose: r.purpose,
+          to: r.payload.to[0],
+          subject: r.payload.subject,
+          link,
+          secret: link.split('/').pop()!,
+        };
+      });
+    },
     logLines: () => lines,
     newEmail,
     async seedUser(opts = {}) {
@@ -153,6 +216,7 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
     post: (path, body, headers) => call('POST', path, body ?? {}, headers),
     get: (path, headers) => call('GET', path, undefined, headers),
     async stop() {
+      await tasks.drain();
       await new Promise<void>((r) => server.close(() => r()));
       if (!options.deadValkey) {
         if (touchedKeys.size > 0) await redis.del(...touchedKeys);
@@ -166,7 +230,13 @@ export async function startAuthTestApp(options: TestAppOptions = {}): Promise<Te
         assert.deepEqual(leftovers, [], 'test left rate-limit keys behind');
       }
       redis.disconnect();
-      if (emails.size > 0) await db.user.deleteMany({ where: { email: { in: [...emails] } } });
+      if (emails.size > 0) {
+        // Recovery email work rows have no owner row once the user (and its auth_tokens) cascade away, so remove them first (by the tokens' links).
+        await db.$executeRaw`
+          DELETE FROM work_rows WHERE id IN (
+            SELECT t.email_work_row_id FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE u.email = ANY(${[...emails]}) AND t.email_work_row_id IS NOT NULL)`;
+        await db.user.deleteMany({ where: { email: { in: [...emails] } } });
+      }
       await shards.A.primary.$disconnect();
       await shards.B.primary.$disconnect();
     },

@@ -45,8 +45,16 @@ export function createAuthSchemas(config: AuthConfig, blocklist: PasswordBlockli
       }
     });
 
+  // The longest link token we could have sent is 43 characters. A longer value is not one of ours, and the service answers any value that is not
+  // exactly ours like an unknown token, so this only bounds the request size (same as the invite token, ADR 0015).
+  const linkToken = z.string().trim().min(1).max(200);
+
   return {
     register: z.strictObject({ name, email, password: newPassword }),
+    // Magic link and password reset (ADR 0020). A reset's new password follows the full signup policy.
+    recoveryRequest: z.strictObject({ email }),
+    magicRedeem: z.strictObject({ token: linkToken }),
+    resetSubmit: z.strictObject({ token: linkToken, password: newPassword }),
     login: z.strictObject({ email, password: existingPassword }),
     // The exact shape of a token we issue (32 bytes, base64url), so junk never reaches the database.
     refresh: z.strictObject({ refreshToken: z.string().regex(REFRESH_TOKEN_PATTERN) }),

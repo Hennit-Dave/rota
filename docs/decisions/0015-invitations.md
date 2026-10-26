@@ -35,7 +35,7 @@ email must go out without the request calling Resend.
 4. **Accept verifies and clears nothing (decision A).** `security.md` said redeeming an email-bound invite for an unverified account clears its password and revokes
    its sessions. Accepting already requires a signed-in session of the matching account, so there is nobody to evict, and signup verification is deferred, so every
    account is unverified: the rule would wipe every accepter's password. **Amends `security.md`:** invite acceptance marks the address verified and does nothing else.
-   The clearing rule stays for magic link and reset (2b). **Accepted gap:** an address someone pre-registered blocks the real person until reset exists.
+   The clearing rule stays for magic link and reset (2b). **Accepted gap:** an address someone pre-registered blocks the real person until reset exists. *(Closed by slice 2b, ADR 0020: a magic link or a reset takes the account over.)*
 5. **Expiry: 7 days from create or resend (decision B).** Reasons: staff may read email only every few days and a weekly rota is the natural rhythm, so under 24 hours
    would often expire over a weekend; but it is a token that grants team access, tied to one address, so it should not live for weeks. It is config
    (`INVITE_EXPIRY_DAYS`), not a measurement. The email prints it in the team's time zone.

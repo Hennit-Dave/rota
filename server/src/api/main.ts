@@ -9,8 +9,11 @@ import { createProducerConnection, recycleIfStale } from '../jobs/connection.js'
 import { loadSenderConfig } from '../jobs/mail.js';
 import { closeProducerQueue, enqueueCommittedRow, getProducerQueue } from '../jobs/queue.js';
 import type { InviteDeps } from '../invites/service.js';
+import type { ShardId } from '../db/shard.js';
+import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
 import { sanitizeError } from '../jobs/redact.js';
 import { createRateLimiter } from '../ratelimit/limiter.js';
+import { createTaskTracker } from '../auth/tasks.js';
 import { createApp } from './app.js';
 
 // Local-development default only; a host injects its own PORT.
@@ -95,9 +98,29 @@ const invites: InviteDeps = {
   },
 };
 
+// Magic link and password reset (ADR 0020): the token and its email row commit together on shard A, then the job is enqueued (it never throws).
+// The token and email row of a reset or magic-link request are made after the answer is sent (ADR 0020); shutdown waits for them.
+const recoveryTasks = createTaskTracker((err) => logger.error('recovery_task_failed', { reason: sanitizeError(err) }));
+const recovery = {
+  db: identityDb(shards),
+  tasks: recoveryTasks,
+  tokens,
+  passwords,
+  limiter,
+  config,
+  blocklist,
+  recovery: {
+    mail,
+    enqueue: async (prisma: PrismaClient, row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>, shard: ShardId) => {
+      await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
+    },
+  },
+};
+
 const app = createApp({
   logger,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
+  recovery,
   teams: { shards, tokens, limiter, config, invites },
   invitations: { shards, tokens, limiter, config, invites },
 });
@@ -111,6 +134,7 @@ async function shutdown(signal: NodeJS.Signals) {
   console.log(`api received ${signal}, closing`);
   server.closeIdleConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await recoveryTasks.drain();
   redis.disconnect();
   await closeProducerQueue();
   await shards.A.primary.$disconnect();
