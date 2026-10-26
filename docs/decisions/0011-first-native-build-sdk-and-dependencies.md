@@ -8,8 +8,9 @@
 
 ## Problem
 
-EAS development builds are limited (Free plan: 15 Android builds a month, low-priority queue, 0 used this period; the quota resets
-about 31 October). `expo-builds.md` requires the whole app's native dependencies to be settled and recorded **before** the first
+EAS development builds are limited (Free plan: 15 Android builds a month, low-priority queue; "0 used this period" was true when this
+was written, and the quota resets about 31 October. **Correction, 2026-10-26, from Dave:** the first EAS development build, `ab0e1830`,
+then passed on 2026-10-22, so Expo already holds the app's Android keystore). `expo-builds.md` requires the whole app's native dependencies to be settled and recorded **before** the first
 build, so no feature slice forces a rebuild. The test device is an emulator with a **16 KB memory page size** (Pixel 10a, Android 17,
 API 37, arm64), so every native library has to load under 16 KB pages.
 
@@ -196,7 +197,11 @@ Checked against Expo's documentation and Google's adaptive-icon guidance on 2026
 Not verified: how Android 12 and later crop the splash mark to a circle. Keep the mark inside the central two-thirds of the canvas to be safe.
 The monochrome layer for Android 13+ themed icons is configured (`android.adaptiveIcon.monochromeImage`).
 
-## Before the first EAS build (still open)
+## Before the first EAS build (done 2026-10-22; correction 2026-10-26)
+
+The first EAS development build, `ab0e1830`, passed on 2026-10-22 (reported by Dave). The list below is what had to be true before it; item 2 is
+done. **The 16 KB check was run on the EAS build's APK** and printed `16 KB RESULT: PASS, 0/64 misaligned` (reported by Dave, 2026-10-22; the output
+is not stored in the repo). So the line above, "the EAS build output itself is checked the same way", is now done and no longer pending.
 
 1. **Final art** (Dave designed it in Figma): the five images above, in place since 2026-10-22. Icons are compiled in, so the art lands before the build.
 2. **The build itself**, after this PR merges and the art is in: `eas build --profile development --platform android`. Then run
