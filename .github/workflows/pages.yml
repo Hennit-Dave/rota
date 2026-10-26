@@ -1,0 +1,51 @@
+# Publishes site/ (App Links file and the landing page for links) to GitHub Pages, served at rota.davebuilds.design (ADR 0019).
+# Free: Pages on a public repo, and standard runners in a public repo, cost nothing. Runs only when site/ changes.
+name: Publish link host
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fails the deploy if .well-known/assetlinks.json is missing or malformed: without it Android cannot verify the links.
+      - name: Check the site (assetlinks.json must exist)
+        run: |
+          test -f site/.well-known/assetlinks.json || { echo "::error::site/.well-known/assetlinks.json is missing"; exit 1; }
+          node --test site/site.test.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+          # Without this, upload-pages-artifact leaves out .well-known (a dot-directory) and the deploy "succeeds" without it.
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

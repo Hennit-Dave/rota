@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "design.davebuilds.rota",
+      "sha256_cert_fingerprints": [
+        "72:BB:1D:01:1D:1F:C0:38:17:CA:D0:86:D9:20:BB:A3:EF:60:11:D1:72:EF:37:4D:CB:14:D0:2C:59:35:98:3D"
+      ]
+    }
+  }
+]

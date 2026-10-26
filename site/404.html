@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Open this link in Rota</title>
+<!--
+  Served for every path that has no file, with HTTP status 404 (GitHub Pages cannot rewrite): /invite/..., /magic/...,
+  /reset/..., /checkout/... when the app is not installed or does not take the link. ADR 0019.
+  Static on purpose: no script, no analytics, nothing loaded from another site. Nothing here reads, shows or sends the URL,
+  because the path can carry a secret token. Everything is inline, so it renders the same at any path depth.
+-->
+<style>
+  :root { color-scheme: light dark; --paper:#f6f7f3; --card:#ffffff; --ink:#152e2b; --muted:#586d68; --line:#d7e0d9; --teal:#176b5b; --mint:#ddefe6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#101e1b; --card:#1a2d27; --ink:#eaf3ed; --muted:#afbfb6; --line:#40574d; --teal:#8ad6bc; --mint:#24483d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--paper); color: var(--ink);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { width: 100%; max-width: 28rem; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; }
+  .mark { display: inline-block; padding: 4px 12px; border-radius: 999px; background: var(--mint); color: var(--teal); font-weight: 700; letter-spacing: .02em; }
+  h1 { margin: 16px 0 8px; font-size: 1.5rem; line-height: 1.25; }
+  p { margin: 0 0 12px; color: var(--muted); }
+  p:last-child { margin-bottom: 0; }
+  strong { color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <span class="mark">Rota</span>
+  <h1>This link opens in the Rota app</h1>
+  <p><strong>On your Android phone with Rota installed:</strong> go back to the message and tap the link again. If it still opens here, copy the link and open it from your phone's browser address bar.</p>
+  <p><strong>Don't have Rota yet?</strong> Ask the person who sent you the link how to get the app, then tap the link again.</p>
+  <p>Opening this page does not use up the link.</p>
+</main>
+</body>
+</html>
