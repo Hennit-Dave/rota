@@ -43,6 +43,9 @@ export default function RootLayout() {
               <Stack.Protected guard={status === 'signedOut'}>
                 <Stack.Screen name="(auth)" />
               </Stack.Protected>
+              {/* An invite link opens here whether or not anyone is signed in (ADR 0017). Sign in and Create account open on top of it. */}
+              <Stack.Screen name="invite/[token]" />
+              <Stack.Screen name="invite/index" />
               {/* Development-only check screens, reachable from either side. */}
               <Stack.Screen name="dev-api" />
               <Stack.Screen name="dev-check" />

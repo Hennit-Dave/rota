@@ -12,6 +12,7 @@ import { AccountEpoch } from './auth/epoch';
 import { secureTokenStore } from './auth/secureTokenStore';
 import { createSignOutLocal } from './auth/signOut';
 import { useSessionStore } from './state/sessionStore';
+import { createInviteApi } from './invites/inviteApi';
 import { createTeamApi } from './teams/teamApi';
 
 /**
@@ -66,6 +67,11 @@ export function getApi() {
 /** The team routes over the one API client. Built on first use, like the client. */
 export function getTeamApi() {
   return createTeamApi(getApi());
+}
+
+/** The two invite-link routes (preview, accept) over the one API client. */
+export function getInviteApi() {
+  return createInviteApi(getApi());
 }
 
 export function getSessionActions() {

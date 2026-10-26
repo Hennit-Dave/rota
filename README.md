@@ -127,6 +127,9 @@ project). The first screen is the sign-in screen. After signing in, the placehol
 (`/dev-api`: it calls `GET /health` and says "The API answered: ok."), and from there a link to a check of every native module
 (`rota://dev-check`, also reachable directly by that link, signed in or not).
 
+**Open an invite link on the emulator** (until `rota.davebuilds.design` is hosted, issue #35, a tapped `https` link opens the browser, so the app is targeted directly; `-p` skips link verification):
+`adb shell am start -W -a android.intent.action.VIEW -d "rota://invite/<teamId>.<secret>" -p design.davebuilds.rota` (or the `https://rota.davebuilds.design/invite/...` form). Opening it consumes nothing; only the Accept button does. The link is in the invite email, or, for a proof with the worker off, in the email work row's payload on the **test** shards. Never paste a link into a PR or a log.
+
 **Android 17 and the local API.** A development build declares `ACCESS_LOCAL_NETWORK` (dev-client server discovery), and on Android 17 an
 address such as `10.0.2.2` counts as the local network. If the "nearby devices" prompt was declined, requests to the local API hang with no
 error. Allow it, or run `adb shell pm grant design.davebuilds.rota android.permission.ACCESS_LOCAL_NETWORK`. A release build does not declare it.

@@ -177,3 +177,7 @@ A stranger gets 404 so the response doesn't reveal whether the team exists. A St
 ## 2026-10-23 — Invites server slice (PR #36)
 
 The invitation and the task to send its email are saved in one transaction, so both are saved or neither is saved. If Resend sends the email but its reply gets lost, the worker retries with the same idempotency key to prevent a duplicate email within Resend's deduplication window. The database separately prevents the same person from having duplicate memberships in one team. If someone accepts an invite but loses the success response, their retry gets 200 again because the server sees that they already accepted it. Nothing new is created, and another person cannot use that accepted invite.
+
+## 2026-10-26 — Invites app slice (PR #40)
+
+The invite screen did not save the invitation token in app storage, it used the token from the link. This avoided leaving an extra saved copy of a sensitive token that could be exposed or accidentally reused later. I also learned that a screen can be hidden without being closed. An old invite screen stayed alive underneath Home and reacted when another invite link arrived. This taught me to check which screens are still listening for links, not just which screen is visible.

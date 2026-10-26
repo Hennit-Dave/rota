@@ -1,9 +1,10 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
 import { View } from 'react-native';
 import { describeAuthFailure, type AuthFailure, type FieldErrors, type FieldName } from '../../auth/authFailure';
 import { bannerCopy, fieldCopy, PASSWORD_HELPER_MIN, signupCopy } from '../../auth/copy';
 import { firstInvalidField, signupFieldOrder, validateSignup } from '../../auth/validation';
+import { inviteAuthParams, readInviteAuthParams, routeAfterAuth } from '../../invites/inviteAuthParams';
 import { getAuthActions } from '../../services';
 import { space } from '../../theme';
 import { Button } from '../../ui/Button';
@@ -25,8 +26,10 @@ type Failure = Exclude<AuthFailure, { kind: 'fields' | 'credentials' }>;
 export default function SignupScreen() {
   const online = useOnline();
   const focusSink = useFocusSink();
+  // Opened from an invitation: the invited address is filled in (editable), and there is no Create team step afterwards (ADR 0017).
+  const invite = readInviteAuthParams(useLocalSearchParams<{ inviteToken?: string; inviteEmail?: string }>());
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(invite.email);
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -56,8 +59,11 @@ export default function SignupScreen() {
     setFailure(null);
     try {
       await getAuthActions().register(name.trim(), email.trim(), password);
-      // The account exists and the user is signed in: on to the (placeholder) create-team step, then home.
-      router.replace('/create-team');
+      // The account exists and the user is signed in. From an invitation this ends back on that invitation (the person joins the invited
+      // team, so Create team is never shown, ADR 0017); otherwise on to the create-team step, then home.
+      const next = routeAfterAuth('signup', invite);
+      if (next.kind === 'invite') router.dismissTo({ pathname: '/invite/[token]', params: { token: next.token } });
+      else router.replace('/create-team');
     } catch (error) {
       setSubmitting(false);
       const result = describeAuthFailure('signup', error);
@@ -158,7 +164,7 @@ export default function SignupScreen() {
       </View>
       {banner}
       {emailInUse ? (
-        <TextAction label={signupCopy.logInInstead} disabled={submitting} onPress={() => router.replace('/login')} testID="signup-login-instead" />
+        <TextAction label={signupCopy.logInInstead} disabled={submitting} onPress={() => router.replace({ pathname: '/login', params: inviteAuthParams(invite) })} testID="signup-login-instead" />
       ) : null}
       <Button
         label={signupCopy.submit}
@@ -172,7 +178,7 @@ export default function SignupScreen() {
       {emailInUse ? null : (
         <View style={{ gap: space[8] }}>
           <Divider />
-          <TextAction label={signupCopy.haveAccount} disabled={submitting} onPress={() => router.replace('/login')} testID="signup-login" />
+          <TextAction label={signupCopy.haveAccount} disabled={submitting} onPress={() => router.replace({ pathname: '/login', params: inviteAuthParams(invite) })} testID="signup-login" />
         </View>
       )}
     </Screen>

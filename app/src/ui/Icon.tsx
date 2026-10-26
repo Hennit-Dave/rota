@@ -1,7 +1,7 @@
 import { SvgXml } from 'react-native-svg';
 import * as xml from './icons/figmaIcons';
 
-export type IconName = 'eye' | 'eyeOff' | 'chevronDown' | 'alert' | 'statusError' | 'statusWarning' | 'statusInfo' | 'spinner';
+export type IconName = 'eye' | 'eyeOff' | 'chevronDown' | 'alert' | 'statusError' | 'statusWarning' | 'statusInfo' | 'spinner' | 'check';
 
 const sources: Record<IconName, string> = {
   eye: xml.eyeXml,
@@ -12,6 +12,7 @@ const sources: Record<IconName, string> = {
   statusWarning: xml.statusWarningXml,
   statusInfo: xml.statusInfoXml,
   spinner: xml.spinnerXml,
+  check: xml.checkXml,
 };
 
 /** The Figma artwork at the size it was designed (each SVG carries its own width and height). Decorative: hidden from screen readers. */
