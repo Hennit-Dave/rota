@@ -169,6 +169,12 @@ export const createTeamCopy = {
   }, // not in Figma yet
 } as const;
 
+/** The Settings tab until the settings slice: the sign-out buttons the old placeholder Home held. */
+export const accountCopy = {
+  title: 'Settings',
+  placeholderNote: 'Placeholder screen. Settings arrive in a later slice.',
+} as const;
+
 export const homeCopy = {
   title: 'Home',
   signedInAs: (name: string) => `Signed in as ${name}`,

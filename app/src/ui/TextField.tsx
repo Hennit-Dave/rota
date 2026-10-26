@@ -1,7 +1,7 @@
 import { useState, type ComponentRef, type Ref } from 'react';
 import { Pressable, TextInput, View, type TextInputProps } from 'react-native';
 import { radius, space, typography, useColors } from '../theme';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { Text } from './Text';
 
 /** What a screen holds to move focus to a field (Figma note 232:415: "focus is handled in code"). */
@@ -28,6 +28,8 @@ interface Props
   helper?: string;
   /** A password field: hidden by default, with the show/hide control from Figma (Icon/Eye, Icon/Eye off). */
   secure?: boolean;
+  /** A decorative icon at the end of the field (Figma: the calendar and clock of the date and time fields). The field still takes typed text. */
+  trailingIcon?: IconName;
   disabled?: boolean;
   inputRef?: Ref<TextFieldHandle>;
 }
@@ -37,7 +39,7 @@ interface Props
  * (danger border and an alert row), disabled (45%). The field never blocks paste and sets the autofill hints, so
  * password managers work (NIST SP 800-63B-4 3.1.1.2, ADR 0005).
  */
-export function TextField({ label, error, helper, secure = false, disabled = false, inputRef, ...input }: Props) {
+export function TextField({ label, error, helper, secure = false, trailingIcon, disabled = false, inputRef, ...input }: Props) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -83,6 +85,10 @@ export function TextField({ label, error, helper, secure = false, disabled = fal
           >
             <Icon name={revealed ? 'eyeOff' : 'eye'} size={24} />
           </Pressable>
+        ) : trailingIcon ? (
+          <View style={{ marginLeft: space[4] }}>
+            <Icon name={trailingIcon} size={24} color={colors.text} />
+          </View>
         ) : null}
       </View>
       {error ? (

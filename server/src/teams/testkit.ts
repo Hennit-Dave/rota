@@ -83,6 +83,8 @@ export interface TeamsTestApp {
   shardsHoldingTeam(teamId: string): Promise<ShardId[]>;
   post(path: string, body?: unknown, headers?: Record<string, string>): Promise<Reply>;
   get(path: string, headers?: Record<string, string>): Promise<Reply>;
+  patch(path: string, body?: unknown, headers?: Record<string, string>): Promise<Reply>;
+  del(path: string, headers?: Record<string, string>): Promise<Reply>;
   stop(): Promise<void>;
 }
 
@@ -268,6 +270,8 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     },
     post: (path, body, headers) => call('POST', path, body ?? {}, headers),
     get: (path, headers) => call('GET', path, undefined, headers),
+    patch: (path, body, headers) => call('PATCH', path, body ?? {}, headers),
+    del: (path, headers) => call('DELETE', path, undefined, headers),
     async stop() {
       await new Promise<void>((r) => harness.server.close(() => r()));
       await new Promise<void>((r) => production.server.close(() => r()));

@@ -5,7 +5,7 @@ completed in later slices; sections below are added by the slice that builds the
 
 | # | Threat | Status |
 |---|---|---|
-| 1 | Staff calling Manager-only endpoints directly | Written below (Teams and roles). The brief's delete-shift test comes with the shifts slice |
+| 1 | Staff calling Manager-only endpoints directly | Written below (Teams and roles); the brief's delete-shift test is in `shifts.integration.test.ts` (slice C1) |
 | 2 | Reading another team's data by changing an ID | Written below (Teams and roles) |
 | 3 | A stolen access token | Written below (PR A) |
 | 4 | A stolen refresh token, and reuse | Written below (PR A) |
@@ -22,8 +22,10 @@ against a hand-written copy. Anything not in the table is refused. Rows without 
 | Action | Owner | Manager | Staff | Route today |
 |---|---|---|---|---|
 | `team.view`, `members.list` | yes | yes | yes | `GET /teams/:teamId`, `GET /teams/:teamId/members` |
-| `shifts.view`, `swaps.request`, `preferences.edit` (own) | yes | yes | yes | later |
-| `shifts.edit`, `swaps.approve` | yes | yes | no | later |
+| `shifts.view` | yes | yes | yes | `GET /teams/:teamId/shifts`, `GET /teams/:teamId/shifts/:shiftId` |
+| `shifts.edit` | yes | yes | no | `POST /teams/:teamId/shifts`, `PATCH` and `DELETE /teams/:teamId/shifts/:shiftId` |
+| `swaps.request`, `preferences.edit` (own) | yes | yes | yes | later |
+| `swaps.approve` | yes | yes | no | later |
 | `invite.staff` | yes | yes | no | later |
 | `invite.manager` | yes | no | no | later |
 | `billing.manage` | yes | no | no | later |
@@ -40,10 +42,9 @@ Nobody is invited as Owner, and the database allows only one Owner per team (par
   applies to the very next request.
 - A member whose role may not do the action gets `403 forbidden`; the real reason (`role_staff_cannot_shifts.edit`) is in the server log only.
 
-**What remains.** Only `team.view` and `members.list` have real routes so far, so the proof uses a route that exists only in the test harness.
-The brief's "Staff calls delete-shift and is rejected" test belongs to the shifts slice, which adds the endpoint on this same middleware.
+**The brief's test.** "Staff calls delete-shift and is rejected": `DELETE /teams/:teamId/shifts/:shiftId` with a Staff token answers `403 forbidden`, and the shift and its history row are still there afterwards (`shifts.integration.test.ts`, "THE BRIEF"). Staff may view the schedule but every write (create, edit, delete) is refused with nothing written. **What remains.** `swaps.approve`, `invite.*` beyond the invitation routes and `billing.manage` get their routes in later slices on the same middleware.
 
-**Proving tests.** `team-security.integration.test.ts`: "ROLE ENFORCEMENT" (Staff 403, Manager and Owner 200, Staff still allowed to view),
+**Proving tests.** `shifts.integration.test.ts`: "THE BRIEF", "a Staff member can view the schedule but cannot publish or change a shift", "ROLE FROM THE SERVER" (a demoted Manager is refused on the next request with the same token). `team-security.integration.test.ts`: "ROLE ENFORCEMENT" (Staff 403, Manager and Owner 200, Staff still allowed to view),
 "ROLE FROM THE SERVER, NOT THE TOKEN" (demote a Manager, the same token gets 403). `permissions.unit.test.ts`: the table. The test route is
 checked to be absent from the production app in `teams.integration.test.ts`.
 
@@ -60,11 +61,11 @@ checked to be absent from the production app in `teams.integration.test.ts`.
 - A removed member loses access on the next request (membership is read from the primary every time), even if the directory still lists them
   (ADR 0013: the directory is a hint, access never consults it).
 
-**What remains.** Team routes added later must use `requireTeamRole` and filter every query by `team_id`; a route that skips it is the risk.
+**What remains.** Team routes added later must use `requireTeamRole` and filter every query by `team_id`; a route that skips it is the risk. The shift routes follow it: a shift ID from another team is a 404 under my team's path, and the assignee of a shift must be a member of this team.
 
 **Proving tests.** `team-security.integration.test.ts`: "TEAM ISOLATION" (users from team X and team Y, **on different shards**, shown by SQL and the
 shard function: 404 on the team and its members, byte-identical to an unknown ID, in both directions), the Staff variant, and "a removed member
-loses access on the next request". Mutation-checked: making the middleware answer 403 for a stranger, or skipping the role check, fails them.
+loses access on the next request". `shifts.integration.test.ts`: the same isolation for the shift routes (a member of team X gets the same 404 on list, create, update and delete for team Y as for an unknown team, across shards) and "a shift ID from ANOTHER team is not found under MY team's path". Mutation-checked (shift delete without the `team_id` scope fails them): making the middleware answer 403 for a stranger, or skipping the role check, fails them.
 
 ## Threat 8 (invite tokens): theft or reuse of an invitation link
 

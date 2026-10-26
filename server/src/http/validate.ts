@@ -77,7 +77,17 @@ export function toErrorDetails(error: z.ZodError, scope?: string): ErrorDetail[]
 }
 
 // Codes our own schemas may attach through `ctx.addIssue({ code: 'custom', params: { rota: ... } })`.
-const CUSTOM_CODES: ReadonlySet<string> = new Set(['too_short', 'too_long', 'password_common']);
+const CUSTOM_CODES: ReadonlySet<string> = new Set([
+  'too_short',
+  'too_long',
+  'password_common',
+  // Shifts (ADR 0021)
+  'must_be_after_start',
+  'break_too_long',
+  'range_too_long',
+  'not_a_member',
+  'nothing_to_change',
+]);
 
 const NOTHING = z.strictObject({});
 
