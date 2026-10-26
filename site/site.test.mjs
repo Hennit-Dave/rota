@@ -41,8 +41,13 @@ for (const page of ['404.html', 'index.html']) {
   });
 }
 
-test('the workflow keeps dot-directories in the artifact, or .well-known would silently vanish', () => {
+test('the workflow publishes .well-known: a version whose include-hidden-files input exists, staged without the test file, and verified live', () => {
   const workflow = readFileSync(new URL('../.github/workflows/pages.yml', import.meta.url), 'utf8');
+  // The input was added in v5.0.0. Version 4 ignores it with only a warning and drops .well-known, which happened on the first deploy.
+  const major = Number(workflow.match(/actions\/upload-pages-artifact@v(\d+)/)?.[1]);
+  assert.ok(major >= 5, `upload-pages-artifact must be v5 or later, found v${major}`);
   assert.match(workflow, /include-hidden-files:\s*true/);
+  assert.match(workflow, /rm _site\/site\.test\.mjs/, 'the test file is not published');
   assert.match(workflow, /node --test site\/site\.test\.mjs/, 'the deploy runs these checks first');
+  assert.match(workflow, /Verify the deployed assetlinks\.json/, 'what was published is checked after the deploy');
 });
