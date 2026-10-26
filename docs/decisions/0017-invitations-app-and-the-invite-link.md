@@ -74,7 +74,7 @@ approves separately) are issue #37.
     `Button` gained the red `danger` variant and its loading look now follows Figma whatever the variant.
 19. **Revoke asks first and the route carries only an ID.** The confirmation (Figma 292:988) reads the address from the server's list, so a stale or unknown ID says "This invitation is no longer pending" and
     refreshes the list, instead of acting on a guess. A 403 and a 404 are told apart in words ("not allowed" and "no longer pending").
-20. **The directory previews one invitation.** The Invitations block shows the oldest pending invitation (the design shows one) and "Manage invitations" has the whole list. **Dave to confirm the "one"**: it is a
+20. **The directory previews one invitation.** The Invitations block shows the oldest pending invitation (the design shows one) and "Manage invitations" has the whole list. **Confirmed by Dave (2026-10-26)**: it is a
     layout choice, not a rule, and the server sends them oldest first.
 21. **Every state ends**, as on the Team screen: loading (skeletons), empty ("No pending invitations" with an Invite button), error with Try again (including the permission answer failing), not allowed, and a
     list already on screen staying on screen if a refresh fails (`pendingListStatus`, tested).
