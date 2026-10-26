@@ -4,6 +4,7 @@ import {
   createWorkerConnection,
   verifyNoEviction,
 } from '../jobs/connection.js';
+import { createConsumer, startConsumerWatchdog } from '../jobs/consumer.js';
 import { createWorkQueue, resolveQueueName } from '../jobs/queue.js';
 import { startReconciler } from '../jobs/reconcile.js';
 import {
@@ -15,6 +16,8 @@ import { createEmailHandler } from '../jobs/email.js';
 import { loadResendConfig } from '../jobs/mail.js';
 import { createResendClient } from '../jobs/resend.js';
 import { createWorkWorker } from '../jobs/worker.js';
+import type { Worker } from 'bullmq';
+import type { Redis } from 'ioredis';
 
 console.log('worker starting...');
 
@@ -47,7 +50,35 @@ const handlers = {
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
 };
 
-const worker = createWorkWorker(shards, handlers, { connection: redis });
+// Every worker that gets built, including one rebuilt by the watchdog below, gets the same handlers.
+function attach(worker: Worker) {
+  worker.on('ready', () => {
+    console.log('worker running');
+  });
+
+  worker.on('error', (err) => {
+    console.error(formatWorkerError(err));
+  });
+
+  worker.on('failed', (job, err) => {
+    console.warn(formatJobFailedLog(job?.id, err));
+  });
+
+  worker.on('completed', (job) => {
+    console.log(`job ${job?.id} completed`);
+  });
+}
+
+const makeWorker = (connection: Redis) => createWorkWorker(shards, handlers, { connection });
+const firstWorker = makeWorker(redis);
+attach(firstWorker);
+
+// The consumer waits on Valkey with a blocking command, which a silently dead connection never answers, so the worker would sit idle
+// until restarted. The watchdog probes it and rebuilds the consumer when it goes silent (ADR 0018, issue #39).
+const watchdog = startConsumerWatchdog({
+  consumer: { worker: firstWorker, connection: redis },
+  rebuild: () => createConsumer({ makeWorker, attach }),
+});
 
 // Reconciliation sweep (jobs.md): its own bounded producer-style connection, so a hung Valkey cannot
 // hang the sweep. Runs at startup, every RECONCILE_INTERVAL_MS, and after a Valkey reconnect.
@@ -55,28 +86,14 @@ const reconcileConnection = createProducerConnection();
 const reconcileQueue = createWorkQueue(resolveQueueName(), reconcileConnection);
 const reconciler = startReconciler(shards, reconcileQueue, { reconnectSource: reconcileConnection });
 
-worker.on('ready', () => {
-  console.log('worker running');
-});
-
-worker.on('error', (err) => {
-  console.error(formatWorkerError(err));
-});
-
-worker.on('failed', (job, err) => {
-  console.warn(formatJobFailedLog(job?.id, err));
-});
-
-worker.on('completed', (job) => {
-  console.log(`job ${job?.id} completed`);
-});
-
 async function shutdown(signal: NodeJS.Signals) {
   console.log(`worker received ${signal}, closing`);
   await reconciler.stop();
+  await watchdog.stop();
+  const { worker, connection } = watchdog.current();
   await worker.close();
   await reconcileQueue.close();
-  await redis.quit();
+  await connection.quit();
   await shards.A.primary.$disconnect();
   await shards.B.primary.$disconnect();
   process.exit(0);

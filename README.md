@@ -78,7 +78,7 @@ cd server && npm run build && npm run start:api
 | Command | What it does |
 |---|---|
 | `npm test` | Unit tests only: no database, no network |
-| `npm run test:integration` | Needs the `TEST_*` variables in `.env`. Runs against the **test** shards and real Valkey, one file at a time. The fast integration tests |
+| `npm run test:integration` | Needs the `TEST_*` variables in `.env`. Runs against the **test** shards and real Valkey, one file at a time. The fast integration tests. `valkey-recovery.integration.test.ts` starts its **own disposable local Valkey** (never the shared one) and needs `valkey-server` on PATH, or `LOCAL_VALKEY_BIN` pointing at it (Homebrew: `/opt/homebrew/opt/valkey/bin/valkey-server`); without it the tests skip with a message |
 | `npm run test:integration:slow` | The concurrency and revocation-race tests (`*.slow.test.ts`). They hold database locks on purpose and take minutes against Neon |
 | `npm run test:all` | All three. **Run it before every PR** |
 

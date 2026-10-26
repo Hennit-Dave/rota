@@ -9,7 +9,7 @@ import {
   WORK_MAX_ATTEMPTS,
   WORK_MAX_RECOVERIES,
 } from './config.js';
-import { addWorkJob, formatJobId } from './queue.js';
+import { addWorkJob, formatJobId, recycleQueueConnection } from './queue.js';
 import { sanitizeError } from './redact.js';
 
 /**
@@ -373,6 +373,7 @@ export async function reconcileShard(
           console.warn(
             `[reconcile:valkey_error] trigger=${trigger} shard=${shard} row_id=${row.id} generation=${row.generation} action=lookup: ${sanitizeError(err)}`,
           );
+          await recycleQueueConnection(queue, err);
           throw new ValkeyPassError(sanitizeError(err));
         }
 
