@@ -185,3 +185,7 @@ The invite screen did not save the invitation token in app storage, it used the 
 ## 2026-10-26 — Valkey recovery after silent connection loss (PR #42)
 
 The Valkey connection stopped responding without clearly disconnecting, so login kept failing until the API restarted. I learned that "connected" does not always mean a connection is working. The fix detects when the connection stops responding and replaces it so the API can recover.
+
+## 2026-10-26 — Password reset and magic link (PR #45)
+
+Someone could register with your email and choose a password. When you open the magic link in your inbox, you prove you control that email. In Rota, for an unverified email, it then removes the previously set password and ends the existing sessions, so that person can't keep accessing the account. Removing both matters: deleting the password stops future password logins; ending sessions removes access they already had.
