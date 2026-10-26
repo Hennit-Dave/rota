@@ -164,6 +164,7 @@ The app-wide invite cap exists because Resend's free plan sends 100 emails per U
 
 - A blocked request is `429 rate_limited` with a `Retry-After` header, and never reaches password verification.
 - If Valkey is unreachable or rejects the write, these routes answer `503 service_unavailable` (fail closed).
+- **They work again on their own when Valkey is back, with no restart.** A connection that went silently dead (a laptop sleep, a NAT that forgot the mapping) is replaced after the first command timeout, so the limited routes answer 503 only while Valkey is really unreachable (ADR 0018, issue #39). An error reply such as `OOM` under `noeviction` is not a timeout and changes nothing: it still fails closed, and `noeviction` is never altered.
 - The IP is the TCP peer address. `X-Forwarded-For` is not trusted until the host's proxy setup is verified.
 - A set-but-invalid override (not a positive integer) stops the server from starting.
 

@@ -5,7 +5,7 @@ import { createTokenService } from '../auth/tokens.js';
 import { createShards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
-import { createProducerConnection } from '../jobs/connection.js';
+import { createProducerConnection, recycleIfStale } from '../jobs/connection.js';
 import { loadSenderConfig } from '../jobs/mail.js';
 import { closeProducerQueue, enqueueCommittedRow, getProducerQueue } from '../jobs/queue.js';
 import type { InviteDeps } from '../invites/service.js';
@@ -73,7 +73,17 @@ if (blocklist.size === 0) {
 }
 
 const tokens = createTokenService({ secret, config });
-const limiter = createRateLimiter(redis);
+// A connection that went half-open (laptop sleep, a NAT that forgot the mapping) never emits 'close' or 'error', so ioredis keeps
+// calling it ready while every command times out. A timeout on a ready connection replaces it (ADR 0018, issue #39). The request
+// that hit the timeout still answers 503; the next one finds a live connection.
+const limiter = createRateLimiter(redis, {
+  onUnavailable: (cause) => {
+    if (recycleIfStale(redis, cause)) {
+      valkeyDown = true; // so the 'ready' handler above logs the recovery
+      logger.warn('valkey_connection_recycled', { reason: 'no_reply_from_ready_connection' });
+    }
+  },
+});
 
 // Invitations: the email work row commits with the invitation, then this enqueues it. It never throws: a Valkey failure leaves the row eligible
 // for the sweep (jobs.md). The queue uses its own bounded producer connection.

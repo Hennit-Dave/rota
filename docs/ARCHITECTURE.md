@@ -31,7 +31,8 @@ The graduation task brief names Redis for background queueing, caching, and rate
 ### 2. Decoupled Producer and Consumer Connection Policies
 
 - **Producer (Enqueue path):** `ioredis` configured with `connectTimeout: 2000`, `commandTimeout: 2000`, `maxRetriesPerRequest: 1`, and `enableOfflineQueue: false`. Wrapped with a strict 2-second timeout boundary. If Valkey is unavailable or slow, the database work row remains committed as `pending` with `available_at = now()`, preventing API request threads from blocking.
-- **Consumer (Worker path):** `ioredis` configured with `maxRetriesPerRequest: null` for BullMQ blocking commands, with `lockDuration: 30000`, `stalledInterval: 15000`, and `maxStalledCount: 2`.
+- **Recovery from a half-open connection (ADR 0018, issue #39):** a connection that dies silently never emits `close`, so ioredis keeps calling it `ready` while every command times out. A timeout on a `ready` producer connection (the rate limiter, the API's queue producer and the reconciliation sweep's queue) replaces it with `disconnect(true)`. No new setting. A clean drop already reconnects by itself.
+- **Consumer (Worker path):** `ioredis` configured with `maxRetriesPerRequest: null` for BullMQ blocking commands, with `lockDuration: 30000`, `stalledInterval: 15000`, and `maxStalledCount: 2`. **Consumer recovery (ADR 0018, issue #39):** BullMQ's blocking command never fails on a half-open connection, so a watchdog (`jobs/consumer.ts`) sends a `PING` every `BULLMQ_STALLED_INTERVAL_MS` (2 s limit) and rebuilds the connection and the worker when it goes silent, or when a connection stays in the ioredis handshake for two probes. A rebuild never starts while another is running. Known limit: if only BullMQ's duplicated blocking connection dies, the probe is still answered and nothing is rebuilt.
 
 ### 3. Shard Routing for Queued Work
 

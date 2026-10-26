@@ -181,3 +181,7 @@ The invitation and the task to send its email are saved in one transaction, so b
 ## 2026-10-26 — Invites app slice (PR #40)
 
 The invite screen did not save the invitation token in app storage, it used the token from the link. This avoided leaving an extra saved copy of a sensitive token that could be exposed or accidentally reused later. I also learned that a screen can be hidden without being closed. An old invite screen stayed alive underneath Home and reacted when another invite link arrived. This taught me to check which screens are still listening for links, not just which screen is visible.
+
+## 2026-10-26 — Valkey recovery after silent connection loss (PR #42)
+
+The Valkey connection stopped responding without clearly disconnecting, so login kept failing until the API restarted. I learned that "connected" does not always mean a connection is working. The fix detects when the connection stops responding and replaces it so the API can recover.

@@ -6,7 +6,12 @@ import {
   PRODUCER_ENQUEUE_TIMEOUT_MS,
   WORK_BACKOFF_DELAY_MS,
 } from './config.js';
-import { createProducerConnection } from './connection.js';
+import {
+  createProducerConnection,
+  EnqueueTimeoutError,
+  recycleIfStale,
+  type RecyclableConnection,
+} from './connection.js';
 
 import { sanitizeError } from './redact.js';
 
@@ -31,18 +36,24 @@ export interface EnqueueOptions {
 let sharedProducerConnection: ReturnType<typeof createProducerConnection> | null = null;
 let sharedProducerQueue: Queue | null = null;
 
+// The connection each work queue was built with. BullMQ 6 keeps its client behind a backend abstraction, so the recovery
+// (recycleQueueConnection) looks the connection up here instead of reaching into the queue.
+const queueConnections = new WeakMap<Queue, RecyclableConnection>();
+
 export function createWorkQueue(
   queueName = resolveQueueName(),
   connection = createProducerConnection(),
 ): Queue {
   const resolved = resolveQueueName(queueName);
-  return new Queue(resolved, {
+  const queue = new Queue(resolved, {
     connection,
     defaultJobOptions: {
       removeOnComplete: false,
       removeOnFail: false,
     },
   });
+  queueConnections.set(queue, connection);
+  return queue;
 }
 
 /**
@@ -93,6 +104,17 @@ export function formatJobId(rowId: string, generation: number): string {
 }
 
 /**
+ * A timeout on a queue's connection means it may have gone half-open (issue #39, recycleIfStale). Replace it; the caller still
+ * handles the failure as before (the row stays eligible for the sweep). Never throws. A queue not built by createWorkQueue (a test
+ * double) has no recorded connection and is left alone.
+ */
+export async function recycleQueueConnection(queue: Queue, cause: unknown): Promise<void> {
+  if (recycleIfStale(queueConnections.get(queue), cause)) {
+    console.warn(`[valkey:recycle] queue=${queue.name} reason=no_reply_from_ready_connection`);
+  }
+}
+
+/**
  * Add the BullMQ job for an existing work row's current generation (jobs.md, Job IDs and Scheduling).
  * Shared by the producer and the reconciler so both use the same ID, delay rule and retry options.
  *
@@ -123,7 +145,7 @@ export async function addWorkJob(
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        reject(new Error(`Valkey enqueue timed out after ${PRODUCER_ENQUEUE_TIMEOUT_MS}ms`));
+        reject(new EnqueueTimeoutError(PRODUCER_ENQUEUE_TIMEOUT_MS));
       }, PRODUCER_ENQUEUE_TIMEOUT_MS);
       timer.unref?.();
     });
@@ -142,6 +164,9 @@ export async function addWorkJob(
     });
 
     await Promise.race([addPromise, timeoutPromise]);
+  } catch (err) {
+    await recycleQueueConnection(queue, err);
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }

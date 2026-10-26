@@ -76,6 +76,11 @@ export interface RateLimiterOptions {
   prefix?: string;
   /** Called with every key touched. Tests use it to delete exact keys; never a wildcard DEL. */
   onKey?: (key: string) => void;
+  /**
+   * Called with the cause just before the limiter reports Valkey unavailable. The API uses it to replace a connection that went
+   * half-open (recycleIfStale, issue #39). It must not throw and must not change the outcome: the request still fails closed.
+   */
+  onUnavailable?: (cause: unknown) => void;
 }
 
 export function rateLimitKey(prefix: string, name: string, subject: string): string {
@@ -84,6 +89,14 @@ export function rateLimitKey(prefix: string, name: string, subject: string): str
 
 export function createRateLimiter(redis: RedisLike, options: RateLimiterOptions = {}): RateLimiter {
   const prefix = options.prefix ?? 'rl:v1';
+  const unavailable = (cause: unknown) => {
+    try {
+      options.onUnavailable?.(cause);
+    } catch {
+      // A broken hook must never turn the fail-closed answer into something else.
+    }
+    return new RateLimiterUnavailableError(cause);
+  };
 
   return {
     async consume(rule) {
@@ -98,19 +111,19 @@ export function createRateLimiter(redis: RedisLike, options: RateLimiterOptions 
         pipe.pttl(key);
         results = await pipe.exec();
       } catch (err) {
-        throw new RateLimiterUnavailableError(err);
+        throw unavailable(err);
       }
       if (!results || results.length !== 3) {
-        throw new RateLimiterUnavailableError('empty pipeline result');
+        throw unavailable('empty pipeline result');
       }
       for (const [err] of results) {
-        if (err) throw new RateLimiterUnavailableError(err);
+        if (err) throw unavailable(err);
       }
 
       const count = Number(results[1]![1]);
       let pttl = Number(results[2]![1]);
       if (!Number.isFinite(count) || !Number.isFinite(pttl)) {
-        throw new RateLimiterUnavailableError('unexpected reply');
+        throw unavailable('unexpected reply');
       }
       if (pttl < 0) {
         // -1: the key has no TTL (should not happen). -2: it expired between commands. Either way, make
@@ -118,7 +131,7 @@ export function createRateLimiter(redis: RedisLike, options: RateLimiterOptions 
         try {
           await redis.expire(key, rule.windowSeconds);
         } catch (err) {
-          throw new RateLimiterUnavailableError(err);
+          throw unavailable(err);
         }
         pttl = rule.windowSeconds * 1000;
       }
