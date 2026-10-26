@@ -31,10 +31,18 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
-      - uses: actions/upload-pages-artifact@v4
+      # Stage what gets published, so the test file is not served. `cp -a site/. _site/` keeps .well-known.
+      - name: Stage the site
+        run: |
+          mkdir _site
+          cp -a site/. _site/
+          rm _site/site.test.mjs
+
+      # v5 or later: the include-hidden-files input does not exist in v4, which ignores it with only a warning and drops
+      # .well-known (a dot-directory) while the deploy still "succeeds". That is what happened on the first deploy.
+      - uses: actions/upload-pages-artifact@v5
         with:
-          path: site
-          # Without this, upload-pages-artifact leaves out .well-known (a dot-directory) and the deploy "succeeds" without it.
+          path: _site
           include-hidden-files: true
 
   deploy:
@@ -49,3 +57,23 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      # What was actually published, not what the workflow meant to publish: the file must be served as JSON with no redirect
+      # (Android does not follow redirects when it verifies App Links). A few tries, because a new deploy takes a moment to appear.
+      - name: Verify the deployed assetlinks.json
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          url="${BASE_URL%/}/.well-known/assetlinks.json"
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o body.json -D headers.txt -w '%{http_code}' --max-redirs 0 "$url" || true)
+            type=$(grep -i '^content-type:' headers.txt | head -n1 | tr -d '\r' | tr 'A-Z' 'a-z')
+            if [ "$code" = "200" ] && echo "$type" | grep -q 'application/json' && grep -q '"android_app"' body.json; then
+              echo "OK: $url answered 200 ($type)"
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code, $type"
+            sleep 10
+          done
+          echo "::error::$url is not served as application/json with a 200 and no redirect"
+          exit 1
