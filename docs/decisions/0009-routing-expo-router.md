@@ -38,6 +38,7 @@ Expo Router (`expo-router` ~58.0.25). Android only. Routes live in `app/src/app/
 - **Verification is not live yet.** Android verifies App Links against `https://rota.davebuilds.design/.well-known/assetlinks.json`,
   which is hosted in a later slice (it needs the signing certificate's fingerprint, known only after the first EAS build).
   Until then the https links open in the browser and the `rota://` scheme works.
+  **Update 2026-10-26:** the host is GitHub Pages, with the EAS keystore's fingerprint (ADR 0019).
 - **DNS check (Dave, 2026-10-21):** nothing sits directly on `rota.davebuilds.design`. The existing records are `send.rota` and
   `rsend.rota` (Resend, CNAME) and `_dmarc.rota` (TXT), on Cloudflare (free plan). Serving a page or file at the apex of
   `rota.davebuilds.design` needs a new record there, and it must not disturb the Resend records.

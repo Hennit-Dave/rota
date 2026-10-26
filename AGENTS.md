@@ -172,6 +172,7 @@ app/                 Expo app (+ app/AGENTS.md)       server/        Express API
 docs/                ARCHITECTURE, STATE, SECURITY, SHARDING, decisions/, outreach-feature-map.md
 docs/requirements/   ROTA-BUILD-PROMPT.md
 load-tests/          k6 scripts + written report       .agents/       rules/ and skills/ (canonical)
+site/                App Links file + landing page     .github/       PR template, Pages workflow (ADR 0019)
 .claude/skills/      symlinks to .agents/skills/       root           README, LEARNING-LOG, .env.example, LICENSE
 ```
 

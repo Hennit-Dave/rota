@@ -63,7 +63,7 @@ email through Resend (never the request). Both processes refuse to start without
 and `MAIL_REPLY_TO` (`rota@davebuilds.design`) for the API, and `RESEND_API_KEY` (a secret, worker only) for the worker. Names are in `.env.example`.
 Optional: `INVITE_EXPIRY_DAYS` (7), `INVITE_GLOBAL_DAILY_CAP` (50 invite emails per UTC day: Resend's free plan sends 100 a day in total),
 `INVITE_LINK_BASE_URL` (`https://rota.davebuilds.design`). Tests use a fake Resend and never send real mail. Decisions: `docs/decisions/0015-invitations.md`,
-`docs/decisions/0016-email-sending-job.md`. The link only opens the app once `rota.davebuilds.design` is hosted (issue #35).
+`docs/decisions/0016-email-sending-job.md`. The link only opens the app once `rota.davebuilds.design` is live on GitHub Pages and Android has verified it (issue #35, ADR 0019).
 
 ### Authentication (server only; needs `AUTH_JWT_SECRET`, `VALKEY_URL` and the shard URLs in `.env`)
 
@@ -81,6 +81,7 @@ cd server && npm run build && npm run start:api
 | `npm run test:integration` | Needs the `TEST_*` variables in `.env`. Runs against the **test** shards and real Valkey, one file at a time. The fast integration tests. `valkey-recovery.integration.test.ts` starts its **own disposable local Valkey** (never the shared one) and needs `valkey-server` on PATH, or `LOCAL_VALKEY_BIN` pointing at it (Homebrew: `/opt/homebrew/opt/valkey/bin/valkey-server`); without it the tests skip with a message |
 | `npm run test:integration:slow` | The concurrency and revocation-race tests (`*.slow.test.ts`). They hold database locks on purpose and take minutes against Neon |
 | `npm run test:all` | All three. **Run it before every PR** |
+| `node --test site/site.test.mjs` (from the repo root) | Checks the link host files in `site/` (ADR 0019): `assetlinks.json` is present and matches the app, the pages stay static. The Pages workflow runs it before every deploy |
 
 Try it (default port 3000). This writes to the database in `SHARD_A_DATABASE_URL`, which is the real shard A, so use an address you are happy to leave there:
 
@@ -127,7 +128,7 @@ project). The first screen is the sign-in screen. After signing in, the placehol
 (`/dev-api`: it calls `GET /health` and says "The API answered: ok."), and from there a link to a check of every native module
 (`rota://dev-check`, also reachable directly by that link, signed in or not).
 
-**Open an invite link on the emulator** (until `rota.davebuilds.design` is hosted, issue #35, a tapped `https` link opens the browser, so the app is targeted directly; `-p` skips link verification):
+**Open an invite link on the emulator** (until `rota.davebuilds.design` is live and verified, issue #35, a tapped `https` link opens the browser, so the app is targeted directly; `-p` skips link verification):
 `adb shell am start -W -a android.intent.action.VIEW -d "rota://invite/<teamId>.<secret>" -p design.davebuilds.rota` (or the `https://rota.davebuilds.design/invite/...` form). Opening it consumes nothing; only the Accept button does. The link is in the invite email, or, for a proof with the worker off, in the email work row's payload on the **test** shards. Never paste a link into a PR or a log.
 
 **Android 17 and the local API.** A development build declares `ACCESS_LOCAL_NETWORK` (dev-client server discovery), and on Android 17 an
