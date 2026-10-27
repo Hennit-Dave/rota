@@ -197,3 +197,7 @@ I learned that checking for overlapping shifts separately from saving leaves a g
 ## 2026-10-27 — Activity feed (PR #49)
 
 I learned that cursor pagination keeps my place in a feed by using the last row's timestamp and ID instead of counting how many rows to skip. New rows can arrive at the top without making the next page repeat earlier rows. The ID acts as a tiebreaker when two rows have the same timestamp.
+
+## 2026-10-27 — Shift swaps (PR #50)
+
+I learned that idempotency means retrying the same action does not create extra results. For a swap request, the app reuses the same key so a lost response does not cause a second request for the manager. The database's unique rule prevents duplicates even when retries arrive at the same time.
