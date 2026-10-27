@@ -80,6 +80,8 @@ shifts; everyone in the team can read them; one person cannot be booked twice at
 `20261026160000_add_shifts_and_activity`): run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard.
 Optional: `SHIFTS_MAX_RANGE_DAYS` (42). The app's home is now the Schedule, with a bottom bar (Schedule, Team, Settings).
 
+**Activity feed** (slice C2, ADR 0022): `GET /teams/:teamId/activity?limit&cursor` returns what happened to the team's shifts, newest first, a page at a time by cursor (20 rows by default, 50 at most), limited to 120 requests a minute per user, and answering `503` when Valkey is down. New migration `20261027120000_add_activity_feed_index`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Optional: `ACTIVITY_PAGE_DEFAULT`, `ACTIVITY_PAGE_MAX`, `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS`. `npm run db:feed-proof -- seed | explain | clean` (test shards only) seeds 10,000 feed rows and prints the query plan. In the app, "View activity" on the Schedule opens it.
+
 ```sh
 openssl rand -base64 32   # copy the output into AUTH_JWT_SECRET in the root .env (at least 32 bytes once decoded)
 cd server && npm run build && npm run start:api

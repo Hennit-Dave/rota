@@ -293,5 +293,7 @@ model Activity {
 
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
+  // The feed's index (ADR 0022): filter by team, newest first, `id` as the tiebreak. Added AFTER the before-plan was recorded.
+  @@index([teamId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("activity")
 }

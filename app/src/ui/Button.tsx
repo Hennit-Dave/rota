@@ -1,8 +1,6 @@
-import { useEffect } from 'react';
 import { Pressable, View } from 'react-native';
-import Animated, { Easing, cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { radius, space, useColors } from '../theme';
-import { Icon } from './Icon';
+import { Spinner } from './Spinner';
 import { Text } from './Text';
 import { useReduceMotion } from './useReduceMotion';
 
@@ -16,20 +14,6 @@ interface Props {
   /** Figma "Disabled": only while loading or offline. */
   disabled?: boolean;
   testID?: string;
-}
-
-function Spinner() {
-  const rotation = useSharedValue(0);
-  useEffect(() => {
-    rotation.value = withRepeat(withTiming(360, { duration: 900, easing: Easing.linear }), -1, false);
-    return () => cancelAnimation(rotation);
-  }, [rotation]);
-  const style = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }] }));
-  return (
-    <Animated.View style={style}>
-      <Icon name="spinner" size={20} />
-    </Animated.View>
-  );
 }
 
 /** Rota Button (Figma 5:12): Primary, Secondary, Disabled and Loading, plus the white outlined "Secondary action" of the team screens (Figma 8:202, "Invite a teammate") and the red "Destructive" (5:6: Revoke). Disabled always uses the faint mint look (Figma 292:804). 52 px tall at default text size, and it grows with the font. */

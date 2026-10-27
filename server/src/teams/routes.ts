@@ -9,6 +9,7 @@ import { recordRouteBase, type Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createTeamInvitationsRouter } from '../invites/routes.js';
+import { createActivityRouter } from '../activity/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
 import type { InviteDeps } from '../invites/service.js';
 import { createRequireTeamRole } from './middleware.js';
@@ -91,6 +92,7 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
   router.use('/:teamId/invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   // Shifts (ADR 0021). They carry the router's body parser, log base and no-store through `router.use` above.
   router.use('/:teamId/shifts', createShiftsRouter({ shards, tokens }));
+  router.use('/:teamId/activity', createActivityRouter({ shards, tokens, limiter, logger, config }));
 
   return router;
 }

@@ -192,7 +192,7 @@ from `.env.example` (names only); the server scripts read it.
 
 App commands run from `app/` (see `app/AGENTS.md`): `npm ci`, `npm run typecheck`, `npm test`, `npx expo-doctor`.
 
-**Pending until a slice creates them.** Don't invent scripts: migrate, seed, lint, load test.
+**Pending until a slice creates them.** Don't invent scripts: lint, load test. (`npm run db:feed-proof -- seed|explain|clean` exists: test shards only, see the README.)
 
 The Android development build (`eas build`, profile pending) **needs a new native build. Warn first.**
 

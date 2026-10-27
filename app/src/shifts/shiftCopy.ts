@@ -31,7 +31,7 @@ export const scheduleCopy = {
   assignedTo: (name: string) => `Assigned to ${name}`, // not in Figma yet
   scheduled: 'Scheduled', // 7:31
   createShift: 'Create shift', // 102:2684 (Owner and Manager)
-  viewActivity: 'View activity', // 7:37; the feed arrives with the next slice, so the button is drawn but disabled until then
+  viewActivity: 'View activity', // 7:37
   greeting: (hello: string, name: string) => `${hello}, ${name}`, // 7:11
   subtitleManager: (date: string, count: number, today: boolean) => `${date} · ${count === 0 ? 'no shifts' : `${count} ${count === 1 ? 'shift' : 'shifts'}`}${today && count > 0 ? ' today' : ''}`, // 7:12
   subtitleStaff: (date: string, count: number) => `${date} · ${count === 0 ? 'no shifts for you' : `your ${count} ${count === 1 ? 'shift' : 'shifts'}`}`, // 102:283
