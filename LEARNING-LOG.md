@@ -193,3 +193,7 @@ Someone could register with your email and choose a password. When you open the 
 ## 2026-10-27 — Shifts and calendar (PR #47)
 
 I learned that checking for overlapping shifts separately from saving leaves a gap where two managers could both see the same person as available. The overlap check and save need to happen in one transaction, with protection against simultaneous bookings, so both conflicting bookings cannot succeed. A transaction alone is not enough unless the database also makes those competing operations wait or rejects one.
+
+## 2026-10-27 — Activity feed (PR #49)
+
+I learned that cursor pagination keeps my place in a feed by using the last row's timestamp and ID instead of counting how many rows to skip. New rows can arrive at the top without making the next page repeat earlier rows. The ID acts as a tiebreaker when two rows have the same timestamp.
