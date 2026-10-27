@@ -169,8 +169,8 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
 - **Limited:** signup, login, magic-link request and redemption, refresh, reset request, reset-token submission, invite creation and
   acceptance, payment initiation, and the activity feed (expensive at 200 concurrent users).
 - **When Valkey is unreachable or rejects a write** (possible under `noeviction`): everything above fails
-  closed with 503. **Proposed, pending Dave's approval:** the feed fails open instead, logged and alerted,
-  so a cache outage doesn't take reads down. Until approved, the feed fails closed too.
+  closed with 503, **including the feed** (Dave decided on 2026-10-26, issue #11, ADR 0022: failing open would
+  leave the most expensive read unprotected exactly when the limiter is gone, and no alerting exists yet).
 - Don't trust `X-Forwarded-For` until the host's proxy setup is verified.
 
 ## Secrets

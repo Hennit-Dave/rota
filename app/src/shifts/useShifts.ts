@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { activityKey } from '../activity/activityResponses';
 import { getShiftApi } from '../services';
 import type { ShiftInput } from './shiftApi';
 import { shiftKey, shiftsPrefix, shiftsRangeKey, type Shift } from './shiftResponses';
@@ -51,7 +52,10 @@ export function useShift(userId: string | undefined, teamId: string | null, shif
 export function useShiftMutations(userId: string | undefined, teamId: string | null) {
   const client = useQueryClient();
   const refresh = () => {
-    if (userId !== undefined && teamId !== null) void client.invalidateQueries({ queryKey: shiftsPrefix(userId, teamId) });
+    if (userId === undefined || teamId === null) return;
+    void client.invalidateQueries({ queryKey: shiftsPrefix(userId, teamId) });
+    // Every shift write also wrote a feed row (ADR 0021): the feed the app holds is now missing its newest line.
+    void client.invalidateQueries({ queryKey: activityKey(userId, teamId) });
   };
   const seed = (shift: Shift) => {
     if (userId !== undefined && teamId !== null) client.setQueryData(shiftKey(userId, teamId, shift.id), shift);

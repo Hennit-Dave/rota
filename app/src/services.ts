@@ -14,6 +14,7 @@ import { createSignOutLocal } from './auth/signOut';
 import { useSessionStore } from './state/sessionStore';
 import { createInviteApi } from './invites/inviteApi';
 import { createRecoveryApi } from './recovery/recoveryApi';
+import { createActivityApi } from './activity/activityApi';
 import { createShiftApi } from './shifts/shiftApi';
 import { createTeamApi } from './teams/teamApi';
 
@@ -74,6 +75,11 @@ export function getTeamApi() {
 /** The shift routes (docs/ARCHITECTURE.md 5d) over the one API client. Built on first use, like the client. */
 export function getShiftApi() {
   return createShiftApi(getApi());
+}
+
+/** The activity feed route (docs/ARCHITECTURE.md 5e) over the one API client. Built on first use, like the client. */
+export function getActivityApi() {
+  return createActivityApi(getApi());
 }
 
 /** The two invite-link routes (preview, accept) over the one API client. */

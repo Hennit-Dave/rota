@@ -95,6 +95,6 @@ the feed. The report says which was which and gives the hit rate during the "aft
    each returns its own correct page and cursor.
 7. **TTL everywhere:** after a test run, every `cache:*` key has a TTL.
 8. **Cache-only failure:** the cache client fails while rate limiting works → requests succeed from the
-   database. **Valkey fully down:** the feed returns 503 (rate limiter fails closed, `security.md`).
+   database. **Valkey fully down:** the feed returns 503 (rate limiter fails closed, `security.md`; decided in issue #11, ADR 0022).
 9. **Never-cache:** subscription status, permissions and token checks never read from Valkey (instrumented).
 10. **Switch:** with caching off, no `cache:*` keys are written.

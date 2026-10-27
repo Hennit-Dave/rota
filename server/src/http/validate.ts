@@ -87,6 +87,9 @@ const CUSTOM_CODES: ReadonlySet<string> = new Set([
   'range_too_long',
   'not_a_member',
   'nothing_to_change',
+  // The activity feed (ADR 0022)
+  'limit_too_large',
+  'invalid_cursor',
 ]);
 
 const NOTHING = z.strictObject({});

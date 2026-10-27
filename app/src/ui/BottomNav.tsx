@@ -17,13 +17,15 @@ interface Props {
   /** Destinations whose screens exist. The others are drawn (as in Figma) but disabled until their slice lands. */
   enabled: readonly NavDestination[];
   onSelect: (destination: NavDestination) => void;
+  /** Pressing the tab that is already selected. Only a screen that sits ON TOP of a tab (the activity feed opens from Schedule) passes it, to go back to that tab. */
+  onReselect?: () => void;
 }
 
 /**
  * Bottom navigation (Figma 32:1480): four equal tabs on a white bar, the selected one on mint with the action colour. Swaps and Settings are drawn
  * but disabled until their slices (swaps, settings) build their screens; nothing here decides what a tab opens. Icons are recoloured from the theme.
  */
-export function BottomNav({ selected, enabled, onSelect }: Props) {
+export function BottomNav({ selected, enabled, onSelect, onReselect }: Props) {
   const colors = useColors();
   return (
     <View
@@ -41,8 +43,8 @@ export function BottomNav({ selected, enabled, onSelect }: Props) {
             accessibilityRole="tab"
             accessibilityLabel={item.label}
             accessibilityState={{ selected: active, disabled: !available }}
-            disabled={!available || active}
-            onPress={() => onSelect(item.key)}
+            disabled={!available || (active && !onReselect)}
+            onPress={() => (active ? onReselect?.() : onSelect(item.key))}
             style={{
               flex: 1,
               height: 48,

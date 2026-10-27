@@ -147,7 +147,7 @@ function Schedule() {
       <PageHeader eyebrowGap={16} teamName={teamName} title={title} subtitle={header} />
       {body}
       {shifts.data && canEdit ? <Button label={scheduleCopy.createShift} onPress={() => router.push('/shift/new')} testID="schedule-create" /> : null}
-      {shifts.data ? <Button label={scheduleCopy.viewActivity} variant="secondary" disabled onPress={() => {}} testID="schedule-activity" /> : null}
+      {shifts.data ? <Button label={scheduleCopy.viewActivity} variant="secondary" onPress={() => router.push('/activity')} testID="schedule-activity" /> : null}
       <Spacer />
       <AppNav selected="schedule" />
     </Screen>
