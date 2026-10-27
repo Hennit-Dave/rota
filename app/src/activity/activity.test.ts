@@ -82,12 +82,18 @@ test('the query key carries the user and the team, so sign-out clears it and ano
 });
 
 test('label: what happened and to which shift; a row with no readable snapshot still says what kind of change it was', () => {
-  assert.equal(activityLabel(item(1)), 'New shift: Morning service');
-  assert.equal(activityLabel(item(2, { kind: 'shift_updated' })), 'Shift changed: Morning service');
-  assert.equal(activityLabel(item(3, { kind: 'shift_deleted' })), 'Shift removed: Morning service');
-  assert.equal(activityLabel(item(4, { shift: null })), activityCopy.createdUntitled);
-  assert.equal(activityLabel(item(5, { kind: 'shift_updated', shift: null })), activityCopy.updatedUntitled);
-  assert.equal(activityLabel(item(6, { kind: 'shift_deleted', shift: null })), activityCopy.deletedUntitled);
+  const LAGOS_ = 'Africa/Lagos';
+  assert.equal(activityLabel(item(1), LAGOS_), 'New shift: Morning service');
+  assert.equal(activityLabel(item(2, { kind: 'shift_updated' }), LAGOS_), 'Shift changed: Morning service');
+  assert.equal(activityLabel(item(3, { kind: 'shift_deleted' }), LAGOS_), 'Shift removed: Morning service');
+  assert.equal(activityLabel(item(4, { shift: null }), LAGOS_), activityCopy.createdUntitled);
+  assert.equal(activityLabel(item(5, { kind: 'shift_updated', shift: null }), LAGOS_), activityCopy.updatedUntitled);
+  assert.equal(activityLabel(item(6, { kind: 'shift_deleted', shift: null }), LAGOS_), activityCopy.deletedUntitled);
+  // A swap says WHICH DAY, on the team's calendar: 08:00Z on Tuesday 4 March is Tuesday in Lagos; 23:30Z is already Wednesday there.
+  assert.equal(activityLabel(item(7, { kind: 'swap_requested', shift: { title: 'Morning service', startsAt: '2031-03-04T08:00:00.000Z', endsAt: '2031-03-04T16:00:00.000Z' } }), LAGOS_), 'Swap requested for Tuesday');
+  assert.equal(activityLabel(item(8, { kind: 'swap_approved', shift: { title: 'Late', startsAt: '2031-03-04T23:30:00.000Z', endsAt: '2031-03-05T05:00:00.000Z' } }), LAGOS_), 'Swap approved for Wednesday');
+  assert.equal(activityLabel(item(9, { kind: 'swap_rejected', shift: { title: 'Morning service', startsAt: '2031-03-04T08:00:00.000Z', endsAt: '2031-03-04T16:00:00.000Z' } }), LAGOS_), 'Swap not approved for Tuesday');
+  assert.equal(activityLabel(item(10, { kind: 'swap_approved', shift: null }), LAGOS_), activityCopy.swapApprovedUntitled);
 });
 
 test('detail: "Today"/"Yesterday" are the TEAM\'s days, the person is a first name, older rows show the date', () => {

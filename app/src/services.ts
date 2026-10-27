@@ -16,6 +16,7 @@ import { createInviteApi } from './invites/inviteApi';
 import { createRecoveryApi } from './recovery/recoveryApi';
 import { createActivityApi } from './activity/activityApi';
 import { createShiftApi } from './shifts/shiftApi';
+import { createSwapApi } from './swaps/swapApi';
 import { createTeamApi } from './teams/teamApi';
 
 /**
@@ -75,6 +76,11 @@ export function getTeamApi() {
 /** The shift routes (docs/ARCHITECTURE.md 5d) over the one API client. Built on first use, like the client. */
 export function getShiftApi() {
   return createShiftApi(getApi());
+}
+
+/** The swap routes (docs/ARCHITECTURE.md 5f) over the one API client. Built on first use, like the client. */
+export function getSwapApi() {
+  return createSwapApi(getApi());
 }
 
 /** The activity feed route (docs/ARCHITECTURE.md 5e) over the one API client. Built on first use, like the client. */

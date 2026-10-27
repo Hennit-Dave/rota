@@ -118,6 +118,16 @@ export function formatLongDate(key: string): string {
   return `${out.weekday}, ${out.day} ${out.month}`;
 }
 
+const shortDate = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
+
+/** `Thu 15 Oct` for a day key (Figma 8:342, the swap screens). Built from the parts, because en-GB's own separators differ between ICU versions. */
+export function formatShortDate(key: string): string {
+  const p = parseDayKey(key)!;
+  const out: Record<string, string> = {};
+  for (const part of shortDate.formatToParts(new Date(Date.UTC(p.year, p.month - 1, p.day)))) if (part.type !== 'literal') out[part.type] = part.value;
+  return `${out.weekday} ${out.day} ${out.month}`;
+}
+
 /** The week strip's cell: the first letter of the weekday and the day of the month (Figma 7:14: "M" over "12"). */
 export function stripLabel(key: string): { letter: string; day: number } {
   const p = parseDayKey(key)!;

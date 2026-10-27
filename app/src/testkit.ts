@@ -44,6 +44,8 @@ export interface Call {
   search: string;
   method: string;
   authorization: string | null;
+  /** Every request header, lower-cased. */
+  headers: Record<string, string>;
   body: unknown;
 }
 
@@ -70,6 +72,7 @@ export function makeHarness(options: {
       search: url.search,
       method: init.method ?? 'GET',
       authorization: headers.get('Authorization'),
+      headers: Object.fromEntries([...headers.entries()].map(([k, v]) => [k.toLowerCase(), v])),
       body: typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined,
     };
     calls.push(call);

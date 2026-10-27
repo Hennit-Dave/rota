@@ -150,6 +150,7 @@ model Team {
   invitations Invitation[]
   shifts      Shift[]
   activity    Activity[]
+  swapRequests SwapRequest[]
 
   @@map("teams")
 }
@@ -250,6 +251,9 @@ enum ActivityKind {
   shift_created
   shift_updated
   shift_deleted
+  swap_requested
+  swap_approved
+  swap_rejected
 
   @@map("activity_kind")
 }
@@ -296,4 +300,41 @@ model Activity {
   // The feed's index (ADR 0022): filter by team, newest first, `id` as the tiebreak. Added AFTER the before-plan was recorded.
   @@index([teamId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("activity")
+}
+
+// ---- Swaps (team-owned, ADR 0023) ----
+
+enum SwapStatus {
+  pending
+  approved
+  rejected
+  cancelled
+
+  @@map("swap_status")
+}
+
+// A request to exchange two shifts: the requester's own shift (`offered`) for a teammate's (`requested`). A manager decides. Shifts and users are not
+// foreign keys (shifts can be deleted, users live on shard A); the approval re-checks everything against the live rows. `snapshot` keeps what both shifts
+// looked like when it was requested, so the request still reads correctly after the shifts have changed hands.
+model SwapRequest {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId             String     @map("team_id") @db.Uuid
+  requesterUserId    String     @map("requester_user_id") @db.Uuid
+  counterpartyUserId String     @map("counterparty_user_id") @db.Uuid
+  offeredShiftId     String     @map("offered_shift_id") @db.Uuid
+  requestedShiftId   String     @map("requested_shift_id") @db.Uuid
+  // The app's key for this one request: a repeat of it (a retry after a timeout) returns the stored request instead of creating a second.
+  idempotencyKey     String     @map("idempotency_key")
+  status             SwapStatus @default(pending)
+  snapshot           Json
+  decidedByUserId    String?    @map("decided_by_user_id") @db.Uuid
+  decidedAt          DateTime?  @map("decided_at") @db.Timestamptz(3)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, requesterUserId, idempotencyKey], map: "swap_requests_team_requester_key_key")
+  @@index([teamId, status, createdAt(sort: Desc)], map: "swap_requests_team_status_created_idx")
+  @@index([teamId, requesterUserId, status], map: "swap_requests_team_requester_status_idx")
+  @@map("swap_requests")
 }

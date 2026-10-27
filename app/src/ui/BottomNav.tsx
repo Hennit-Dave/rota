@@ -22,8 +22,8 @@ interface Props {
 }
 
 /**
- * Bottom navigation (Figma 32:1480): four equal tabs on a white bar, the selected one on mint with the action colour. Swaps and Settings are drawn
- * but disabled until their slices (swaps, settings) build their screens; nothing here decides what a tab opens. Icons are recoloured from the theme.
+ * Bottom navigation (Figma 32:1480): four equal tabs on a white bar, the selected one on mint with the action colour. A destination that is not in `enabled` is drawn
+ * but disabled; nothing here decides what a tab opens. Icons are recoloured from the theme.
  */
 export function BottomNav({ selected, enabled, onSelect, onReselect }: Props) {
   const colors = useColors();

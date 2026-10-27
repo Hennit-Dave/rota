@@ -39,6 +39,8 @@ export interface RequestOptions {
   auth?: boolean;
   /** The caller's cancellation (TanStack passes one per query). */
   signal?: AbortSignal;
+  /** Extra request headers (the swap request's `Idempotency-Key`). They are sent again unchanged if the request is replayed after a token refresh. Never `Authorization`. */
+  headers?: Record<string, string>;
 }
 
 interface RawResponse {
@@ -91,6 +93,7 @@ export function createApiClient(deps: ApiClientDeps) {
     body: unknown,
     accessToken: string | null,
     callerSignal?: AbortSignal,
+    extraHeaders?: Record<string, string>,
   ): Promise<RawResponse> {
     const controller = new AbortController();
     let timedOut = false;
@@ -102,8 +105,10 @@ export function createApiClient(deps: ApiClientDeps) {
     if (callerSignal?.aborted) controller.abort();
     callerSignal?.addEventListener('abort', onCallerAbort);
 
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // Set last: a caller's header can never replace the token (or leave one in when there should be none).
+    delete headers.Authorization;
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
     try {
@@ -138,7 +143,7 @@ export function createApiClient(deps: ApiClientDeps) {
     accessToken: string | null,
     epochAtStart: number,
   ): Promise<RawResponse> {
-    const raw = await send(path, options.method ?? 'GET', options.body, accessToken, options.signal);
+    const raw = await send(path, options.method ?? 'GET', options.body, accessToken, options.signal, options.headers);
     if (!epoch.isCurrent(epochAtStart)) throw new StaleAccountError();
     return raw;
   }

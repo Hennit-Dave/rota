@@ -38,6 +38,7 @@ export interface AuthConfig {
     refreshIp: RateRuleConfig;
     teamCreateUser: RateRuleConfig;
     feedUser: RateRuleConfig;
+    swapRequestUser: RateRuleConfig;
     inviteSendUser: RateRuleConfig;
     inviteSendTeam: RateRuleConfig;
     invitePreviewIp: RateRuleConfig;
@@ -114,6 +115,8 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       teamCreateUser: rule(env, 'RATE_LIMIT_TEAM_CREATE_USER', { max: 5, windowSeconds: 3600 }),
       // Approved by Dave 2026-10-26 (activity feed, ADR 0022): 120 per minute per user. CHOSEN, NOT MEASURED; the load test (200 distinct users) checks it.
       feedUser: rule(env, 'RATE_LIMIT_FEED_USER', { max: 120, windowSeconds: 60 }),
+      // Approved by Dave 2026-10-27 (swaps, ADR 0023): 10 swap requests per user per hour. CHOSEN, NOT MEASURED.
+      swapRequestUser: rule(env, 'RATE_LIMIT_SWAP_REQUEST_USER', { max: 10, windowSeconds: 3600 }),
       // Approved by Dave 2026-10-23 (Invites plan). Unauthenticated preview and accept reuse the login-IP baseline (30 per 15 minutes);
       // the token's entropy is the security, these only bound abuse.
       inviteSendUser: rule(env, 'RATE_LIMIT_INVITE_SEND_USER', { max: 10, windowSeconds: 3600 }),
