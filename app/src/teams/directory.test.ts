@@ -11,6 +11,7 @@ const detail = (invitableRoles: TeamDetail['invitableRoles']): TeamDetail => ({
   role: 'owner',
   invitableRoles,
   canManageInvitations: invitableRoles.length > 0,
+  canEditShifts: invitableRoles.length > 0,
 });
 
 test('the "invite your first team member" card shows when you are the only one, and never when others have joined', () => {

@@ -75,6 +75,11 @@ answered the same for every address and emails a single-use link (a reset lasts 
 **worker must be running** (`RESEND_API_KEY`) for the email to go out. The app opens the links at `/reset/<token>` and `/magic/<token>`. New table `auth_tokens`
 (migration `20261026140000_add_auth_tokens`): run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/` before using a real shard.
 
+**Shifts and the calendar** (slice C1, ADR 0021): `GET/POST /teams/:teamId/shifts` and `GET/PATCH/DELETE /teams/:teamId/shifts/:shiftId`. An Owner or Manager publishes, edits and deletes
+shifts; everyone in the team can read them; one person cannot be booked twice at the same time (`409`). New tables `shifts` and `activity` (migration
+`20261026160000_add_shifts_and_activity`): run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard.
+Optional: `SHIFTS_MAX_RANGE_DAYS` (42). The app's home is now the Schedule, with a bottom bar (Schedule, Team, Settings).
+
 ```sh
 openssl rand -base64 32   # copy the output into AUTH_JWT_SECRET in the root .env (at least 32 bytes once decoded)
 cd server && npm run build && npm run start:api
@@ -129,7 +134,7 @@ npm start                                                    # Metro; then open 
 ```
 
 Run the API on a free port in another terminal (`PORT=3100 npm run dev:api` in `server/`; the server's default 3000 may be taken by another
-project). The first screen is the sign-in screen. After signing in, the placeholder home has a development-only link to the API check
+project). The first screen is the sign-in screen. After signing in, the Schedule opens; the Settings tab has a development-only link to the API check
 (`/dev-api`: it calls `GET /health` and says "The API answered: ok."), and from there a link to a check of every native module
 (`rota://dev-check`, also reachable directly by that link, signed in or not).
 

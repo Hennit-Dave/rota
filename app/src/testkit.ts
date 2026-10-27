@@ -40,6 +40,8 @@ export const session = (accessToken: string, refreshToken: string) => ({
 
 export interface Call {
   path: string;
+  /** The query string with its `?` (empty when there is none). */
+  search: string;
   method: string;
   authorization: string | null;
   body: unknown;
@@ -65,6 +67,7 @@ export function makeHarness(options: {
     const headers = new Headers(init.headers);
     const call: Call = {
       path: url.pathname,
+      search: url.search,
       method: init.method ?? 'GET',
       authorization: headers.get('Authorization'),
       body: typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined,

@@ -218,11 +218,11 @@ test('GET /teams/:teamId tells the app which roles it may offer, from the permis
   await app.addMember(teamId, staff.id, 'staff');
   const get = async (h: Record<string, string>) => (await app.get(`/teams/${teamId}`, h)).body;
   const o = await get(ownerH);
-  assert.deepEqual([o.invitableRoles, o.canManageInvitations], [['manager', 'staff'], true]);
+  assert.deepEqual([o.invitableRoles, o.canManageInvitations, o.canEditShifts], [['manager', 'staff'], true, true]);
   const m = await get(bearer((await app.signIn(manager.id)).accessToken));
-  assert.deepEqual([m.invitableRoles, m.canManageInvitations], [['staff'], true]);
+  assert.deepEqual([m.invitableRoles, m.canManageInvitations, m.canEditShifts], [['staff'], true, true]);
   const s = await get(bearer((await app.signIn(staff.id)).accessToken));
-  assert.deepEqual([s.invitableRoles, s.canManageInvitations], [[], false]);
+  assert.deepEqual([s.invitableRoles, s.canManageInvitations, s.canEditShifts], [[], false, false]);
 });
 
 test('list: Owner and Manager see pending invitations with the email state; Staff 403; expired, revoked and accepted are not listed', async () => {

@@ -148,6 +148,8 @@ model Team {
 
   memberships Membership[]
   invitations Invitation[]
+  shifts      Shift[]
+  activity    Activity[]
 
   @@map("teams")
 }
@@ -240,4 +242,56 @@ model AuthToken {
 
   @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
   @@map("auth_tokens")
+}
+
+// ---- Shifts and activity (team-owned: they live on the team's shard, written in one transaction) ----
+
+enum ActivityKind {
+  shift_created
+  shift_updated
+  shift_deleted
+
+  @@map("activity_kind")
+}
+
+// One scheduled shift. Times are UTC instants at millisecond precision (timestamptz(3)), so a JavaScript Date and the database agree to the last
+// digit and a cursor built from created_at never loses a tie (ADR 0022). assigned_user_id points at a user on shard A, so there is deliberately no
+// foreign key (data.md); the server checks the person is a member of this team. NULL means an open shift. Also in the SQL, which Prisma cannot express:
+// CHECK "shifts_ends_after_starts" (ends_at > starts_at) and CHECK "shifts_break_not_negative".
+model Shift {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId          String    @map("team_id") @db.Uuid
+  title           String
+  area            String?
+  startsAt        DateTime  @map("starts_at") @db.Timestamptz(3)
+  endsAt          DateTime  @map("ends_at") @db.Timestamptz(3)
+  breakMinutes    Int?      @map("break_minutes")
+  note            String?
+  assignedUserId  String?   @map("assigned_user_id") @db.Uuid
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, startsAt], map: "shifts_team_id_starts_at_idx")
+  @@index([teamId, assignedUserId, startsAt], map: "shifts_team_id_assigned_user_id_starts_at_idx")
+  @@map("shifts")
+}
+
+// The team's activity record: one row per change, written in the SAME transaction as the change. Append-only by convention (nothing updates or
+// deletes a row). shift_id has no foreign key on purpose: a deleted shift's history must outlive it. `data` holds a small snapshot (the title,
+// the times, who) so the feed needs no join. The feed's own index arrives with the feed (ADR 0022), after the "before" query plan is recorded.
+model Activity {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId      String       @map("team_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  actorUserId String       @map("actor_user_id") @db.Uuid
+  kind        ActivityKind
+  shiftId     String?      @map("shift_id") @db.Uuid
+  data        Json         @default("{}")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@map("activity")
 }

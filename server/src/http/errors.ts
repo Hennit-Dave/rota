@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'forbidden'
   | 'invite_unavailable'
   | 'link_unavailable'
+  | 'shift_overlap'
   | 'invite_wrong_account'
   | 'already_member'
   | 'invite_pending'
@@ -34,6 +35,7 @@ const STATUS: Record<ErrorCode, number> = {
   forbidden: 403,
   invite_unavailable: 404,
   link_unavailable: 404,
+  shift_overlap: 409,
   invite_wrong_account: 403,
   already_member: 409,
   invite_pending: 409,
@@ -54,6 +56,7 @@ const MESSAGE: Record<ErrorCode, string> = {
   forbidden: 'Your role does not allow this.',
   invite_unavailable: 'This invitation is not available.',
   link_unavailable: 'This link is not available.',
+  shift_overlap: 'This person already has a shift at that time.',
   invite_wrong_account: 'This invitation is for a different account.',
   already_member: 'This person is already on the team.',
   invite_pending: 'An invitation is already pending for this email.',
