@@ -13,11 +13,12 @@ import { teamCopy } from '../../../teams/teamCopy';
 import { useMembers, useTeamDetail } from '../../../teams/useTeamData';
 import { useTeams } from '../../../teams/useTeams';
 import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { AppNav } from '../../../ui/AppNav';
 import { Button } from '../../../ui/Button';
 import { EmptyCard } from '../../../ui/EmptyCard';
 import { PageHeader } from '../../../ui/PageHeader';
 import { PersonCard } from '../../../ui/PersonCard';
-import { Screen } from '../../../ui/Screen';
+import { Screen, Spacer } from '../../../ui/Screen';
 import { StatusBanner } from '../../../ui/StatusBanner';
 import { Text } from '../../../ui/Text';
 import { TextAction } from '../../../ui/TextAction';
@@ -25,8 +26,7 @@ import { useOnline } from '../../../ui/useOnline';
 
 /**
  * Team directory (Figma 8:181, and 103:2521 when you are the only member): who is on the team, and the way to invite someone. Light-only for now,
- * like the other screens whose Figma icons carry their colour (issue #24). The Invitations block, "Manage invitations" and the tab bar come in later
- * steps and slices: nothing here is a dead link, and "Create a shift" waits for shifts. The list is the whole roster (the server returns it in one
+ * like the other screens whose Figma icons carry their colour (issue #24). The bottom bar is the way out to Schedule and Settings. The list is the whole roster (the server returns it in one
  * answer), so it has loading, empty and error states but no pages and no end-of-list marker.
  */
 export default function TeamScreen() {
@@ -131,6 +131,8 @@ function TeamDirectory() {
       />
       {content}
       {canInvite(detail.data) ? <Button label={teamCopy.invite} variant="outline" onPress={() => router.push('/team/invite')} testID="team-invite" /> : null}
+      <Spacer />
+      <AppNav selected="team" />
     </Screen>
   );
 }
