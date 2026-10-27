@@ -189,3 +189,7 @@ The Valkey connection stopped responding without clearly disconnecting, so login
 ## 2026-10-26 — Password reset and magic link (PR #45)
 
 Someone could register with your email and choose a password. When you open the magic link in your inbox, you prove you control that email. In Rota, for an unverified email, it then removes the previously set password and ends the existing sessions, so that person can't keep accessing the account. Removing both matters: deleting the password stops future password logins; ending sessions removes access they already had.
+
+## 2026-10-27 — Shifts and calendar (PR #47)
+
+I learned that checking for overlapping shifts separately from saving leaves a gap where two managers could both see the same person as available. The overlap check and save need to happen in one transaction, with protection against simultaneous bookings, so both conflicting bookings cannot succeed. A transaction alone is not enough unless the database also makes those competing operations wait or rejects one.
