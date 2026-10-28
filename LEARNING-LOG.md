@@ -201,3 +201,7 @@ I learned that cursor pagination keeps my place in a feed by using the last row'
 ## 2026-10-27 — Shift swaps (PR #50)
 
 I learned that idempotency means retrying the same action does not create extra results. For a swap request, the app reuses the same key so a lost response does not cause a second request for the manager. The database's unique rule prevents duplicates even when retries arrive at the same time.
+
+## 2026-10-28 — Settings (PR #51)
+
+I learned that the server sets updatedAt so changes use one trusted clock instead of different phone and tablet clocks, which could be wrong. This makes the order of saved updates consistent, but it records when the server accepted a change, not when the user originally made it.
