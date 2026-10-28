@@ -6,7 +6,7 @@ import { bannerCopy } from '../../../auth/copy';
 import { useMe } from '../../../auth/useMe';
 import { SettingGroup, SettingRow } from '../../../settings/SettingRow';
 import { settingsCopy } from '../../../settings/settingsCopy';
-import { describeChange, formatQuietHours, languageLabel, onOff, settingLabel, settingsHeader, themeLabel } from '../../../settings/settingsDisplay';
+import { describeChange, formatQuietHours, languageLabel, onOff, ownsATeam, settingLabel, settingsHeader, themeLabel } from '../../../settings/settingsDisplay';
 import { THEME_SETTINGS, type SettingChange, type ThemeSetting } from '../../../settings/settingsResponses';
 import { useChangeSetting, useIsAnySettingPending, useSettings } from '../../../settings/useSettings';
 import { useSessionStore } from '../../../state/sessionStore';
@@ -30,8 +30,8 @@ import { useOnline } from '../../../ui/useOnline';
  * Settings (Figma 09 Settings 9:205, with saving 108:128, error 9:289, offline 108:2603, saved 9:258 and dark 108:3172): quiet hours, the three notification
  * types, theme, time zone and language. All of it is the SERVER's copy (GET /settings, refetched when the app opens and returns to the foreground); the app
  * only shows it. Each change is its own optimistic update with rollback (`useChangeSetting`): the row shows the new value at once and is disabled until the
- * server answers, a failure puts back only that field and says so, and nothing is queued offline. The Billing row is shown to an Owner of the selected team
- * (the role is the server's answer; the setting is inert until payments exist).
+ * server answers, a failure puts back only that field and says so, and nothing is queued offline. The Billing row is shown to someone who owns a team (the roles
+ * are the server's answer from GET /teams; the setting is inert until payments exist).
  */
 export default function SettingsScreen() {
   const online = useOnline();
@@ -110,7 +110,7 @@ export default function SettingsScreen() {
             onPress={() => void swapUpdates.change(!data.notifySwapUpdates.value)}
             testID="setting-swap-updates"
           />
-          {team?.role === 'owner' ? (
+          {ownsATeam(teams.data) ? (
             <SettingRow
               label={settingsCopy.billingRow}
               value={onOff(data.notifyBilling.value)}

@@ -166,4 +166,4 @@ the revoke.
 - **Language is `en` only** (ADR 0024): the app has no translations, so the language picker has one option; the setting is stored and synced.
 - **The launch screen waits for the first settings answer** (ADR 0024) so the first frame is in the person's theme: at most the API client's timeout, the
   same ceiling as the session check, and a failure or offline ends the wait (the app then starts on the device's colours).
-- **The Billing notification row follows the selected team's role** (shown to an Owner). The setting itself is one value per person, inert until payments exist.
+- **The Billing notification row is shown to someone who owns at least one team** (roles from `GET /teams`; Figma: "Billing · Owner only"). The server does not gate the preference by role (`PATCH /settings` is per person); the Owner-only rule there is `billing.manage`. The setting is one value per person, inert until payments exist.

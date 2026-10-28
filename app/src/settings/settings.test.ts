@@ -9,7 +9,7 @@ import { json, makeHarness } from '../testkit';
 import { navScheduleXml, statusErrorXml } from '../ui/icons/figmaIcons';
 import { themeStrokes } from '../ui/recolour';
 import { createSettingsApi } from './settingsApi';
-import { checkQuietHours, describeChange, formatQuietHours, settingsHeader } from './settingsDisplay';
+import { checkQuietHours, describeChange, formatQuietHours, ownsATeam, settingsHeader } from './settingsDisplay';
 import { createSettingMutationOptions, maySaveSetting } from './settingsMutation';
 import type { SettingsNotice } from './settingsNotice';
 import { parseSettings, settingMutationKey, settingsKey, type Settings } from './settingsResponses';
@@ -283,6 +283,14 @@ test('typed quiet hours: 24-hour times, sent with two digits, start and end diff
   assert.equal(checkQuietHours({ start: '', end: '' }).values, null);
   assert.equal(checkQuietHours({ start: '22:00', end: '22:00' }).errors.end, 'Start and end must be different.');
   assert.equal(checkQuietHours({ start: '22:00', end: '22:00' }).values, null);
+});
+
+test('the Billing row is for someone who owns a team, by the roles the server returned (in any team, not only the selected one)', () => {
+  assert.equal(ownsATeam([{ role: 'owner' }]), true);
+  assert.equal(ownsATeam([{ role: 'staff' }, { role: 'owner' }]), true, 'an Owner of one team and Staff in another still sees it');
+  assert.equal(ownsATeam([{ role: 'manager' }, { role: 'staff' }]), false);
+  assert.equal(ownsATeam([]), false);
+  assert.equal(ownsATeam(undefined), false, 'not loaded yet: not shown');
 });
 
 // ---- the theme ----

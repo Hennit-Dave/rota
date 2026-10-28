@@ -30,7 +30,7 @@ Three changes from the SQL Dave approved, each tightening it:
 
 **Rate limits (proposed, chosen, not measured; awaiting approval).** `settings_read_user` 120 per minute (mirrors the feed; every foreground refetch is one read) and `settings_write_user` 30 per minute. Both per user, fail closed with `503` when Valkey is down. Env: `RATE_LIMIT_SETTINGS_READ_USER_*`, `RATE_LIMIT_SETTINGS_WRITE_USER_*`.
 
-**Notification types.** Shift changes, swap updates, billing (Dave). Billing is inert until payments exist; its row is shown to an Owner of the selected team, as in Figma ("Billing · Owner only"), using the role the server returned.
+**Notification types.** Shift changes, swap updates, billing (Dave). Billing is inert until payments exist. Its row is shown to someone who **owns at least one team**, as in Figma ("Billing · Owner only"), by the roles the server returns in `GET /teams`. What the server allows: `PATCH /settings` does **not** gate this preference by role (settings are per person, no team is involved, and `preferences.edit` is every role); the Owner-only rule on the server is `billing.manage`. So "Owner only" is a display rule backed by that table, not a second enforcement. A user who is a Manager or Staff everywhere does not see the row (the demo manager on the emulator is one such user). Making the server refuse the change for a non-Owner is a small addition if it is wanted.
 
 **Language.** `en` only, stored and synced. There are no translations, so the picker has one option and the weakness is documented (`STATE.md`).
 
@@ -62,7 +62,7 @@ Three changes from the SQL Dave approved, each tightening it:
   build.
 - Quiet-hours and time-zone enforcement are not in this PR (they land with push). Until then the settings are stored and shown but nothing is held back.
 - The launch screen can now last as long as the settings request (at most the API client's 15 s timeout, the same ceiling as the session check); in practice it overlaps with the check of the session.
-- The Settings screen cannot show Billing for someone who owns one team and is Staff in another unless that team is selected: the row follows the selected team's role, the value is one per person.
+- The Billing row appears for an Owner of any team, whichever team is selected; the value is one per person. It is hidden until the team list has loaded.
 - Revisit: a compare-and-set version if the weakness bites; a second language when translations exist; the real shard migration on Dave's go.
 
 ## Evidence

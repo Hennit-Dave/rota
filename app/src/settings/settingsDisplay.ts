@@ -14,6 +14,13 @@ export const settingLabel: Record<SettingKey, string> = {
   theme: 'Theme',
 };
 
+/**
+ * Whether to show the Billing notification row (Figma: "Billing · Owner only"): the person owns at least one team, by the roles the server returned in
+ * GET /teams. Display only. The server does not gate the preference itself (settings are per person and no team is involved; `preferences.edit` is every
+ * role); the Owner-only rule on the server is `billing.manage`, which is why the row is for Owners.
+ */
+export const ownsATeam = (teams: ReadonlyArray<{ role: string }> | undefined): boolean => (teams ?? []).some((t) => t.role === 'owner');
+
 export const themeLabel = (theme: ThemeSetting): string => settingsCopy.themes[theme];
 export const languageLabel = (code: string): string => settingsCopy.languages[code] ?? code;
 export const onOff = (on: boolean): string => (on ? settingsCopy.on : settingsCopy.offValue);
