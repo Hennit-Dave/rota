@@ -209,3 +209,7 @@ I learned that the server sets updatedAt so changes use one trusted clock instea
 ## 2026-10-28 — Invite links (PR #54)
 
 I learned that a link invite can be forwarded, so it should give only the limited Staff role. An email invite can grant Manager access because it is tied to a specific email address and acceptance checks the intended account. The difference is whether the invitation checks who is joining or simply trusts whoever has the link.
+
+## 2026-10-28 — Proration engine and ledger (PR #56)
+
+I learned that the ledger keeps the history of money changes, so existing entries must not be edited or deleted. If something is wrong, a new correction or reversal entry is added instead. This preserves what originally happened and lets us trace how the current balance was reached.
