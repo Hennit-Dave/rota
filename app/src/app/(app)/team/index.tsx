@@ -5,7 +5,7 @@ import { ApiError, OfflineError } from '../../../api/errors';
 import { bannerCopy } from '../../../auth/copy';
 import { useMe } from '../../../auth/useMe';
 import { roleLabel } from '../../../invites/inviteCopy';
-import { directoryInvitationCaption, invitationsCopy } from '../../../invites/invitationsCopy';
+import { directoryInvitationCaption, invitationTitle, invitationsCopy } from '../../../invites/invitationsCopy';
 import { useInvitations } from '../../../invites/useInvitations';
 import { useSessionStore } from '../../../state/sessionStore';
 import { canInvite, directoryStatus, showEmptyTeamCard } from '../../../teams/directory';
@@ -73,7 +73,7 @@ function TeamDirectory() {
             <Text variant="label">{invitationsCopy.directory.heading}</Text>
             {/* A preview of the oldest pending invitation, as in the design; "Manage invitations" has the whole list. */}
             <PersonCard
-              title={invitations.data[0]!.email}
+              title={invitationTitle(invitations.data[0]!)}
               caption={directoryInvitationCaption(invitations.data[0]!).text}
               captionTone={directoryInvitationCaption(invitations.data[0]!).tone}
               testID="team-invitation-preview"

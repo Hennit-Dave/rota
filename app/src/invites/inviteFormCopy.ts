@@ -18,6 +18,26 @@ export const inviteFormCopy = {
   loadingPermissions: 'Checking what you can do here…', // not in Figma yet
   sheetTitle: 'Role', // 291:978
 
+  // Invite by link (ADR 0025, issue #37): not in Figma yet; the layout is the invite form and "Invitation sent" with the same components (Dave, 2026-10-28).
+  link: {
+    action: 'Create an invite link',
+    actionHelper: 'Or share a link instead. It can be used once, as Staff.',
+    creating: 'Creating…',
+    limit: 'This team already has the most invite links waiting. Revoke one to make another.',
+    title: 'Invite link ready',
+    subtitle: (until: string) => `Share it with one person. It works until ${until}.`,
+    bannerTitle: 'Anyone with this link can join once',
+    bannerBody: 'They join as Staff. You won’t see this link again after you leave this screen.',
+    cardTitle: 'Invite link',
+    pending: (role: string) => `Pending · ${role}`,
+    copy: 'Copy link',
+    copied: 'Link copied',
+    copyFailed: 'We couldn’t copy the link. Share it instead.',
+    share: 'Share link',
+    shareMessage: (team: string | undefined, link: string) => (team ? `Join ${team} on Rota: ${link}` : `Join my team on Rota: ${link}`),
+    backToTeam: 'Back to team',
+  },
+
   sent: {
     title: 'Invitation sent', // 8:229
     subtitle: (email: string) => `${email} can join when they accept.`,

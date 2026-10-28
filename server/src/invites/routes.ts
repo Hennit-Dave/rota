@@ -13,6 +13,7 @@ import { createInviteSchemas } from './schemas.js';
 import {
   acceptInvitation,
   createInvitation,
+  createInviteLink,
   listInvitations,
   previewInvitation,
   resendInvitation,
@@ -68,6 +69,31 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
   const globalSendCap = rateLimit(limiter, logger, () => [
     { name: 'invite_send_global', subject: 'global', max: config.invites.globalDailyCap, windowSeconds: secondsUntilUtcMidnight(now()) },
   ]);
+
+  // Invite links (ADR 0025) send no email, so they have their own limits and never touch the app-wide email cap.
+  const userLinkLimit = rateLimit(limiter, logger, (req) => [
+    { name: 'invite_link_user', subject: req.auth!.userId, ...config.rateLimits.inviteLinkUser },
+  ]);
+  const teamLinkLimit = rateLimit(limiter, logger, (req) => [
+    { name: 'invite_link_team', subject: (req.validated!.params as { teamId: string }).teamId, ...config.rateLimits.inviteLinkTeam },
+  ]);
+
+  // POST /teams/:teamId/invitations/links  (no body: a link is always Staff, so there is no role to choose)
+  router.post(
+    '/links',
+    validateRequest({ params: schemas.teamParams }),
+    requireAuth,
+    userLinkLimit,
+    requireTeamRole('invite.staff'), // Owner and Manager, from the permission table
+    teamLinkLimit,
+    async (req, res) => {
+      const { teamId } = req.validated!.params as { teamId: string };
+      const ctx = req.teamContext!;
+      const made = await createInviteLink(shards, invites, { teamId, actor: { userId: req.auth!.userId, role: ctx.role } });
+      // The link is in this answer and nowhere else, ever: only its hash is stored.
+      res.status(201).json(made);
+    },
+  );
 
   // POST /teams/:teamId/invitations
   router.post(

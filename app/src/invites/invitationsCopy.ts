@@ -21,6 +21,7 @@ export const invitationsCopy = {
   resendFailedBody: 'Please try again.',
   revokeFailedTitle: 'We couldn’t revoke the invitation.', // not in Figma yet
   revokeFailedBody: 'Please try again.',
+  linkTitle: 'Invite link', // not in Figma yet: a link has no address to show (ADR 0025)
   gone: 'This invitation is no longer pending.', // not in Figma yet: it was accepted, revoked or expired meanwhile
   notAllowed: 'You can’t manage invitations for this team.', // not in Figma yet
 
@@ -32,7 +33,9 @@ export const invitationsCopy = {
   },
 
   revokeConfirm: {
-    title: (email: string) => `Revoke invitation for ${email}?`, // 292:988
+    title: (email: string | null) => (email === null ? 'Revoke this invite link?' : `Revoke invitation for ${email}?`), // 292:988; the link wording is not in Figma yet
+    linkSubtitle: 'Nobody will be able to join with it.',
+    linkCardBody: 'Anyone who opens it will see it as no longer available. You can make a new link later.',
     subtitle: 'They won’t be able to join with this invitation.',
     cardTitle: 'Before you continue',
     cardBody: 'They will see this invitation as no longer available. You can send a new invitation later.',
@@ -43,6 +46,9 @@ export const invitationsCopy = {
     back: 'Back to invitations', // not in Figma yet
   },
 } as const;
+
+/** The row's title: the invited address, or "Invite link" for a link, which has none. */
+export const invitationTitle = (invitation: Pick<InvitationView, 'email'>): string => invitation.email ?? invitationsCopy.linkTitle;
 
 /** "Email not sent · Staff" (danger) or "Pending · Manager" (muted), from the server's email state (Figma 294:3986). Queued and sent both read Pending. */
 export function invitationCaption(invitation: Pick<InvitationView, 'emailStatus' | 'role'>): { text: string; tone: 'muted' | 'danger' } {

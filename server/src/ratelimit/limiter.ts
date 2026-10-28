@@ -62,6 +62,8 @@ export type RateRuleConfigOverrides = Partial<
     | 'teamCreateUser'
     | 'feedUser'
     | 'swapRequestUser'
+    | 'inviteLinkUser'
+    | 'inviteLinkTeam'
     | 'settingsReadUser'
     | 'settingsWriteUser'
     | 'inviteSendUser'

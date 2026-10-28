@@ -89,8 +89,8 @@ function Revoke() {
 
   return (
     <Screen gap={space[16]}>
-      <PageHeader eyebrowGap={16} teamName={detail.data?.team.name} title={copy.title(invitation.email)} subtitle={copy.subtitle} />
-      <InfoCard title={copy.cardTitle} body={copy.cardBody} />
+      <PageHeader eyebrowGap={16} teamName={detail.data?.team.name} title={copy.title(invitation.email)} subtitle={invitation.kind === 'link' ? copy.linkSubtitle : copy.subtitle} />
+      <InfoCard title={copy.cardTitle} body={invitation.kind === 'link' ? copy.linkCardBody : copy.cardBody} />
       {banner}
       <Spacer />
       <Button

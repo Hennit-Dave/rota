@@ -72,7 +72,15 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
   router.get('/:teamId', validateRequest({ params: teamIdParams }), requireAuth, requireTeamRole('team.view'), (req, res) => {
     const { team, role } = req.teamContext!;
     // What the caller may do here, decided from the permission table. The app shows what the server allows and computes nothing itself.
-    res.json({ team, role, invitableRoles: invitableRoles(role), canManageInvitations: can(role, 'invitations.list'), canEditShifts: can(role, 'shifts.edit') });
+    res.json({
+      team,
+      role,
+      invitableRoles: invitableRoles(role),
+      canManageInvitations: can(role, 'invitations.list'),
+      // Whether to offer "Create an invite link" (ADR 0025): the server's answer from the permission table; the route checks again.
+      canCreateInviteLink: can(role, 'invite.staff'),
+      canEditShifts: can(role, 'shifts.edit'),
+    });
   });
 
   // GET /teams/:teamId/members: team route. Any member. Names come from shard A in one batched query.

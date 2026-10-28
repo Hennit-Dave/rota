@@ -116,8 +116,9 @@ An invitation is team-owned: it lives on the team's shard, and so does its email
 
 | Route | Type | Checks, in order | Success |
 |---|---|---|---|
+| `POST /teams/:teamId/invitations/links` | team | Zod (no body), token, session, per-user link limit, membership and `invite.staff`, team link limit (never the email cap) | `201 { invitation, link }` (Staff, no email; the link is in this answer only) |
 | `POST /teams/:teamId/invitations` | team | Zod, token, session, per-user limit, membership and `invite.<role>`, team limit, app-wide cap | `201 { invitation }` |
-| `GET /teams/:teamId/invitations` | team | Zod, token, session, membership and `invitations.list` | `200 { invitations: [{ id, email, role, expiresAt, emailStatus, canResend, canRevoke }] }` |
+| `GET /teams/:teamId/invitations` | team | Zod, token, session, membership and `invitations.list` | `200 { invitations: [{ id, kind, email, role, expiresAt, emailStatus, canResend, canRevoke }] }` (`kind` is `email` or `link`; a link has `email` and `emailStatus` null and `canResend` false) |
 | `POST /teams/:teamId/invitations/:id/resend` | team | as create, for that invitation's role | `200 { invitation }` (new token, new email row) |
 | `DELETE /teams/:teamId/invitations/:id` | team | Zod, token, session, membership and `invite.staff` gate, then the invitation's own role | `204` |
 | `POST /invitations/preview` `{ token }` | public | Zod, IP limit, optional session | `200 { status: 'pending', team, role, inviter, email, account }`, or for the account that already accepted `200 { status: 'already_member', team: { id, name, timeZone }, role }` |
@@ -125,7 +126,8 @@ An invitation is team-owned: it lives on the team's shard, and so does its email
 
 - **Accept and preview are idempotent for the account that already accepted** (accept: the same `200 { team, role }`; preview: `200 { status: 'already_member', team, role }`; nothing written either way); every other caller of a spent link gets the identical `404 invite_unavailable` (ADR 0015, ADR 0017).
 - `emailStatus` is `queued`, `sent` or `failed`, read from the invitation's latest email work row. Resend and Revoke stay available in every state.
-- `GET /teams/:teamId` also returns `invitableRoles`, `canManageInvitations` and `canEditShifts`, computed from the permission table; the app offers only those.
+- **Invite links (ADR 0025):** `invitations.kind` is `email` or `link`. A link is Staff only, not tied to an address, single use, lives `INVITE_LINK_EXPIRY_HOURS` (48), at most `INVITE_LINK_MAX_PENDING` (10) pending per team (counted under a lock on the team row), creates no work row and enqueues nothing. Preview answers `{ kind: 'link', email: null, account: 'open' | 'none' }`; accept lets any signed-in account in, verifies no address, and for someone already on the team answers with the role they hold and consumes nothing. Revoke is the same `DELETE`; a link cannot be resent. New error: `409 invite_link_limit`.
+- `GET /teams/:teamId` also returns `invitableRoles`, `canManageInvitations`, `canCreateInviteLink` and `canEditShifts`, computed from the permission table; the app offers only those.
 - Errors: `404 invite_unavailable` (unknown, malformed, wrong team, expired, used, revoked: one identical answer), `403 invite_wrong_account`,
   `409 already_member`, `409 invite_pending`, `403 forbidden`, `404 not_found`, `429`, `503`.
 - **The worker** runs the `email` job: `work_rows.payload` is the frozen Resend request; the job stamps `first_attempt_at` before the first call, sends with

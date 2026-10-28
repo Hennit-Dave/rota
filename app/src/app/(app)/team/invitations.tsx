@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { useMe } from '../../../auth/useMe';
 import { describeInvitationActionFailure, type InvitationActionFailure } from '../../../invites/invitationActionFailure';
-import { invitationCaption, invitationsCopy } from '../../../invites/invitationsCopy';
+import { invitationCaption, invitationTitle, invitationsCopy } from '../../../invites/invitationsCopy';
 import { createInviteApi } from '../../../invites/inviteApi';
 import { pendingListStatus } from '../../../invites/pendingList';
 import { invitationsQueryKey, useInvitations } from '../../../invites/useInvitations';
@@ -91,7 +91,7 @@ function Invitations() {
           const mine = resending === invitation.id;
           return (
             <View key={invitation.id} style={{ gap: space[8] }}>
-              <PersonCard title={invitation.email} caption={caption.text} captionTone={caption.tone} testID={`invitation-${invitation.id}`} />
+              <PersonCard title={invitationTitle(invitation)} caption={caption.text} captionTone={caption.tone} testID={`invitation-${invitation.id}`} />
               {invitation.canResend || invitation.canRevoke ? (
                 <View style={{ flexDirection: 'row', gap: space[8] }}>
                   {invitation.canResend ? (

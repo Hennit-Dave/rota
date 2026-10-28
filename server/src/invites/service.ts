@@ -21,18 +21,25 @@ export interface InviteDeps {
   now?: () => Date;
 }
 
+export type InvitationKind = 'email' | 'link';
+
 export interface InvitationView {
   id: string;
-  email: string;
+  /** `email`: tied to one address. `link`: anyone holding the link may use it once (ADR 0025). */
+  kind: InvitationKind;
+  /** The invited address; null for an invite link, which is not tied to anyone. */
+  email: string | null;
   role: InvitableRole;
   expiresAt: Date;
-  emailStatus: EmailStatus;
+  /** The latest email's state; null for a link, which sends none. */
+  emailStatus: EmailStatus | null;
   canResend: boolean;
   canRevoke: boolean;
 }
 
 const EMAIL_RUN_DELAY_MS = 2 * 60 * 1000;
 const day = 24 * 60 * 60 * 1000;
+const hour = 60 * 60 * 1000;
 
 const asRole = (value: string): InvitableRole => (value === 'manager' ? 'manager' : 'staff');
 const inviteAction = (role: InvitableRole): 'invite.manager' | 'invite.staff' => (role === 'manager' ? 'invite.manager' : 'invite.staff');
@@ -52,13 +59,15 @@ export function emailStatusOf(workStatus: string | null, sentAt: Date | null): E
 }
 
 function view(
-  row: { id: string; email: string; role: string; expiresAt: Date },
-  emailStatus: EmailStatus,
+  row: { id: string; email: string | null; role: string; expiresAt: Date; kind?: InvitationKind },
+  emailStatus: EmailStatus | null,
   actorRole: Role,
 ): InvitationView {
   const role = asRole(row.role);
+  const kind = row.kind ?? 'email';
   const allowed = can(actorRole, inviteAction(role));
-  return { id: row.id, email: row.email, role, expiresAt: row.expiresAt, emailStatus, canResend: allowed, canRevoke: allowed };
+  // A link has no address to send to again: there is no "resend". To replace one, revoke it and make a new one.
+  return { id: row.id, kind, email: row.email, role, expiresAt: row.expiresAt, emailStatus, canResend: allowed && kind === 'email', canRevoke: allowed };
 }
 
 /** Writes the email work row for an invitation inside the caller's transaction, and points the invitation at it. */
@@ -188,18 +197,56 @@ export async function createInvitation(
   return view({ id: invitationId, email: input.email, role: input.role, expiresAt }, 'queued', input.actor.role);
 }
 
+/**
+ * Make an invite link (ADR 0025, issue #37): a Staff invitation not tied to an email address, for whoever holds the link, once. One row on the team's
+ * shard, no email, no work row, nothing enqueued. The secret exists only in the returned link: only its hash is stored, so the link is shown ONCE and a
+ * lost one is revoked and made again. At most `linkMaxPending` links may wait per team; the team row is locked while the count and the insert run, so two
+ * simultaneous requests cannot both take the last place. Who may make one (Owner and Manager) is checked by the route against the permission table.
+ */
+export async function createInviteLink(
+  shards: Shards,
+  deps: InviteDeps,
+  input: { teamId: string; actor: { userId: string; role: Role } },
+): Promise<{ invitation: InvitationView; link: string }> {
+  const { teamId } = input;
+  const prisma = getShard(shards, teamId).primary;
+  const now = nowOf(deps);
+  const expiresAt = new Date(now.getTime() + deps.config.invites.linkExpiryHours * hour);
+  const issued = issueInviteToken(teamId);
+  const id = randomUUID();
+  const cap = deps.config.invites.linkMaxPending;
+
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
+      const pending = await tx.$queryRaw<Array<{ n: bigint }>>`
+        SELECT count(*) AS n FROM invitations
+        WHERE team_id = ${teamId}::uuid AND kind = 'link' AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()`;
+      if (Number(pending[0]?.n ?? 0) >= cap) throw new ApiError('invite_link_limit');
+      await tx.$executeRaw`
+        INSERT INTO invitations (id, team_id, kind, email, role, token_hash, expires_at, invited_by_user_id)
+        VALUES (${id}::uuid, ${teamId}::uuid, 'link'::invitation_kind, NULL, 'staff'::team_role, ${issued.tokenHash}, ${expiresAt}, ${input.actor.userId}::uuid)`;
+    },
+    { maxWait: deps.config.transactionMaxWaitMs },
+  );
+
+  return { invitation: view({ id, kind: 'link', email: null, role: 'staff', expiresAt }, null, input.actor.role), link: linkFor(deps, issued.token) };
+}
+
 /** Pending invitations (not accepted, not revoked, not expired) with the state of each one's latest email. Owner and Manager only (the route gates it). */
 export async function listInvitations(shards: Shards, teamId: string, actorRole: Role): Promise<InvitationView[]> {
   const prisma = getShard(shards, teamId).primary;
   const rows = await prisma.$queryRaw<
-    Array<{ id: string; email: string; role: string; expires_at: Date; wr_status: string | null; wr_sent_at: Date | null }>
+    Array<{ id: string; kind: InvitationKind; email: string | null; role: string; expires_at: Date; wr_status: string | null; wr_sent_at: Date | null }>
   >`
-    SELECT i.id, i.email, i.role::text AS role, i.expires_at, wr.status::text AS wr_status, wr.sent_at AS wr_sent_at
+    SELECT i.id, i.kind::text AS kind, i.email, i.role::text AS role, i.expires_at, wr.status::text AS wr_status, wr.sent_at AS wr_sent_at
     FROM invitations i
     LEFT JOIN work_rows wr ON wr.id = i.email_work_row_id
     WHERE i.team_id = ${teamId}::uuid AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()
     ORDER BY i.created_at ASC, i.id ASC`;
-  return rows.map((r) => view({ id: r.id, email: r.email, role: r.role, expiresAt: r.expires_at }, emailStatusOf(r.wr_status, r.wr_sent_at), actorRole));
+  return rows.map((r) =>
+    view({ id: r.id, kind: r.kind, email: r.email, role: r.role, expiresAt: r.expires_at }, r.kind === 'link' ? null : emailStatusOf(r.wr_status, r.wr_sent_at), actorRole),
+  );
 }
 
 /**
@@ -228,12 +275,14 @@ export async function resendInvitation(
 
   const result = await prisma.$transaction(
     async (tx) => {
-      const rows = await tx.$queryRaw<Array<{ email: string; role: string }>>`
+      const rows = await tx.$queryRaw<Array<{ email: string | null; role: string }>>`
         SELECT email, role::text AS role FROM invitations
         WHERE id = ${input.invitationId}::uuid AND team_id = ${teamId}::uuid AND accepted_at IS NULL AND revoked_at IS NULL
         FOR UPDATE`;
       const row = rows[0];
       if (!row) throw new ApiError('not_found', { reason: 'invitation_not_pending' });
+      // An invite link has no address, so there is nothing to send again: it answers like an invitation that is not there (ADR 0025).
+      if (row.email === null) throw new ApiError('not_found', { reason: 'invite_link_has_no_email' });
       const role = asRole(row.role);
       if (!can(input.actor.role, inviteAction(role))) throw new ApiError('forbidden', { reason: `role_${input.actor.role}_cannot_${inviteAction(role)}` });
 
@@ -287,7 +336,9 @@ export async function revokeInvitation(
 interface PendingInvitation {
   id: string;
   teamId: string;
-  email: string;
+  kind: InvitationKind;
+  /** The invited address; null for an invite link. */
+  email: string | null;
   role: InvitableRole;
   invitedByUserId: string;
   teamName: string;
@@ -303,9 +354,9 @@ async function findPending(shards: Shards, token: string): Promise<PendingInvita
   if (!parsed) return null;
   const prisma = getShard(shards, parsed.teamId).primary;
   const rows = await prisma.$queryRaw<
-    Array<{ id: string; team_id: string; email: string; role: string; invited_by_user_id: string; team_name: string; time_zone: string }>
+    Array<{ id: string; team_id: string; kind: InvitationKind; email: string | null; role: string; invited_by_user_id: string; team_name: string; time_zone: string }>
   >`
-    SELECT i.id, i.team_id, i.email, i.role::text AS role, i.invited_by_user_id, t.name AS team_name, t.time_zone
+    SELECT i.id, i.team_id, i.kind::text AS kind, i.email, i.role::text AS role, i.invited_by_user_id, t.name AS team_name, t.time_zone
     FROM invitations i JOIN teams t ON t.id = i.team_id
     WHERE i.team_id = ${parsed.teamId}::uuid AND i.token_hash = ${parsed.tokenHash}
       AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > NOW()`;
@@ -314,6 +365,7 @@ async function findPending(shards: Shards, token: string): Promise<PendingInvita
   return {
     id: r.id,
     teamId: r.team_id,
+    kind: r.kind,
     email: r.email,
     role: asRole(r.role),
     invitedByUserId: r.invited_by_user_id,
@@ -347,14 +399,34 @@ async function findAcceptedBy(
   return { team: { id: r.team_id, name: r.team_name, timeZone: r.time_zone }, role: r.role as Role };
 }
 
+/** The caller's own membership of a team, if they have one: the team and the role they ALREADY hold (an invitation never changes it). */
+async function membershipOf(
+  shards: Shards,
+  teamId: string,
+  userId: string,
+): Promise<{ team: { id: string; name: string; timeZone: string }; role: Role } | null> {
+  const rows = await getShard(shards, teamId).primary.$queryRaw<Array<{ team_id: string; team_name: string; time_zone: string; role: string }>>`
+    SELECT t.id AS team_id, t.name AS team_name, t.time_zone, m.role::text AS role
+    FROM memberships m JOIN teams t ON t.id = m.team_id
+    WHERE m.team_id = ${teamId}::uuid AND m.user_id = ${userId}::uuid`;
+  const r = rows[0];
+  return r ? { team: { id: r.team_id, name: r.team_name, timeZone: r.time_zone }, role: r.role as Role } : null;
+}
+
 export interface PendingInvitePreview {
   status: 'pending';
+  /** `link`: not tied to an address; any signed-in account may accept it once (ADR 0025). */
+  kind: InvitationKind;
   team: { name: string };
   role: InvitableRole;
   inviter: { name: string; role: Role | null };
-  email: string;
-  /** The caller's own account against the invited address. 'none' when nobody is signed in. Decided here; the app only displays it. */
-  account: 'matches' | 'different' | 'none';
+  /** The invited address; null for an invite link. */
+  email: string | null;
+  /**
+   * The caller's own account against the invited address. 'none' when nobody is signed in; 'open' for a link and a signed-in caller (there is no address to
+   * compare: the link is the credential). Decided here; the app only displays it.
+   */
+  account: 'matches' | 'different' | 'none' | 'open';
 }
 
 /** The caller already accepted this exact token and is still a member (ADR 0017): the same team and role the accept answer gives, so the app can go there. */
@@ -379,6 +451,11 @@ export async function previewInvitation(shards: Shards, input: { token: string; 
     if (replay) return { status: 'already_member', ...replay };
     throw new ApiError('invite_unavailable');
   }
+  // Someone already on the team who opens a link is sent to their team: the link is neither shown as theirs to use nor consumed (ADR 0025).
+  if (inv.kind === 'link' && input.viewerUserId) {
+    const existing = await membershipOf(shards, inv.teamId, input.viewerUserId);
+    if (existing) return { status: 'already_member', ...existing };
+  }
   const identity = identityDb(shards);
   const inviter = await identity.user.findUnique({ where: { id: inv.invitedByUserId }, select: { name: true } });
   const inviterMembership = await getShard(shards, inv.teamId).primary.membership.findUnique({
@@ -387,11 +464,16 @@ export async function previewInvitation(shards: Shards, input: { token: string; 
   });
   let account: PendingInvitePreview['account'] = 'none';
   if (input.viewerUserId) {
-    const viewer = await identity.user.findUnique({ where: { id: input.viewerUserId }, select: { email: true } });
-    account = viewer && viewer.email === inv.email ? 'matches' : 'different';
+    if (inv.kind === 'link') {
+      account = 'open';
+    } else {
+      const viewer = await identity.user.findUnique({ where: { id: input.viewerUserId }, select: { email: true } });
+      account = viewer && viewer.email === inv.email ? 'matches' : 'different';
+    }
   }
   return {
     status: 'pending',
+    kind: inv.kind,
     team: { name: inv.teamName },
     role: inv.role,
     inviter: { name: inviter?.name ?? '', role: inviterMembership?.role ?? null },
@@ -420,35 +502,65 @@ export async function acceptInvitation(
     throw new ApiError('invite_unavailable');
   }
 
+  // A link never touches an existing member: nothing is consumed and the role they hold stays as it is (ADR 0025).
+  if (inv.kind === 'link') {
+    const existing = await membershipOf(shards, inv.teamId, input.userId);
+    if (existing) return existing;
+  }
+
   const identity = identityDb(shards);
   const user = await identity.user.findUnique({ where: { id: input.userId }, select: { email: true } });
   if (!user) throw new ApiError('unauthenticated', { reason: 'user_missing' });
-  if (user.email !== inv.email) throw new ApiError('invite_wrong_account');
+  // An email invitation is for one address. A link has none: whoever holds it may use it once, so there is nothing to compare.
+  if (inv.email !== null && user.email !== inv.email) throw new ApiError('invite_wrong_account');
 
   await identity.$transaction(async (tx) => {
-    await tx.$executeRaw`UPDATE users SET email_verified_at = NOW(), updated_at = NOW() WHERE id = ${input.userId}::uuid AND email_verified_at IS NULL`;
+    // Redeeming an EMAIL invitation proves control of the address (security.md). A link proves nothing about it, so it verifies nothing.
+    if (inv.kind === 'email') {
+      await tx.$executeRaw`UPDATE users SET email_verified_at = NOW(), updated_at = NOW() WHERE id = ${input.userId}::uuid AND email_verified_at IS NULL`;
+    }
     await tx.userTeam.createMany({ data: [{ userId: input.userId, teamId: inv.teamId }], skipDuplicates: true });
   });
 
   const prisma = getShard(shards, inv.teamId).primary;
+  try {
+    await consumeAndJoin(prisma, inv, input.userId);
+  } catch (error) {
+    // Several people may hold one link, so losing the race for it is ordinary: take back the directory row written above if the caller is NOT a member
+    // (best effort; the orphan sweep, issue #33, covers a failure here), so a stranger's directory is not left pointing at a team.
+    if (inv.kind === 'link' && error instanceof ApiError && error.code === 'invite_unavailable') await dropUnusedDirectoryRow(shards, inv.teamId, input.userId);
+    throw error;
+  }
+  return { team: { id: inv.teamId, name: inv.teamName, timeZone: inv.teamTimeZone }, role: inv.role };
+}
+
+async function dropUnusedDirectoryRow(shards: Shards, teamId: string, userId: string): Promise<void> {
+  try {
+    if (await membershipOf(shards, teamId, userId)) return;
+    await identityDb(shards).userTeam.deleteMany({ where: { userId, teamId } });
+  } catch {
+    // Ignored on purpose: an extra directory row is only a hint that over-reports (ADR 0013).
+  }
+}
+
+/** Step 3: ONE transaction on the team's shard that consumes the invitation (conditional, so it is single use) and writes the membership. */
+async function consumeAndJoin(prisma: PrismaClient, inv: PendingInvitation, userId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const consumed = await tx.$executeRaw`
-      UPDATE invitations SET accepted_at = NOW(), accepted_by_user_id = ${input.userId}::uuid, updated_at = NOW()
+      UPDATE invitations SET accepted_at = NOW(), accepted_by_user_id = ${userId}::uuid, updated_at = NOW()
       WHERE id = ${inv.id}::uuid AND team_id = ${inv.teamId}::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()`;
     if (consumed === 0) {
       // Lost a race. If the SAME person's other request just won, this one is the same success; anything else is "unavailable".
       const done = await tx.$queryRaw<Array<{ ok: number }>>`
         SELECT 1 AS ok FROM invitations i
         JOIN memberships m ON m.team_id = i.team_id AND m.user_id = i.accepted_by_user_id
-        WHERE i.id = ${inv.id}::uuid AND i.accepted_by_user_id = ${input.userId}::uuid`;
+        WHERE i.id = ${inv.id}::uuid AND i.accepted_by_user_id = ${userId}::uuid`;
       if (done.length === 0) throw new ApiError('invite_unavailable', { reason: 'lost_race' });
       return;
     }
     await tx.$executeRaw`
       INSERT INTO memberships (team_id, user_id, role)
-      VALUES (${inv.teamId}::uuid, ${input.userId}::uuid, ${inv.role}::team_role)
+      VALUES (${inv.teamId}::uuid, ${userId}::uuid, ${inv.role}::team_role)
       ON CONFLICT (team_id, user_id) DO NOTHING`;
   });
-
-  return { team: { id: inv.teamId, name: inv.teamName, timeZone: inv.teamTimeZone }, role: inv.role };
 }

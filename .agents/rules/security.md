@@ -129,7 +129,9 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
 ## Invites
 
 - **Who may invite:** Owner may invite as Manager or Staff. Manager may invite as Staff only. Nobody is
-  invited as Owner.
+  invited as Owner. **Invite links (ADR 0025) are Staff only**, made by an Owner or a Manager (`invite.staff`):
+  a link grants its role to whoever holds it, so a Manager is invited by email, where the address is the
+  second factor.
 - The authoritative invite lives on the team's shard (`data.md`): token hash, expiry, granted role, and for
   email invites the intended address.
 - **Every invite token is single-use**, consumed atomically.
@@ -139,8 +141,15 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
     Merely opening a page never consumes or verifies anything: email scanners open links automatically.
   - **Signup email verification is deferred** (documented initial policy). An unverified address grants no
     trusted identity privileges and can't satisfy an email-bound invite except through that redemption.
-  - **Link invites** are bearer links: whoever holds the link may use it, once. *(Not built: the design
-  removed them, Figma 292:1026.)*
+  - **Link invites** (ADR 0025) are bearer links: whoever holds the link may use it, once, and it is **not
+    tied to an email address** (`kind = 'link'`, `email` NULL, Staff only, enforced by a CHECK). **Any
+    signed-in account** may accept it; there is no address to match, and accepting **verifies no address**
+    (a link proves nothing about one). Someone **already on the team** who opens a link is told so and sent
+    to their team: the link is **not consumed** and their role **never changes**. The link lives for
+    `INVITE_LINK_EXPIRY_HOURS` (default 48, chosen, not verified), at most `INVITE_LINK_MAX_PENDING` (10)
+    may be pending per team (counted under a lock on the team row, so a race cannot exceed it), and the link
+    is **shown once**, in the creation answer: only its hash is stored. Creating one sends no email, so it has
+    its own limits and never uses the app-wide email cap.
 - **Seat capacity is claimed atomically** in the consumption transaction: one conditional update on the
   team's billing row (e.g. `seats_used = seats_used + 1 WHERE seats_used < seat_limit`). Zero rows → the
   team is full, nothing is consumed. *Why: two separate checks could both take the last seat.* Seat limits
@@ -166,7 +175,7 @@ Redeeming a magic link or an email-bound invite proves control of the address. W
 
 - In Valkey, never in memory. Per IP and per user (or per submitted email before there is a user). Every
   key has a TTL. Thresholds are config, recorded in `SECURITY.md`.
-- **Limited:** signup, login, magic-link request and redemption, refresh, reset request, reset-token submission, invite creation and
+- **Limited:** signup, login, magic-link request and redemption, refresh, reset request, reset-token submission, invite creation (email and link) and
   acceptance, payment initiation, and the activity feed (expensive at 200 concurrent users).
 - **When Valkey is unreachable or rejects a write** (possible under `noeviction`): everything above fails
   closed with 503, **including the feed** (Dave decided on 2026-10-26, issue #11, ADR 0022: failing open would
@@ -221,7 +230,10 @@ Also covered, not counted: hostile cursor and limit input, secrets in Git histor
     emails get identical responses.
 12. **Invites:** single use; expired, revoked and wrong-team tokens fail with one identical answer; a Manager
     can't grant Manager; an email mismatch fails; opening the preview consumes nothing; acceptance without an
-    authenticated identity fails; two concurrent acceptances by the same person → one membership. *(Two
+    authenticated identity fails; two concurrent acceptances by the same person → one membership. **Links:**
+    five simultaneous acceptances of one link → exactly one membership; a Manager link is impossible (API and
+    CHECK); a link verifies no address; an existing member's role never changes and the link is not consumed;
+    the pending cap holds under concurrency. *(Two
     acceptances for the last seat → exactly one succeeds arrives with seat limits in the billing slice.)*
 13. **Validation:** unknown key, non-UUID path ID, oversized `limit`, tampered cursor → 400 each.
 14. **Rate limits:** repeated logins → 429 **without running password verification**; with Valkey down,

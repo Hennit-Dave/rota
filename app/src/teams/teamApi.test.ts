@@ -68,7 +68,7 @@ test('an unreadable success answer is an error, not a team', async () => {
 
 test('getTeam: GET /teams/:teamId with the access token and no body; the answer carries what the server allows', async () => {
   const h = makeHarness({
-    handler: () => json(200, { team: { id: created.team.id, name: 'The Olive Room', timeZone: 'Africa/Lagos', createdAt: '2026-10-23T10:00:00.000Z' }, role: 'manager', invitableRoles: ['staff'], canManageInvitations: true, canEditShifts: true }),
+    handler: () => json(200, { team: { id: created.team.id, name: 'The Olive Room', timeZone: 'Africa/Lagos', createdAt: '2026-10-23T10:00:00.000Z' }, role: 'manager', invitableRoles: ['staff'], canManageInvitations: true, canCreateInviteLink: true, canEditShifts: true }),
   });
   const detail = await createTeamApi(h.client).getTeam(created.team.id);
   assert.deepEqual(detail.invitableRoles, ['staff']);

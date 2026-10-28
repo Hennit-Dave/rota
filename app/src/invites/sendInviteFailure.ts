@@ -10,6 +10,7 @@ export type SendInviteFailure =
   | { kind: 'rate_limited'; message: string }
   | { kind: 'offline'; message: string }
   | { kind: 'not_allowed'; message: string }
+  | { kind: 'link_limit'; message: string }
   | { kind: 'generic'; message: string; reference: string | null };
 
 const generic = (reference: string | null): SendInviteFailure => ({ kind: 'generic', message: bannerCopy.generic, reference });
@@ -37,6 +38,8 @@ export function describeSendInviteFailure(error: unknown): SendInviteFailure | n
       const wait = formatRetryWait(error.retryAfterSeconds);
       return { kind: 'rate_limited', message: wait ? bannerCopy.rateLimited(wait) : bannerCopy.rateLimitedNoWait };
     }
+    case 'invite_link_limit':
+      return { kind: 'link_limit', message: inviteFormCopy.link.limit };
     case 'forbidden':
     case 'not_found':
       return { kind: 'not_allowed', message: inviteFormCopy.notAllowed };

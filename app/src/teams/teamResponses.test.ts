@@ -59,6 +59,7 @@ const detailBody = {
   role: 'owner',
   invitableRoles: ['manager', 'staff'],
   canManageInvitations: true,
+  canCreateInviteLink: true,
   canEditShifts: true,
 };
 
@@ -68,8 +69,10 @@ test('GET /teams/:teamId is read field by field: the team, the caller\'s role, a
     role: 'owner',
     invitableRoles: ['manager', 'staff'],
     canManageInvitations: true,
+    canCreateInviteLink: true,
     canEditShifts: true,
   });
+  assert.equal(parseTeamDetail({ ...detailBody, role: 'staff', canCreateInviteLink: false }).canCreateInviteLink, false);
   assert.deepEqual(parseTeamDetail({ ...detailBody, role: 'staff', invitableRoles: [], canManageInvitations: false }).invitableRoles, []);
   assert.equal(parseTeamDetail({ ...detailBody, role: 'staff', canEditShifts: false }).canEditShifts, false);
 });
@@ -81,6 +84,8 @@ test('a team detail that cannot be read throws (an unknown role to invite, a mis
     { ...detailBody, invitableRoles: ['owner'] },
     { ...detailBody, invitableRoles: 'staff' },
     { ...detailBody, canManageInvitations: 'yes' },
+    { ...detailBody, canCreateInviteLink: 'yes' },
+    { ...detailBody, canCreateInviteLink: undefined },
     { ...detailBody, canEditShifts: 'yes' },
     { ...detailBody, canEditShifts: undefined },
     { ...detailBody, role: 'boss' },
