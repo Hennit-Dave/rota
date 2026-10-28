@@ -11,6 +11,7 @@ const detail = (invitableRoles: TeamDetail['invitableRoles']): TeamDetail => ({
   role: 'owner',
   invitableRoles,
   canManageInvitations: invitableRoles.length > 0,
+  canCreateInviteLink: invitableRoles.length > 0,
   canEditShifts: invitableRoles.length > 0,
 });
 

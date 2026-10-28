@@ -6,6 +6,7 @@ import type { PendingInvitePreview } from './inviteResponses';
 
 const pending: PendingInvitePreview = {
   status: 'pending',
+  kind: 'email',
   team: { name: 'The Olive Room' },
   role: 'staff',
   inviter: { name: 'Dave Hennit', role: 'owner' },

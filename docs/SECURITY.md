@@ -92,6 +92,16 @@ loses access on the next request". `shifts.integration.test.ts`: the same isolat
 
 **Proving tests.** `invites.integration.test.ts`: "create" (hash only, the secret never in the invitations row), "unavailable is ONE answer", "accept" (role from the invitation, nothing cleared, session intact), "accept needs a signed-in account...", "two simultaneous accepts", "a join that fails halfway", "preview consumes nothing", "preview mirrors accept", "REDACTION". `invites-limits.integration.test.ts`. `tokens.unit.test.ts`.
 
+**Invite links (ADR 0025, issue #37).** A link is the other half of "invite by email or link": a Staff invitation **not tied to an email address**, usable once by whoever holds it. What changes against the email threat above, and what does not:
+- **A bearer credential.** Anyone who sees the link first can use it first. It is bounded: **Staff only** (a Manager is invited by email, where the address is the second factor; the API, the permission table and a database CHECK all refuse a Manager link), **single use** (the same conditional `UPDATE` as an email invitation, so five simultaneous acceptances give one membership), **48 hours** (`INVITE_LINK_EXPIRY_HOURS`, chosen), **revocable** by an Owner or Manager, and **capped** at 10 pending per team (`INVITE_LINK_MAX_PENDING`, counted under a lock on the team row).
+- **Same token design.** `<teamId>.<secret>`, 32 random bytes, only the SHA-256 stored, the **link shown once** in the creation answer and nowhere else. The same `404 invite_unavailable` for unknown, malformed, wrong-team, expired, used and revoked links, in preview and in accept.
+- **No address, so no match and no verification.** Any signed-in account may accept it. Accepting **does not verify** an email address (a link proves nothing about one), so an unverified account stays unverified.
+- **An existing member is never touched.** Opening a link as someone already on the team answers `already_member` with the role they hold, does not consume the link, and never changes a role. The account that already used a link gets the same success again (a lost answer is safe to retry).
+- **Race losers.** A loser's directory row is taken back if they are not a member, so the directory is not left pointing at a team they are not in (best effort; the orphan sweep, issue #33, covers a failure).
+- **Creating sends no email**, so it has its own limits (`invite_link_user`, `invite_link_team`) and never uses the app-wide email cap.
+- **Proving tests.** `invite-links.integration.test.ts`: the single-use race, the identical answer for every unusable link, Staff only (API and CHECK), the existing-member case, no address verification, the cap under concurrency, the limits, and the production app serving the route.
+- **Weakness, written down.** Nothing says who a link was meant for; the activity record shows who accepted it. If a link leaks before it is used, whoever uses it first gets in as Staff, until the Owner or Manager revokes it (visible in the pending list) or it expires.
+
 ## Threat 8b (reset and magic-link tokens): theft, reuse, enumeration and takeover
 
 **What it is.** A reset or magic-link token is a credential that sets a password or starts a session. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump; and the request that asks for it can be used to find out which addresses have accounts.
@@ -180,6 +190,8 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `team_create_user` | 5 | 1 hour | `RATE_LIMIT_TEAM_CREATE_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-23) |
 | `invite_send_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_SEND_USER_MAX` / `_WINDOW_SECONDS` (create and resend; approved 2026-10-23) |
 | `invite_send_team` | 20 | 24 hours | `RATE_LIMIT_INVITE_SEND_TEAM_MAX` / `_WINDOW_SECONDS` (per team; counted **after** the membership check; approved 2026-10-23) |
+| `invite_link_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_LINK_USER_MAX` / `_WINDOW_SECONDS` (creating an invite link; mirrors `invite_send_user`; approved 2026-10-28; **chosen, not measured**; ADR 0025) |
+| `invite_link_team` | 20 | 24 hours | `RATE_LIMIT_INVITE_LINK_TEAM_MAX` / `_WINDOW_SECONDS` (per team, counted after the membership check; mirrors `invite_send_team`; approved 2026-10-28; **chosen, not measured**; ADR 0025) |
 | `invite_send_global` | 50 | UTC day | `INVITE_GLOBAL_DAILY_CAP` (app-wide; counted only for requests that passed every other check; resets at 00:00 UTC; approved 2026-10-23) |
 | `invite_preview_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_PREVIEW_IP_MAX` / `_WINDOW_SECONDS` |
 | `invite_accept_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_ACCEPT_IP_MAX` / `_WINDOW_SECONDS` |

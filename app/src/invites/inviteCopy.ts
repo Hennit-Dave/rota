@@ -21,6 +21,8 @@ export const inviteCopy = {
     subtitle: (team: string, role: string) => `Join ${team} as ${role}.`,
     from: (inviter: string, role: string | null) => (role ? `From ${inviter} · ${role}` : `From ${inviter}`),
     body: (email: string) => `You are not signed in. Sign in or create an account with ${email} to accept.`,
+    // An invite link is not tied to an address (ADR 0025): any account will do. Not in Figma yet.
+    bodyLink: 'You are not signed in. Sign in or create an account to accept. This link can be used once.',
     yourRole: (role: string) => `Your role: ${role}`,
     signIn: 'Sign in',
     createAccount: 'Create account',

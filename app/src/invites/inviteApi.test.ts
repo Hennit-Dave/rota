@@ -8,6 +8,7 @@ const token = '3278f64b-0284-4626-bd0c-1ed21ca65413.Zm9vYmFy';
 const teamId = '11111111-1111-4111-8111-111111111111';
 const pending = {
   status: 'pending',
+  kind: 'email',
   team: { name: 'The Olive Room' },
   role: 'staff',
   inviter: { name: 'Dave Hennit', role: 'owner' },
@@ -72,7 +73,7 @@ test('preview that the server never answers: it ends with a timed-out NetworkErr
   await assert.rejects(createInviteApi(h.client).accept(token), (e: unknown) => e instanceof NetworkError && e.timedOut);
 });
 
-const sentInvitation = { id: 'i1', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
+const sentInvitation = { id: 'i1', kind: 'email', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
 
 test('createInvitation: POST /teams/:teamId/invitations sends only the address (trimmed) and the role, with the access token', async () => {
   const h = makeHarness({ handler: () => json(201, { invitation: sentInvitation }) });

@@ -6,6 +6,7 @@ import { parseAcceptResponse, parseInvitePreview } from './inviteResponses';
 const teamId = '11111111-1111-4111-8111-111111111111';
 const pending = {
   status: 'pending',
+  kind: 'email',
   team: { name: 'The Olive Room' },
   role: 'staff',
   inviter: { name: 'Dave Hennit', role: 'owner' },
@@ -65,7 +66,7 @@ test('the accept answer becomes a team summary, and a damaged one throws', () =>
 
 import { parseInvitationResponse } from './inviteResponses';
 
-const invitation = { id: 'i1', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
+const invitation = { id: 'i1', kind: 'email', email: 'sofia@example.com', role: 'staff', expiresAt: '2026-10-30T18:33:23.352Z', emailStatus: 'queued', canResend: true, canRevoke: true };
 
 test('an invitation answer is read field by field', () => {
   assert.deepEqual(parseInvitationResponse({ invitation }), invitation);

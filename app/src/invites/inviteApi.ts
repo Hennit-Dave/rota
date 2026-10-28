@@ -1,6 +1,6 @@
 import type { createApiClient } from '../api/client';
 import type { TeamSummary } from '../teams/teamResponses';
-import { parseAcceptResponse, parseInvitationResponse, parseInvitationsList, parseInvitePreview, type InvitationView, type InvitePreview } from './inviteResponses';
+import { parseAcceptResponse, parseCreatedLink, parseInvitationResponse, parseInvitationsList, parseInvitePreview, type InvitationView, type InvitePreview } from './inviteResponses';
 import type { InvitableRole } from '../teams/teamResponses';
 
 type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post' | 'request'>;
@@ -28,6 +28,13 @@ export function createInviteApi(client: Client) {
       return parseInvitationResponse(
         await client.post<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations`, { email: input.email.trim(), role: input.role }),
       );
+    },
+    /**
+     * POST /teams/:teamId/invitations/links: a link anyone may use once, as Staff (ADR 0025). Nothing is sent: no address, no role, the team from the path
+     * and the creator from the session. The answer holds the link, and it is the only time it exists: the server keeps its hash only.
+     */
+    async createInviteLink(teamId: string): Promise<{ invitation: InvitationView; link: string }> {
+      return parseCreatedLink(await client.post<unknown>(`/teams/${encodeURIComponent(teamId)}/invitations/links`));
     },
     /** GET /teams/:teamId/invitations: the pending invitations, oldest first, each with the server's email state and what the caller may do with it. */
     async listInvitations(teamId: string, signal?: AbortSignal): Promise<InvitationView[]> {

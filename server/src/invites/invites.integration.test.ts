@@ -244,7 +244,7 @@ test('list: Owner and Manager see pending invitations with the email state; Staf
   const listed = await app.get(`/teams/${teamId}/invitations`, ownerH);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.invitations.map((i: { id: string }) => i.id), [a.id, b.id]);
-  assert.deepEqual(Object.keys(listed.body.invitations[0]).sort(), ['canResend', 'canRevoke', 'email', 'emailStatus', 'expiresAt', 'id', 'role']);
+  assert.deepEqual(Object.keys(listed.body.invitations[0]).sort(), ['canResend', 'canRevoke', 'email', 'emailStatus', 'expiresAt', 'id', 'kind', 'role']);
   assert.equal(listed.body.invitations.every((i: { emailStatus: string }) => i.emailStatus === 'queued'), true);
 
   // The email state is read from the invitation's latest work row: queued -> sent, or failed (two ways).
@@ -332,6 +332,7 @@ test('preview consumes nothing and changes no row, however many times it is open
   assert.equal(anon.status, 200);
   assert.deepEqual(anon.body, {
     status: 'pending',
+    kind: 'email',
     team: { name: 'The Olive Room' },
     role: 'staff',
     inviter: { name: 'Dave Hennit', role: 'owner' },

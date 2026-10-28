@@ -39,6 +39,8 @@ export interface AuthConfig {
     teamCreateUser: RateRuleConfig;
     feedUser: RateRuleConfig;
     swapRequestUser: RateRuleConfig;
+    inviteLinkUser: RateRuleConfig;
+    inviteLinkTeam: RateRuleConfig;
     settingsReadUser: RateRuleConfig;
     settingsWriteUser: RateRuleConfig;
     inviteSendUser: RateRuleConfig;
@@ -60,6 +62,10 @@ export interface AuthConfig {
   invites: {
     /** How long an invitation (and its link) lasts, counted from create or resend. */
     expiryDays: number;
+    /** How long an invite LINK lasts, in hours, counted from its creation (ADR 0025). */
+    linkExpiryHours: number;
+    /** The most invite links one team may have pending (not used, revoked or expired) at once (ADR 0025). */
+    linkMaxPending: number;
     /** App-wide cap on invite emails per UTC day (a count, not a window: the window is the UTC day). */
     globalDailyCap: number;
     /** https origin of the App Link host. The link is `<base>/invite/<teamId>.<secret>`. */
@@ -121,6 +127,9 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       swapRequestUser: rule(env, 'RATE_LIMIT_SWAP_REQUEST_USER', { max: 10, windowSeconds: 3600 }),
       // PROPOSED in the settings PR (ADR 0024), awaiting Dave's approval; CHOSEN, NOT MEASURED. Reads mirror the feed (120 per minute: every foreground
       // refetch is one read); writes are 30 per minute, far above what a person tapping settings can do.
+      // Approved by Dave 2026-10-28 (invite links, ADR 0025): they mirror the email invites' own limits (10 per user per hour, 20 per team per day). CHOSEN, NOT MEASURED.
+      inviteLinkUser: rule(env, 'RATE_LIMIT_INVITE_LINK_USER', { max: 10, windowSeconds: 3600 }),
+      inviteLinkTeam: rule(env, 'RATE_LIMIT_INVITE_LINK_TEAM', { max: 20, windowSeconds: 86_400 }),
       settingsReadUser: rule(env, 'RATE_LIMIT_SETTINGS_READ_USER', { max: 120, windowSeconds: 60 }),
       settingsWriteUser: rule(env, 'RATE_LIMIT_SETTINGS_WRITE_USER', { max: 30, windowSeconds: 60 }),
       // Approved by Dave 2026-10-23 (Invites plan). Unauthenticated preview and accept reuse the login-IP baseline (30 per 15 minutes);
@@ -148,6 +157,10 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       // 7 days (Dave, 2026-10-23, ADR 0015): long enough for a shift worker who checks email every few days, short enough for a token that
       // grants team access (and is tied to one email address).
       expiryDays: positiveInt(env, 'INVITE_EXPIRY_DAYS', 7),
+      // 48 hours and at most 10 pending per team (Dave, 2026-10-28, ADR 0025): a link is pasted into a chat and works for whoever holds it, so it lives
+      // much shorter than an email invitation. CHOSEN, NOT VERIFIED OR MEASURED.
+      linkExpiryHours: positiveInt(env, 'INVITE_LINK_EXPIRY_HOURS', 48),
+      linkMaxPending: positiveInt(env, 'INVITE_LINK_MAX_PENDING', 10),
       // 50 per UTC day (Dave, 2026-10-23, ADR 0015): Resend's free plan sends 100 emails per UTC day in total; half is kept for reset,
       // magic link (slice 2b) and proofs.
       globalDailyCap: positiveInt(env, 'INVITE_GLOBAL_DAILY_CAP', 50),

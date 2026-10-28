@@ -70,6 +70,8 @@ export interface TeamDetail {
   role: TeamRole;
   invitableRoles: InvitableRole[];
   canManageInvitations: boolean;
+  /** Whether to offer "Create an invite link" (ADR 0025): the server's `invite.staff`. The server checks again when the link is made. */
+  canCreateInviteLink: boolean;
   /** Whether this person may create, edit and delete shifts (the server's `shifts.edit`). The server decides again on every write. */
   canEditShifts: boolean;
 }
@@ -77,10 +79,10 @@ export interface TeamDetail {
 export function parseTeamDetail(body: unknown): TeamDetail {
   if (!isRecord(body) || !isRecord(body.team)) throw unreadable();
   const { id, name, timeZone } = body.team;
-  const { role, invitableRoles, canManageInvitations, canEditShifts } = body;
+  const { role, invitableRoles, canManageInvitations, canCreateInviteLink, canEditShifts } = body;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof timeZone !== 'string' || !isRole(role)) throw unreadable();
-  if (!Array.isArray(invitableRoles) || !invitableRoles.every(isInvitableRole) || typeof canManageInvitations !== 'boolean' || typeof canEditShifts !== 'boolean') throw unreadable();
-  return { team: { id, name, timeZone }, role, invitableRoles: [...invitableRoles], canManageInvitations, canEditShifts };
+  if (!Array.isArray(invitableRoles) || !invitableRoles.every(isInvitableRole) || typeof canManageInvitations !== 'boolean' || typeof canCreateInviteLink !== 'boolean' || typeof canEditShifts !== 'boolean') throw unreadable();
+  return { team: { id, name, timeZone }, role, invitableRoles: [...invitableRoles], canManageInvitations, canCreateInviteLink, canEditShifts };
 }
 
 /** A member as GET /teams/:teamId/members lists them. */

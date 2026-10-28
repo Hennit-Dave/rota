@@ -23,6 +23,7 @@ export type ErrorCode =
   | 'invite_wrong_account'
   | 'already_member'
   | 'invite_pending'
+  | 'invite_link_limit'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -45,6 +46,7 @@ const STATUS: Record<ErrorCode, number> = {
   invite_wrong_account: 403,
   already_member: 409,
   invite_pending: 409,
+  invite_link_limit: 409,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -69,6 +71,7 @@ const MESSAGE: Record<ErrorCode, string> = {
   invite_wrong_account: 'This invitation is for a different account.',
   already_member: 'This person is already on the team.',
   invite_pending: 'An invitation is already pending for this email.',
+  invite_link_limit: 'This team already has the most invite links it may have waiting.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

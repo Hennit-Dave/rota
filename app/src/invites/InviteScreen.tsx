@@ -116,14 +116,14 @@ function InviteBody({ token }: { token: string | null }) {
 function SignedOutView({ preview, token }: { preview: PendingInvitePreview; token: string }) {
   const copy = inviteCopy.signedOut;
   const role = roleLabel[preview.role];
-  const params = inviteAuthParams({ token, email: preview.email });
+  const params = inviteAuthParams({ token, email: preview.email ?? '' });
   return (
     <Screen gap={space[16]}>
       <PageHeader eyebrowGap={16} teamName={preview.team.name} title={copy.title} subtitle={copy.subtitle(preview.team.name, role)} />
       <StatusBanner
         tone="info"
         title={copy.from(preview.inviter.name, preview.inviter.role ? roleLabel[preview.inviter.role] : null)}
-        body={copy.body(preview.email)}
+        body={preview.email === null ? copy.bodyLink : copy.body(preview.email)}
       />
       <InfoCard title={preview.team.name} body={copy.yourRole(role)} />
       <Spacer />

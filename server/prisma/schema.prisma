@@ -187,17 +187,27 @@ model UserTeam {
   @@map("user_teams")
 }
 
-// An email invitation to join a team in a role. Team-owned: lives on the team's shard. Only the SHA-256 of the secret is stored; the raw
+// Email invitations or invite links (ADR 0025): `kind` says which. A link has no email, is Staff only, and is single use like every invitation.
+enum InvitationKind {
+  email
+  link
+
+  @@map("invitation_kind")
+}
+
+// An invitation to join a team in a role (an email invitation, or a shareable link, see `kind`). Team-owned: lives on the team's shard. Only the SHA-256 of the secret is stored; the raw
 // secret exists in the link and, until the email job finishes, in the frozen work-row payload (ADR 0015, ADR 0016). A resend rotates
 // token_hash and expires_at on the same row. user ids point at shard A, so there is no foreign key (data.md).
 // Also in the SQL, which Prisma cannot express: CHECK "invitations_role_not_owner" (role <> 'owner'), CHECK "invitations_email_normalised"
 // (email = lower(btrim(email))), and the partial unique index
-// "invitations_one_pending_per_email" on (team_id, email) WHERE accepted_at IS NULL AND revoked_at IS NULL.
+// "invitations_one_pending_per_email" on (team_id, email) WHERE accepted_at IS NULL AND revoked_at IS NULL, and, for links (ADR 0025), CHECK
+// "invitations_kind_email_match" (an email invitation has an address, a link has none) and CHECK "invitations_link_staff_only".
 model Invitation {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId            String    @map("team_id") @db.Uuid
-  // Stored trimmed and lowercased by the application; the database refuses anything else (CHECK).
-  email             String
+  // Stored trimmed and lowercased by the application; the database refuses anything else (CHECK). NULL for a link.
+  email             String?
+  kind              InvitationKind @default(email)
   role              TeamRole
   tokenHash         Bytes     @unique @map("token_hash")
   expiresAt         DateTime  @map("expires_at") @db.Timestamptz(6)
