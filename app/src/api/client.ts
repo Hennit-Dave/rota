@@ -250,6 +250,8 @@ export function createApiClient(deps: ApiClientDeps) {
       request<T>(path, { ...options, method: 'GET' }),
     post: <T = unknown>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
       request<T>(path, { ...options, method: 'POST', body }),
+    patch: <T = unknown>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
+      request<T>(path, { ...options, method: 'PATCH', body }),
   };
 }
 

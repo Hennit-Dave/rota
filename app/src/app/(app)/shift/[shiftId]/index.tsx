@@ -6,7 +6,7 @@ import { formatLongDate, dayKeyOf, formatRange } from '../../../../shifts/shiftT
 import { ShiftUnavailable } from '../../../../shifts/ShiftUnavailable';
 import { useScheduleContext } from '../../../../shifts/useScheduleContext';
 import { useShift, useShiftsRange } from '../../../../shifts/useShifts';
-import { ColorsOverrideProvider, lightColors, space } from '../../../../theme';
+import { space } from '../../../../theme';
 import { Button } from '../../../../ui/Button';
 import { InfoCard } from '../../../../ui/InfoCard';
 import { PageHeader } from '../../../../ui/PageHeader';
@@ -15,14 +15,10 @@ import { useOnline } from '../../../../ui/useOnline';
 
 /**
  * One shift (Figma shift 7:44, shift-staff 102:308): its status, the time and place, who else is working then, the note, and for an Owner or Manager the
- * Edit and Delete buttons. "Working with you" lists the other people whose shifts overlap this one, read from the same schedule endpoint. Light-only (issue #24).
+ * Edit and Delete buttons. "Working with you" lists the other people whose shifts overlap this one, read from the same schedule endpoint.
  */
 export default function ShiftScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <ShiftDetail />
-    </ColorsOverrideProvider>
-  );
+  return <ShiftDetail />;
 }
 
 function ShiftDetail() {

@@ -9,7 +9,7 @@ import { invitationsQueryKey, useInvitations } from '../../../invites/useInvitat
 import { getApi, queryClient } from '../../../services';
 import { useSessionStore } from '../../../state/sessionStore';
 import { useTeamDetail } from '../../../teams/useTeamData';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { InfoCard } from '../../../ui/InfoCard';
 import { createLatch } from '../../../ui/latch';
@@ -22,14 +22,10 @@ import { useOnline } from '../../../ui/useOnline';
 /**
  * Revoke invitation (Figma 292:988): asks first, because it cannot be undone (the person is told the link is no longer available, and you send a new
  * invitation to bring them back). The route carries only the invitation's ID; the address is read from the list the server sent, so a stale or
- * unknown ID shows "no longer pending" instead of a guess. Light-only (issue #24).
+ * unknown ID shows "no longer pending" instead of a guess.
  */
 export default function RevokeScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Revoke />
-    </ColorsOverrideProvider>
-  );
+  return <Revoke />;
 }
 
 function Revoke() {

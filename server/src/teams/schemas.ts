@@ -7,6 +7,9 @@ export const TEAM_NAME_MAX_LENGTH = 80;
 // The runtime's own IANA list. A time zone the server cannot use for shift times is refused here, not later.
 const TIME_ZONES: ReadonlySet<string> = new Set(Intl.supportedValuesOf('timeZone'));
 
+/** The same list, for the user's own time zone setting (ADR 0024): one definition of "a time zone the server can use". */
+export const isKnownTimeZone = (value: string): boolean => TIME_ZONES.has(value);
+
 export const teamIdParams = z.strictObject({
   // Canonical lowercase hyphenated only: shardFor() refuses anything else, and an exception there would be a 500.
   teamId: z.string().regex(CANONICAL_UUID),

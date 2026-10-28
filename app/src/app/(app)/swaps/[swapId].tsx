@@ -8,7 +8,7 @@ import { swapListCopy, swapReviewCopy, swapSentCopy } from '../../../swaps/swapC
 import { describeSwapFailure, type SwapFailure } from '../../../swaps/swapFailure';
 import { swapHeader, swapReviewDetail, swapLabel, shiftWhen } from '../../../swaps/swapText';
 import { useSwap, useSwapActions } from '../../../swaps/useSwaps';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { InfoCard } from '../../../ui/InfoCard';
 import { createLatch } from '../../../ui/latch';
@@ -21,14 +21,10 @@ import { useOnline } from '../../../ui/useOnline';
 /**
  * One swap: "Review swap" for an Owner or Manager who may decide it (Figma swap-review 8:367), and the same screen as "Request sent", "Swap approved" (8:381)
  * or "Swap not approved" (8:394) for everyone else, by what the swap is now. The buttons are the server's answer (`canDecide`, `canCancel`); the server checks
- * again on every press, and a refusal (a shift changed, someone would be double-booked) is shown here. Light-only for now (issue #24).
+ * again on every press, and a refusal (a shift changed, someone would be double-booked) is shown here.
  */
 export default function SwapScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <SwapDetail />
-    </ColorsOverrideProvider>
-  );
+  return <SwapDetail />;
 }
 
 function SwapDetail() {

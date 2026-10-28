@@ -15,7 +15,7 @@ import { useSessionStore } from '../../../state/sessionStore';
 import { teamCopy } from '../../../teams/teamCopy';
 import { teamDetailQueryKey, type InvitableRole } from '../../../teams/teamResponses';
 import { useTeamDetail } from '../../../teams/useTeamData';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { useFocusSink } from '../../../ui/FocusSink';
 import { createLatch } from '../../../ui/latch';
@@ -34,14 +34,10 @@ import { useOnline } from '../../../ui/useOnline';
  * Only the address and the role are sent; the team comes from the route's selected team and the inviter from the session. The roles offered are exactly
  * what the server says this person may grant (an Owner: Manager or Staff; a Manager: Staff only, shown disabled). The email is sent later by the
  * worker, so "Email queued" is all the server can promise here. Button behaviour follows Figma note 232:415: disabled only while loading or offline,
- * enabled on every error. Light-only for now (issue #24).
+ * enabled on every error.
  */
 export default function InviteScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <InviteForm />
-    </ColorsOverrideProvider>
-  );
+  return <InviteForm />;
 }
 
 const sendInvitation = (teamId: string, input: { email: string; role: InvitableRole }) => createInviteApi(getApi()).createInvitation(teamId, input);

@@ -186,6 +186,8 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `invite_accept_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_ACCEPT_USER_MAX` / `_WINDOW_SECONDS` |
 | `swap_request_user` | 10 | 1 hour | `RATE_LIMIT_SWAP_REQUEST_USER_MAX` / `_WINDOW_SECONDS` (per user ID, creating a swap request only; approved 2026-10-27; **chosen, not measured**; ADR 0023) |
 | `feed_user` | 120 | 1 minute | `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-26; **chosen, not measured**: the load test, with 200 distinct users, checks it; ADR 0022) |
+| `settings_read_user` | 120 | 1 minute | `RATE_LIMIT_SETTINGS_READ_USER_MAX` / `_WINDOW_SECONDS` (per user ID; **proposed in the settings PR, awaiting approval; chosen, not measured**: it mirrors the feed, every foreground refetch is one read; ADR 0024) |
+| `settings_write_user` | 30 | 1 minute | `RATE_LIMIT_SETTINGS_WRITE_USER_MAX` / `_WINDOW_SECONDS` (per user ID; **proposed, awaiting approval; chosen, not measured**; ADR 0024) |
 
 The app-wide invite cap exists because Resend's free plan sends 100 emails per UTC day in total, shared with password reset and magic link (slice 2b) and any proof sends (ADR 0015). A limit keyed by the team or the whole app runs **after** the membership and role check, so a stranger cannot spend another team's budget (`security.md`).
 

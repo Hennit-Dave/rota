@@ -14,10 +14,12 @@ interface Props {
   selected: string | null;
   onSelect: (zone: string) => void;
   onClose: () => void;
+  /** The heading; the team's own picker keeps "Team time zone", the person's own setting says "Your time zone". */
+  title?: string;
 }
 
 /** A full-screen list of time zones with a search field. Plain React Native (no new native module). */
-export function TimeZonePicker({ visible, zones, selected, onSelect, onClose }: Props) {
+export function TimeZonePicker({ visible, zones, selected, onSelect, onClose, title = createTeamCopy.picker.title }: Props) {
   const colors = useColors();
   const [query, setQuery] = useState('');
   const shown = useMemo(() => filterTimeZones(zones, query), [zones, query]);
@@ -32,7 +34,7 @@ export function TimeZonePicker({ visible, zones, selected, onSelect, onClose }: 
         <View style={{ padding: space[24], gap: space[16], flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text variant="heading" accessibilityRole="header">
-              {createTeamCopy.picker.title}
+              {title}
             </Text>
             <TextAction label={createTeamCopy.picker.close} onPress={close} testID="time-zone-close" />
           </View>

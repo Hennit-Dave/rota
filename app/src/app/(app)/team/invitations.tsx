@@ -11,7 +11,7 @@ import { invitationsQueryKey, useInvitations } from '../../../invites/useInvitat
 import { getApi, queryClient } from '../../../services';
 import { useSessionStore } from '../../../state/sessionStore';
 import { useTeamDetail } from '../../../teams/useTeamData';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { EmptyCard } from '../../../ui/EmptyCard';
 import { createLatch } from '../../../ui/latch';
@@ -26,14 +26,10 @@ import { useOnline } from '../../../ui/useOnline';
 /**
  * Pending invitations (Figma 292:526; states loading 292:610, empty 292:675, error 292:725, resending 292:804, action error 292:890, email not sent
  * 294:3986). Who may resend or revoke each row is the server's `canResend` and `canRevoke`; this screen decides nothing. While one action runs every
- * action is disabled and the one in progress shows the spinner (Figma note 232:415). "Email not sent" is the server's emailStatus `failed`. Light-only (issue #24).
+ * action is disabled and the one in progress shows the spinner (Figma note 232:415). "Email not sent" is the server's emailStatus `failed`.
  */
 export default function InvitationsScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Invitations />
-    </ColorsOverrideProvider>
-  );
+  return <Invitations />;
 }
 
 function Invitations() {

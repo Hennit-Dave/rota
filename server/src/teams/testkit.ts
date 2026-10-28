@@ -21,6 +21,7 @@ import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { validateRequest } from '../http/validate.js';
 import { createProducerConnection } from '../jobs/connection.js';
 import { createRateLimiter, type RateRuleConfigOverrides } from '../ratelimit/limiter.js';
+import { createSettingsRouter } from '../settings/routes.js';
 import { createRequireTeamRole } from './middleware.js';
 import type { Role } from './permissions.js';
 import { createTeamsRouter } from './routes.js';
@@ -156,6 +157,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
   installPreRoutes(harnessApp, logger);
   harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config, invites }));
   harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
+  harnessApp.use('/settings', createSettingsRouter({ shards, tokens, limiter, logger, config }));
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
   const testOnly = Router();
@@ -175,6 +177,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     logger,
     teams: { shards, tokens, limiter, config, invites },
     invitations: { shards, tokens, limiter, config, invites },
+    settings: { shards, tokens, limiter, config },
   });
 
   const listen = async (app: express.Express) => {
