@@ -205,3 +205,7 @@ I learned that idempotency means retrying the same action does not create extra 
 ## 2026-10-28 — Settings (PR #51)
 
 I learned that the server sets updatedAt so changes use one trusted clock instead of different phone and tablet clocks, which could be wrong. This makes the order of saved updates consistent, but it records when the server accepted a change, not when the user originally made it.
+
+## 2026-10-28 — Invite links (PR #54)
+
+I learned that a link invite can be forwarded, so it should give only the limited Staff role. An email invite can grant Manager access because it is tied to a specific email address and acceptance checks the intended account. The difference is whether the invitation checks who is joining or simply trusts whoever has the link.
