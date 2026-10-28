@@ -79,8 +79,11 @@ upgrade to Team with 9 staff. remaining = 20; floor(2000×20÷30) = 1333; floor(
 |---|---|---|
 | Increase (higher tier or more seats) with `new_monthly > paid_basis` | **After verified payment** | The formula |
 | Increase with `new_monthly ≤ paid_basis` (seats inside the allowance; a higher tier that costs the same or less) | **Immediately** | 0, no mid-period refund; `paid_basis` unchanged; the new amount applies from renewal |
+| Increase with `new_monthly > paid_basis` but a formula charge **under 50 cents** (Stripe's USD minimum) | **Immediately** | 0; `paid_basis` unchanged; never rounded up to the minimum. Exactly 50 cents is paid (Dave, 2026-10-28; ADR 0026) |
 | Decrease (lower tier or fewer seats) | **End of period**, even if it costs more | 0 now; no refund (brief) |
 | Mixed (e.g. higher tier with fewer seats) | **Split:** increases now under the rows above, decreases at period end | Formula on the increase only, if it raises the amount |
+
+*Why for the 50-cent row: Stripe cannot collect less than $0.50, so a smaller charge is applied free. A later paid change is priced as if it had not happened, so nothing is charged twice.*
 
 *Why: tier and price don't move together. Team with 50 seats costs 15500; Business with 50 costs 14000.
 The cheaper upgrade is our chosen policy: apply now, no refund, lower amount from renewal.*
@@ -173,6 +176,7 @@ Active subscriptions, payment status, credit balances, webhook idempotency recor
 | 6 | Last day | Starter 5 → Team 9, remaining 1 | **100** |
 | 7 | Two changes, one period | day 11 Starter 5 → Team 9; after it applies, day 21 Team 9 → Business 9 | **2000**, then **2334** |
 | 8 | Seats beyond the allowance (our choice) | Team 15 → 18, remaining 12 | **360** |
+| 9 | Under Stripe's minimum | Team 15 → 16, remaining 1 (formula 10); remaining 4 (40) | **0**, immediate, `paid_basis` stays 5000; remaining 5 (50) is **50**, paid |
 
 Also required: Team 50 → Business 50 applies immediately with charge 0 and 14000 from renewal; then, same
 30-day period with 10 days left: Business 50 → 55 (15000 ≤ `paid_basis` 15500) → immediate, **0**, and

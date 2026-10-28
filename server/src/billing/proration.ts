@@ -2,6 +2,12 @@
 // The app never repeats any of this; it shows the finished figures the server returns.
 import { assertEntitlements, BillingInputError, monthlyCents, PLANS, sameEntitlements, type Entitlements } from './plans.js';
 
+/**
+ * The smallest amount Stripe will collect in USD: 0.50 USD ([Stripe, currencies](https://docs.stripe.com/currencies#minimum-and-maximum-charge-amounts)).
+ * A paid increase whose charge would be smaller is applied immediately instead, with no charge and `paid_basis` unchanged (Dave, 2026-10-28; money.md).
+ */
+export const MIN_CHARGE_CENTS = 50;
+
 function assertCents(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new BillingInputError(`${name} must be a non-negative integer number of cents`);
 }
@@ -22,7 +28,7 @@ export type ChangeKind =
   | 'none'
   /** Only decreases: nothing changes now and nothing is charged; the target applies at the end of the period. */
   | 'scheduled_only'
-  /** Applies now, no payment: it does not raise the amount this period is paid at (or it only lowers it). */
+  /** Applies now, no payment: it does not raise the amount this period is paid at, or the charge would be under Stripe's minimum (MIN_CHARGE_CENTS). */
   | 'immediate'
   /** Applies after a verified payment: the increase raises the amount above `paid_basis`. */
   | 'paid';
@@ -102,6 +108,12 @@ export function quoteChange(input: ChangeInput): ChangeQuote {
   }
   const grossChargeCents = proratedCents(newMonthlyCents, remainingDays, periodDays);
   const creditCents = proratedCents(paidBasisCents, remainingDays, periodDays);
+  // Under Stripe's minimum nothing can be collected: apply now, charge nothing, leave paid_basis alone. The charge is never raised to the minimum.
+  // The cost is the few cents for the days until the next paid change or renewal: because paid_basis stays, a later paid change is priced exactly as if
+  // this one had not happened, so nothing is ever charged twice either.
+  if (grossChargeCents - creditCents < MIN_CHARGE_CENTS) {
+    return { kind: 'immediate', applyNow, atPeriodEnd, chargeCents: 0, paidBasisAfterCents: paidBasisCents, nextRenewalCents, calculation: null };
+  }
   return {
     kind: 'paid',
     applyNow,

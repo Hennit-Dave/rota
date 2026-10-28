@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { monthlyCents, type Entitlements } from './plans.js';
-import { proratedCents, quoteChange, type ChangeQuote } from './proration.js';
+import { MIN_CHARGE_CENTS, proratedCents, quoteChange, type ChangeQuote } from './proration.js';
 
 // Acceptance cases from .agents/rules/money.md (brief: at least 8; 30-day fixtures unless stated). Expected values are the rule's, not ours to adjust.
 const starter = (seats: number): Entitlements => ({ plan: 'starter', seats });
@@ -185,4 +185,42 @@ test('bad inputs are refused instead of guessed at', () => {
   assert.throws(() => proratedCents(100, 5, 27), /28 to 31/);
   assert.throws(() => proratedCents(100, 5, 32), /28 to 31/);
   assert.throws(() => change(starter(5), starter(6), 10), /seats_over_plan_limit/);
+});
+
+test('under Stripe\'s $0.50 minimum: applies immediately, charges nothing, paid_basis unchanged (Dave, 2026-10-28)', () => {
+  assert.equal(MIN_CHARGE_CENTS, 50);
+  // Team 15 to 16 seats is 5000 to 5300; with 1 day left the formula gives 176 - 166 = 10 cents.
+  const q = change(team(15), team(16), 1);
+  assert.equal(q.kind, 'immediate');
+  assert.equal(q.chargeCents, 0);
+  assert.deepEqual(q.applyNow, team(16));
+  assert.equal(q.paidBasisAfterCents, 5000, 'paid_basis unchanged');
+  assert.equal(q.calculation, null);
+  assert.equal(q.nextRenewalCents, 5300, 'the new amount applies from renewal');
+});
+
+test('the boundary: 49 cents is free, 50 cents is paid (the minimum itself can be collected)', () => {
+  assert.equal(change(team(15), team(16), 4).chargeCents, 0, 'the formula gives 40');
+  assert.equal(change(team(15), team(16), 4).kind, 'immediate');
+  const atMinimum = change(team(15), team(16), 5);
+  assert.equal(atMinimum.chargeCents, 50);
+  assert.equal(atMinimum.kind, 'paid');
+  assert.equal(atMinimum.paidBasisAfterCents, 5300);
+  assert.equal(change(team(15), team(16), 6).chargeCents, 60);
+});
+
+test('after a free small change, the next paid change is priced as if it had never happened (paid_basis stayed); the few cents in between are not collected', () => {
+  const free = change(team(15), team(16), 1); // 10 cents: free, basis stays 5000
+  const later = quoteChange({ current: free.applyNow, target: team(18), paidBasisCents: free.paidBasisAfterCents, periodDays: 30, remainingDays: 12 });
+  assert.equal(later.kind, 'paid');
+  assert.equal(later.chargeCents, 360, 'floor(5900 x 12 / 30) - floor(5000 x 12 / 30) = 2360 - 2000');
+  assert.equal(later.chargeCents, change(team(15), team(18), 12).chargeCents, 'the same as test 8, where the 16th seat was never added');
+  assert.equal(later.paidBasisAfterCents, 5900);
+});
+
+test('a mixed change whose immediate part is under the minimum still schedules the rest', () => {
+  const q = change(team(15), business(15), 1, { paidBasis: 11990 });
+  assert.equal(q.kind, 'immediate', 'Business 15 is 12000: 10 cents above what was paid, under the minimum');
+  assert.equal(q.chargeCents, 0);
+  assert.deepEqual(q.applyNow, business(15));
 });
