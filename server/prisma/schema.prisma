@@ -52,8 +52,9 @@ model WorkRow {
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  invitations Invitation[]
-  authTokens  AuthToken[]
+  invitations  Invitation[]
+  authTokens   AuthToken[]
+  stripeEvents StripeEvent[]
 
   // Timed sweep: pending rows past available_at; claimed rows with an expired lease.
   @@index([status, availableAt], map: "work_rows_status_available_at_idx")
@@ -377,4 +378,182 @@ model SwapRequest {
   @@index([teamId, status, createdAt(sort: Desc)], map: "swap_requests_team_status_created_idx")
   @@index([teamId, requesterUserId, status], map: "swap_requests_team_requester_status_idx")
   @@map("swap_requests")
+}
+
+// ---- Billing (ADR 0026; money.md). The same migration runs on both shards: the team tables live on the team's shard, stripe_events on shard A. ----
+// Integer cents only. There is deliberately NO foreign key from a billing table to "teams": a team's money history outlives the team, and the ledger is never deleted.
+// Also in the SQL, which Prisma cannot express: CHECKs on every table (seat and amount rules, kind shapes), the partial unique index
+// "payment_operations_one_open_per_team" on (team_id) WHERE status = 'open', the partial index "stripe_events_unprocessed_idx", and the append-only triggers on ledger_entries.
+
+enum BillingPlan {
+  starter
+  team
+  business
+
+  @@map("billing_plan")
+}
+
+enum LedgerEntryType {
+  period_start
+  entitlement_change
+  charge
+  credit
+  refund
+  correction
+
+  @@map("ledger_entry_type")
+}
+
+enum PaymentOperationKind {
+  activation
+  change
+
+  @@map("payment_operation_kind")
+}
+
+enum PaymentOperationStatus {
+  open
+  completed
+  expired
+  failed
+  needs_review
+
+  @@map("payment_operation_status")
+}
+
+// One billing period: [starts_on, ends_on) in UTC calendar days. period_days (28 to 31) is the length every calculation reads.
+model BillingPeriod {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId     String   @map("team_id") @db.Uuid
+  startsOn   DateTime @map("starts_on") @db.Date
+  endsOn     DateTime @map("ends_on") @db.Date
+  periodDays Int      @map("period_days")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscriptions     Subscription[]
+  paymentOperations PaymentOperation[]
+  ledgerEntries     LedgerEntry[]
+
+  @@unique([teamId, startsOn], map: "billing_periods_team_id_starts_on_key")
+  @@map("billing_periods")
+}
+
+// The current state of a team's subscription: a projection of the ledger, never its source (rebuildable from it). No row = not activated.
+model Subscription {
+  teamId           String      @id @map("team_id") @db.Uuid
+  plan             BillingPlan
+  seats            Int
+  billingAnchorDay Int         @map("billing_anchor_day")
+  // What the current period has been paid at; not always the entitlements' amount (a cheaper upgrade leaves it higher).
+  paidBasisCents   Int         @map("paid_basis_cents")
+  version          Int
+  currentPeriodId  String      @map("current_period_id") @db.Uuid
+  activatedAt      DateTime    @map("activated_at") @db.Timestamptz(3)
+  updatedAt        DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  currentPeriod BillingPeriod @relation(fields: [currentPeriodId], references: [id], onDelete: Restrict)
+
+  @@map("subscriptions")
+}
+
+// A paid change, frozen: its base version, target, period, calculation and quote. Stripe metadata carries team_id and this id.
+model PaymentOperation {
+  id                      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                  String                 @map("team_id") @db.Uuid
+  kind                    PaymentOperationKind
+  requestedByUserId       String                 @map("requested_by_user_id") @db.Uuid
+  baseVersion             Int                    @map("base_version")
+  periodId                String?                @map("period_id") @db.Uuid
+  activationDate          DateTime?              @map("activation_date") @db.Date
+  fromPlan                BillingPlan?           @map("from_plan")
+  fromSeats               Int?                   @map("from_seats")
+  applyPlan               BillingPlan            @map("apply_plan")
+  applySeats              Int                    @map("apply_seats")
+  scheduledPlan           BillingPlan?           @map("scheduled_plan")
+  scheduledSeats          Int?                   @map("scheduled_seats")
+  periodDays              Int                    @map("period_days")
+  remainingDays           Int                    @map("remaining_days")
+  paidBasisBeforeCents    Int                    @map("paid_basis_before_cents")
+  grossChargeCents        Int                    @map("gross_charge_cents")
+  creditCents             Int                    @map("credit_cents")
+  quoteCents              Int                    @map("quote_cents")
+  paidBasisAfterCents     Int                    @map("paid_basis_after_cents")
+  currency                String                 @default("usd")
+  status                  PaymentOperationStatus @default(open)
+  stripeCheckoutSessionId String?                @unique @map("stripe_checkout_session_id")
+  stripePaymentIntentId   String?                @unique @map("stripe_payment_intent_id")
+  expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
+  completedAt             DateTime?              @map("completed_at") @db.Timestamptz(3)
+  reviewReason            String?                @map("review_reason")
+  createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  period BillingPeriod? @relation(fields: [periodId], references: [id], onDelete: Restrict)
+
+  @@index([teamId, createdAt(sort: Desc)], map: "payment_operations_team_id_created_at_idx")
+  @@map("payment_operations")
+}
+
+// The app's Idempotency-Key for creating a payment session, with a fingerprint of the request and the stored answer.
+model PaymentRequest {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId             String   @map("team_id") @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  idempotencyKey     String   @map("idempotency_key")
+  requestFingerprint String   @map("request_fingerprint")
+  operationId        String?  @map("operation_id") @db.Uuid
+  responseStatus     Int      @map("response_status")
+  response           Json
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([teamId, idempotencyKey], map: "payment_requests_team_id_idempotency_key_key")
+  @@map("payment_requests")
+}
+
+// THE LEDGER: append-only (triggers reject UPDATE, DELETE and TRUNCATE). Money rows and state rows; the subscription is rebuildable from it.
+model LedgerEntry {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Write order. Generated by the database; never set by the application.
+  position              BigInt          @default(autoincrement())
+  teamId                String          @map("team_id") @db.Uuid
+  operationId           String          @map("operation_id") @db.Uuid
+  entryType             LedgerEntryType @map("entry_type")
+  sequence              Int
+  amountCents           Int             @map("amount_cents")
+  currency              String          @default("usd")
+  periodId              String?         @map("period_id") @db.Uuid
+  plan                  BillingPlan?
+  seats                 Int?
+  paidBasisAfterCents   Int?            @map("paid_basis_after_cents")
+  stripePaymentIntentId String?         @map("stripe_payment_intent_id")
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  period BillingPeriod? @relation(fields: [periodId], references: [id], onDelete: Restrict)
+
+  @@unique([position], map: "ledger_entries_position_key")
+  @@unique([operationId, entryType, sequence], map: "ledger_entries_operation_id_entry_type_sequence_key")
+  @@index([teamId, position], map: "ledger_entries_team_id_position_idx")
+  @@map("ledger_entries")
+}
+
+// The webhook inbox (shard A): one row per Stripe event, unique by event id, written before anything is queued. Only the fields the job needs.
+model StripeEvent {
+  eventId           String    @id @map("event_id")
+  eventType         String    @map("event_type")
+  livemode          Boolean
+  stripeCreatedAt   DateTime  @map("stripe_created_at") @db.Timestamptz(3)
+  checkoutSessionId String?   @map("checkout_session_id")
+  paymentIntentId   String?   @map("payment_intent_id")
+  teamId            String?   @map("team_id") @db.Uuid
+  operationId       String?   @map("operation_id") @db.Uuid
+  workRowId         String?   @map("work_row_id") @db.Uuid
+  receivedAt        DateTime  @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt       DateTime? @map("processed_at") @db.Timestamptz(3)
+  // applied | duplicate | review | ignored
+  outcome           String?
+
+  workRow WorkRow? @relation(fields: [workRowId], references: [id], onDelete: SetNull)
+
+  @@index([paymentIntentId], map: "stripe_events_payment_intent_id_idx")
+  @@map("stripe_events")
 }

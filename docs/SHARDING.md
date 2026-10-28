@@ -59,7 +59,7 @@ the number of rows: every authenticated request re-checks the session on shard A
 (`docs/ARCHITECTURE.md`, section 5). This load does not depend on how teams are split between the shards.
 
 The team's own shard holds the team row, memberships, roles, shifts, swaps, activity, billing and the ledger (built so far:
-`teams` and `memberships`). Invites belong to the team, so the authoritative invitation lives on the team's shard.
+`teams`, `memberships`, shifts, swaps, activity, invitations and, from ADR 0026, `billing_periods`, `subscriptions`, `payment_operations`, `payment_requests` and `ledger_entries`). The webhook inbox `stripe_events` is on shard A: a Stripe event names an operation, not a team's shard, and the inbox must be written before the team is routed to, so it joins the identity load already recorded as the known imbalance below. Invites belong to the team, so the authoritative invitation lives on the team's shard.
 
 ## Hot-shard risk and a very large team
 
