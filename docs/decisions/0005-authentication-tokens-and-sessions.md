@@ -162,6 +162,6 @@ Run from `server/`; integration tests need the `TEST_*` variables in `.env` and 
 | Same 401 body for unknown, idle-expired, expired and revoked; reason only in the log | `refresh.integration.test.ts` |
 | 429 before the token is touched; Valkey down is 503 and consumes nothing; no token in any log line | `refresh.integration.test.ts` |
 | Token shape, strict body | `schemas.unit.test.ts`, `refresh.integration.test.ts` |
-| P2028 is a 503 | `http.unit.test.ts` |
+| P2028 and a dropped connection are a 503 | `http.unit.test.ts` |
 
 Commands and the live request/response sequence are in the PR A description.

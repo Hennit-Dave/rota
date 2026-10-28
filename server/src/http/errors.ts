@@ -132,6 +132,28 @@ function fromTransactionUnavailable(err: unknown): ApiError | null {
   return new ApiError('service_unavailable', { reason: 'database_transaction_unavailable' });
 }
 
+/** Socket-level failures Node reports when the database connection drops or cannot be made (the first is the one a flapping network produced in test). */
+const CONNECTION_ERROR_NAMES = /\b(EADDRNOTAVAIL|ECONNRESET|ETIMEDOUT)\b/;
+/** Prisma's own codes for the same thing: P1001 cannot reach the server, P1002 it timed out, P1017 it closed the connection. */
+const CONNECTION_PRISMA_CODES = new Set(['P1001', 'P1002', 'P1017']);
+
+function isConnectionFailure(err: unknown, depth = 0): boolean {
+  if (typeof err !== 'object' || err === null || depth > 4) return false;
+  const e = err as { code?: unknown; message?: unknown; cause?: unknown; meta?: { driverAdapterError?: unknown } };
+  if (typeof e.code === 'string' && (CONNECTION_PRISMA_CODES.has(e.code) || CONNECTION_ERROR_NAMES.test(e.code))) return true;
+  // Prisma's raw and unknown-request errors carry the driver's text only in the message ("...invocation:\n\nread EADDRNOTAVAIL").
+  if (err instanceof Error && CONNECTION_ERROR_NAMES.test(e.message as string)) return true;
+  return isConnectionFailure(e.cause, depth + 1) || isConnectionFailure(e.meta?.driverAdapterError, depth + 1);
+}
+
+/**
+ * A dropped or unreachable database connection is the database being briefly unavailable, like P2028 above: 503, so the app
+ * retries. Without this it was a plain 500 ("read EADDRNOTAVAIL" from a flapping network failed one swap request in test).
+ */
+function fromConnectionFailure(err: unknown): ApiError | null {
+  return isConnectionFailure(err) ? new ApiError('service_unavailable', { reason: 'database_connection_failed' }) : null;
+}
+
 export function createErrorHandler(logger: Logger): ErrorRequestHandler {
   // Express identifies error middleware by its four parameters, so `_next` must stay.
   return (err, req, res, next) => {
@@ -142,7 +164,9 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
 
     const requestId = String(res.locals.requestId ?? '');
     let apiError: ApiError | null =
-      err instanceof ApiError ? err : (fromBodyParserError(err) ?? fromTransactionUnavailable(err));
+      err instanceof ApiError
+        ? err
+        : (fromBodyParserError(err) ?? fromTransactionUnavailable(err) ?? fromConnectionFailure(err));
 
     if (!apiError) {
       // Unexpected: log a sanitized message for us, tell the caller nothing about it.

@@ -48,6 +48,7 @@ A staff member wants to trade a shift with a teammate, and a manager must agree.
 - A request whose shifts are edited stays pending (and approval will refuse it) until a manager rejects it or the requester cancels; it is not cancelled automatically.
 - The pickers offer shifts from the next 41 days (the server's range cap is 42); a swap further out needs the schedule to be browsed first. Revisit with the offline slice.
 - The approval's second layer of role checking (the service refuses a non-approver as well as the route's permission) means removing the route's permission alone would not open it: two independent layers, so the mutation that removes only the route check is not caught by a test. The service layer is covered by the rules unit test and the end-to-end 403 test.
+- A dropped or unreachable database connection (`EADDRNOTAVAIL`, `ECONNRESET`, `ETIMEDOUT`, Prisma `P1001`/`P1002`/`P1017`) is answered `503 service_unavailable`, not `500`, for every route (`server/src/http/errors.ts`, `http.unit.test.ts`). Found when a flapping network failed the idempotency integration test with `read EADDRNOTAVAIL`. For a swap request a 503 is safe to retry with the same key.
 - Revisit when: push exists (notify both people and the managers), the load test or real use shows 10 an hour and 3 waiting are wrong, or swaps with an open shift are wanted.
 
 ## Evidence

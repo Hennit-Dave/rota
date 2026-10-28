@@ -63,6 +63,21 @@ before(async () => {
     // What Prisma throws when a transaction cannot start in time. It carries `code: 'P2028'`.
     throw Object.assign(new Error('Transaction API error: Unable to start a transaction in the given time.'), { code: 'P2028' });
   });
+  // The shapes a dropped or unreachable database connection takes (the first is the exact text a flapping network produced in test).
+  const connectionFailures: Record<string, () => Error> = {
+    eaddrnotavail: () => new Error('\nInvalid `prisma.$queryRaw()` invocation:\n\n\nread EADDRNOTAVAIL'),
+    econnreset: () => new Error('write ECONNRESET'),
+    etimedout: () => Object.assign(new Error('connect failed'), { code: 'ETIMEDOUT' }),
+    wrapped: () => new Error('query failed', { cause: new Error('read ECONNRESET') }),
+    p1001: () => Object.assign(new Error("Can't reach database server at host:5432"), { code: 'P1001', meta: { driverAdapterError: { cause: { kind: 'DatabaseNotReachable' } } } }),
+    p1017: () => Object.assign(new Error('Server has closed the connection.'), { code: 'P1017' }),
+  };
+  app.get('/conn/:kind', (req) => {
+    throw connectionFailures[String(req.params.kind)]!();
+  });
+  app.get('/not-a-connection', () => {
+    throw new Error('constraint ETIMEDOUTX violated, and ECONNRESETS is not a socket error');
+  });
   app.get('/teapot', () => {
     throw new ApiError('invalid_credentials', { reason: 'unknown_email' });
   });
@@ -160,6 +175,25 @@ test('a database transaction that could not start in time is a retryable 503, no
   assert.equal(res.status, 503);
   assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'service_unavailable');
   assert.ok(logs().some((l) => l.msg === 'request_rejected' && l.reason === 'database_transaction_unavailable'));
+});
+
+test('a dropped or unreachable database connection is a retryable 503, not a 500, and the reason stays in the log', async () => {
+  for (const kind of ['eaddrnotavail', 'econnreset', 'etimedout', 'wrapped', 'p1001', 'p1017']) {
+    lines.length = 0;
+    const res = await fetch(base + `/conn/${kind}`);
+    assert.equal(res.status, 503, kind);
+    const text = await res.text();
+    assert.equal((JSON.parse(text) as { error: { code: string } }).error.code, 'service_unavailable', kind);
+    assert.ok(!text.includes('EADDRNOTAVAIL') && !text.includes('ECONNRESET') && !text.includes('prisma'), `${kind}: nothing from the driver reaches the caller`);
+    assert.ok(logs().some((l) => l.msg === 'request_rejected' && l.reason === 'database_connection_failed'), kind);
+  }
+});
+
+test('an ordinary error that only resembles a socket error name is still a plain 500', async () => {
+  lines.length = 0;
+  const res = await fetch(base + '/not-a-connection');
+  assert.equal(res.status, 500);
+  assert.equal(((await res.json()) as { error: { code: string } }).error.code, 'internal_error');
 });
 
 test('a rejection reason stays in the server log and is not sent to the client', async () => {
