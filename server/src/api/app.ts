@@ -4,6 +4,7 @@ import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { createInvitationsRouter, type InvitesRouteDeps } from '../invites/routes.js';
+import { createSettingsRouter, type SettingsRouteDeps } from '../settings/routes.js';
 import { createTeamsRouter, type TeamsDeps } from '../teams/routes.js';
 
 export interface AppDeps {
@@ -16,6 +17,8 @@ export interface AppDeps {
   teams?: Omit<TeamsDeps, 'logger'>;
   /** When given, mounts /invitations (preview and accept). */
   invitations?: Omit<InvitesRouteDeps, 'logger'>;
+  /** When given, mounts /settings (ADR 0024). */
+  settings?: Omit<SettingsRouteDeps, 'logger'>;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -39,6 +42,9 @@ export function createApp(deps: AppDeps = {}) {
   }
   if (deps.invitations) {
     app.use('/invitations', createInvitationsRouter({ ...deps.invitations, logger }));
+  }
+  if (deps.settings) {
+    app.use('/settings', createSettingsRouter({ ...deps.settings, logger }));
   }
 
   installPostRoutes(app, logger);

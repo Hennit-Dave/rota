@@ -1,26 +1,27 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { ApiError, OfflineError } from '../../api/errors';
-import { accountCopy, bannerCopy, homeCopy } from '../../auth/copy';
-import { useMe } from '../../auth/useMe';
-import { getSessionActions } from '../../services';
-import { useSessionStore } from '../../state/sessionStore';
-import { useTeams } from '../../teams/useTeams';
-import { space } from '../../theme';
-import { AppNav } from '../../ui/AppNav';
-import { Button } from '../../ui/Button';
-import { PageHeader } from '../../ui/PageHeader';
-import { Screen, Spacer } from '../../ui/Screen';
-import { StatusBanner } from '../../ui/StatusBanner';
-import { Text } from '../../ui/Text';
-import { TextAction } from '../../ui/TextAction';
-import { useOnline } from '../../ui/useOnline';
+import { ApiError, OfflineError } from '../../../api/errors';
+import { bannerCopy, homeCopy } from '../../../auth/copy';
+import { settingsCopy } from '../../../settings/settingsCopy';
+import { useMe } from '../../../auth/useMe';
+import { getSessionActions } from '../../../services';
+import { useSessionStore } from '../../../state/sessionStore';
+import { useTeams } from '../../../teams/useTeams';
+import { space } from '../../../theme';
+import { Button } from '../../../ui/Button';
+import { PageHeader } from '../../../ui/PageHeader';
+import { Screen, Spacer } from '../../../ui/Screen';
+import { StatusBanner } from '../../../ui/StatusBanner';
+import { Text } from '../../../ui/Text';
+import { TextAction } from '../../../ui/TextAction';
+import { useOnline } from '../../../ui/useOnline';
 
 /**
- * The Settings tab until the settings slice: "Signed in as <name>", the selected team's name, and both sign-out flows, so they can be proven end to end.
- * The name is server data (GET /auth/me) and so is the team (GET /teams): both seeded early and refetched when the app returns to the foreground.
+ * Account & sessions (Figma 09 Settings, "account" 9:304), reached from the Settings screen: "Signed in as <name>", the selected team's name, and both
+ * sign-out flows. The name is server data (GET /auth/me) and so is the team (GET /teams): both seeded early and refetched when the app returns to the
+ * foreground. Back (the system's) returns to Settings.
  */
-export default function AccountScreen() {
+export default function AccountSessionsScreen() {
   const online = useOnline();
   const [busy, setBusy] = useState<'logout' | 'logoutAll' | null>(null);
   const [logoutAllError, setLogoutAllError] = useState<string | null>(null);
@@ -97,12 +98,9 @@ export default function AccountScreen() {
 
   return (
     <Screen gap={space[16]}>
-      <PageHeader eyebrowGap={16} title={accountCopy.title} teamName={team?.name} />
+      <PageHeader eyebrowGap={16} title={settingsCopy.sessions.title} teamName={team?.name} />
       {status}
       {teamStatus}
-      <Text variant="caption" tone="muted">
-        {accountCopy.placeholderNote}
-      </Text>
       {logoutAllError ? <StatusBanner tone="error" title={logoutAllError} /> : null}
       <Spacer />
       {__DEV__ ? <TextAction label="API check (development only)" onPress={() => router.push('/dev-api')} /> : null}
@@ -123,7 +121,6 @@ export default function AccountScreen() {
         onPress={() => void logoutAll()}
         testID="home-logout-all"
       />
-      <AppNav selected="settings" />
     </Screen>
   );
 }

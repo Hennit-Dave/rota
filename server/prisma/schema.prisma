@@ -78,6 +78,7 @@ model User {
   families   RefreshTokenFamily[]
   userTeams  UserTeam[]
   authTokens AuthToken[]
+  settings   UserSettings?
 
   @@map("users")
 }
@@ -243,6 +244,35 @@ model AuthToken {
 
   @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
   @@map("auth_tokens")
+}
+
+// ---- User settings (identity data: shard A only, like users; the same migrations run on both shards; ADR 0024) ----
+
+// One row per user, created by the first change. Every setting has its own *_updated_at, stamped by the DATABASE clock on arrival (never the client's):
+// the most recent change wins, per field. NULL = never changed. The API reads and writes this table with raw SQL so that `NOW()` is the stamp.
+// Also in the SQL, which Prisma cannot express: CHECK "user_settings_theme_known" and CHECK "user_settings_quiet_hours_window" (start <> end).
+model UserSettings {
+  userId                       String    @id @map("user_id") @db.Uuid
+  quietHoursEnabled            Boolean   @default(false) @map("quiet_hours_enabled")
+  quietHoursStart              DateTime  @default(dbgenerated("'22:00:00'::time without time zone")) @map("quiet_hours_start") @db.Time(0)
+  quietHoursEnd                DateTime  @default(dbgenerated("'06:00:00'::time without time zone")) @map("quiet_hours_end") @db.Time(0)
+  quietHoursUpdatedAt          DateTime? @map("quiet_hours_updated_at") @db.Timestamptz(3)
+  timeZone                     String?   @map("time_zone")
+  timeZoneUpdatedAt            DateTime? @map("time_zone_updated_at") @db.Timestamptz(3)
+  notifyShiftChanges           Boolean   @default(true) @map("notify_shift_changes")
+  notifyShiftChangesUpdatedAt  DateTime? @map("notify_shift_changes_updated_at") @db.Timestamptz(3)
+  notifySwapUpdates            Boolean   @default(true) @map("notify_swap_updates")
+  notifySwapUpdatesUpdatedAt   DateTime? @map("notify_swap_updates_updated_at") @db.Timestamptz(3)
+  notifyBilling                Boolean   @default(true) @map("notify_billing")
+  notifyBillingUpdatedAt       DateTime? @map("notify_billing_updated_at") @db.Timestamptz(3)
+  language                     String    @default("en")
+  languageUpdatedAt            DateTime? @map("language_updated_at") @db.Timestamptz(3)
+  theme                        String    @default("system")
+  themeUpdatedAt               DateTime? @map("theme_updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
 }
 
 // ---- Shifts and activity (team-owned: they live on the team's shard, written in one transaction) ----

@@ -11,7 +11,7 @@ import { describeCreateTeamFailure, type CreateTeamFailure } from '../../teams/c
 import { teamsQueryKey, type TeamSummary } from '../../teams/teamResponses';
 import { defaultTimeZone, deviceTimeZone } from '../../teams/timeZoneSearch';
 import { timeZones } from '../../teams/timeZones';
-import { ColorsOverrideProvider, lightColors, space } from '../../theme';
+import { space } from '../../theme';
 import { Button } from '../../ui/Button';
 import { useFocusSink } from '../../ui/FocusSink';
 import { PageHeader } from '../../ui/PageHeader';
@@ -24,16 +24,11 @@ import { useOnline } from '../../ui/useOnline';
 
 /**
  * Create team (Figma 8:101): the step after sign-up, and where a signed-in user with no team lands. The creator becomes the Owner.
- * Light-only for now, like the auth screens: Figma's chevron artwork carries its colour, and the theme becomes a per-user server
- * setting in the settings slice (issue #24). Figma's "Next step" banner and its "Continue to plan selection" button wait for the
+ * Figma's "Next step" banner and its "Continue to plan selection" button wait for the
  * billing slice: nothing here mentions plans.
  */
 export default function CreateTeamScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <CreateTeamForm />
-    </ColorsOverrideProvider>
-  );
+  return <CreateTeamForm />;
 }
 
 type Failure = Exclude<CreateTeamFailure, { kind: 'fields' }>;

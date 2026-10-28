@@ -6,21 +6,17 @@ import { dayKeyOf } from '../../../shifts/shiftTime';
 import { ShiftFormView } from '../../../shifts/ShiftFormView';
 import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { useShiftMutations } from '../../../shifts/useShifts';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { PageHeader } from '../../../ui/PageHeader';
 import { Screen } from '../../../ui/Screen';
 import { StatusBanner } from '../../../ui/StatusBanner';
 
 /**
  * Create shift (Figma 7:67). Only an Owner or Manager gets the button that leads here, and the server refuses anyone else; a Staff member who reaches
- * the screen anyway sees the server's refusal as a message on submit. On success the server's answer is shown on the published screen. Light-only (issue #24).
+ * the screen anyway sees the server's refusal as a message on submit. On success the server's answer is shown on the published screen.
  */
 export default function NewShiftScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <NewShift />
-    </ColorsOverrideProvider>
-  );
+  return <NewShift />;
 }
 
 function NewShift() {

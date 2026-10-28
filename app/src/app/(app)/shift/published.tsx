@@ -2,19 +2,15 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { publishedCopy } from '../../../shifts/shiftCopy';
 import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { useShift } from '../../../shifts/useShifts';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { InfoCard } from '../../../ui/InfoCard';
 import { PageHeader } from '../../../ui/PageHeader';
 import { Screen, Spacer } from '../../../ui/Screen';
 
-/** Shift published (Figma 7:135). The shift shown is the server's answer to the create request, held in the cache. Light-only (issue #24). */
+/** Shift published (Figma 7:135). The shift shown is the server's answer to the create request, held in the cache. */
 export default function PublishedScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Published />
-    </ColorsOverrideProvider>
-  );
+  return <Published />;
 }
 
 function Published() {

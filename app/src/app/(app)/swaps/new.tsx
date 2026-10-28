@@ -4,7 +4,7 @@ import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { useShiftsRange } from '../../../shifts/useShifts';
 import { swapSelectCopy } from '../../../swaps/swapCopy';
 import { shiftOptionLabel } from '../../../swaps/swapText';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { OptionSheet } from '../../../ui/OptionSheet';
 import { PageHeader } from '../../../ui/PageHeader';
@@ -16,14 +16,10 @@ import { Text } from '../../../ui/Text';
 /**
  * Request a swap (Figma swap-select 8:316): pick one of your own upcoming shifts and the teammate's shift you would take. The lists come from the schedule
  * endpoint (the next 41 days, under the server's 42-day cap); they only narrow what is offered. Whether a pair is allowed is the server's decision, and it
- * answers with the reason. Light-only for now (issue #24).
+ * answers with the reason.
  */
 export default function NewSwapScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <NewSwap />
-    </ColorsOverrideProvider>
-  );
+  return <NewSwap />;
 }
 
 const DAY = 24 * 60 * 60 * 1000;

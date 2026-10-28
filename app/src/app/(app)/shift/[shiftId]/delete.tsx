@@ -7,7 +7,7 @@ import { formatLongDate, dayKeyOf, formatRange } from '../../../../shifts/shiftT
 import { ShiftUnavailable } from '../../../../shifts/ShiftUnavailable';
 import { useScheduleContext } from '../../../../shifts/useScheduleContext';
 import { useShift, useShiftMutations } from '../../../../shifts/useShifts';
-import { ColorsOverrideProvider, lightColors, space } from '../../../../theme';
+import { space } from '../../../../theme';
 import { Button } from '../../../../ui/Button';
 import { InfoCard } from '../../../../ui/InfoCard';
 import { createLatch } from '../../../../ui/latch';
@@ -18,14 +18,10 @@ import { useOnline } from '../../../../ui/useOnline';
 
 /**
  * Delete this shift? (Figma 10:337): asks first because it cannot be undone. The server decides who may delete; the app never assumes it worked until the
- * request answered. A shift that is already gone is treated as deleted. Light-only (issue #24).
+ * request answered. A shift that is already gone is treated as deleted.
  */
 export default function DeleteShiftScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <DeleteShift />
-    </ColorsOverrideProvider>
-  );
+  return <DeleteShift />;
 }
 
 function DeleteShift() {

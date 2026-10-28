@@ -7,7 +7,7 @@ import { SwapCard } from '../../../swaps/SwapCard';
 import { swapListCopy } from '../../../swaps/swapCopy';
 import { orderSwaps } from '../../../swaps/swapOptimistic';
 import { useSwaps } from '../../../swaps/useSwaps';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { AppNav } from '../../../ui/AppNav';
 import { Button } from '../../../ui/Button';
 import { EmptyCard } from '../../../ui/EmptyCard';
@@ -20,14 +20,10 @@ import { useOnline } from '../../../ui/useOnline';
 
 /**
  * Shift swaps (Figma 06: swaps 8:296). Your own requests, and for an Owner or Manager every request waiting for a decision (the server decides what each
- * person sees). Anyone may ask for a swap. Light-only for now (issue #24).
+ * person sees). Anyone may ask for a swap.
  */
 export default function SwapsScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Swaps />
-    </ColorsOverrideProvider>
-  );
+  return <Swaps />;
 }
 
 function Swaps() {

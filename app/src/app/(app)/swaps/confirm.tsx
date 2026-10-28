@@ -10,7 +10,7 @@ import { describeSwapFailure } from '../../../swaps/swapFailure';
 import { maySendSwap, optimisticSwap } from '../../../swaps/swapOptimistic';
 import { shiftWhen } from '../../../swaps/swapText';
 import { useCreateSwap } from '../../../swaps/useSwaps';
-import { ColorsOverrideProvider, lightColors, space } from '../../../theme';
+import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { InfoCard } from '../../../ui/InfoCard';
 import { PageHeader } from '../../../ui/PageHeader';
@@ -23,14 +23,10 @@ import { useOnline } from '../../../ui/useOnline';
  * Does this look right? (Figma swap-confirm 8:333) and what follows "Send swap request": the request sent and not yet confirmed (103:342), confirmed
  * (8:350), and "Request wasn't sent" (8:407, offline 103:363). The request is an optimistic update with rollback (app-state.md): "Request sent" shows at
  * once with the control off, the server's answer replaces the guess, and a failure puts everything back. The idempotency key is made ONCE when this screen
- * opens, so "Try again" after a timeout sends the same key and the server returns the stored swap instead of creating a second. Light-only (issue #24).
+ * opens, so "Try again" after a timeout sends the same key and the server returns the stored swap instead of creating a second.
  */
 export default function ConfirmSwapScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <ConfirmSwap />
-    </ColorsOverrideProvider>
-  );
+  return <ConfirmSwap />;
 }
 
 function ConfirmSwap() {

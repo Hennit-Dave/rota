@@ -123,6 +123,7 @@ const app = createApp({
   recovery,
   teams: { shards, tokens, limiter, config, invites },
   invitations: { shards, tokens, limiter, config, invites },
+  settings: { shards, tokens, limiter, config },
 });
 
 const server = app.listen(port, (error) => {

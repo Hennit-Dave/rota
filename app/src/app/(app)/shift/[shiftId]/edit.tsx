@@ -8,7 +8,7 @@ import { ShiftFormView } from '../../../../shifts/ShiftFormView';
 import { ShiftUnavailable } from '../../../../shifts/ShiftUnavailable';
 import { useScheduleContext } from '../../../../shifts/useScheduleContext';
 import { useShift, useShiftMutations } from '../../../../shifts/useShifts';
-import { ColorsOverrideProvider, lightColors, space } from '../../../../theme';
+import { space } from '../../../../theme';
 import { Button } from '../../../../ui/Button';
 import { PageHeader } from '../../../../ui/PageHeader';
 import { Screen } from '../../../../ui/Screen';
@@ -16,14 +16,10 @@ import { StatusBanner } from '../../../../ui/StatusBanner';
 
 /**
  * Edit shift (Figma 10:317): the same fields as create, filled from the server's copy of the shift; only what changed is sent. A shift that was
- * deleted meanwhile shows "isn't available". Light-only (issue #24).
+ * deleted meanwhile shows "isn't available".
  */
 export default function EditShiftScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <EditShift />
-    </ColorsOverrideProvider>
-  );
+  return <EditShift />;
 }
 
 function EditShift() {

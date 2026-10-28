@@ -84,6 +84,8 @@ Optional: `SHIFTS_MAX_RANGE_DAYS` (42). The app's home is now the Schedule, with
 
 **Shift swaps** (slice S1, ADR 0023): `GET/POST /teams/:teamId/swaps` and `/:swapId`, `/:swapId/cancel`, `/:swapId/approve`, `/:swapId/reject`. Staff ask to exchange one of their upcoming shifts for a teammate's; an Owner or Manager approves or rejects (never someone who is part of the swap, unless they are the Owner and the only approver). A retried request (same `Idempotency-Key`) never creates a second one; at most 3 requests wait per person and 10 may be made per hour. Two new migrations, `20261028100000_add_swap_activity_kinds` and `20261028110000_add_swap_requests`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Optional: `SWAPS_MAX_PENDING`, `RATE_LIMIT_SWAP_REQUEST_USER_MAX` / `_WINDOW_SECONDS`. In the app: the Swaps tab.
 
+**Settings** (slice S2, ADR 0024): `GET` and `PATCH /settings`. The server is the single source of truth for quiet hours, time zone, notification types (shift changes, swap updates, billing), language (`en` only) and theme; each setting has its own server-set `updatedAt` and the most recent change wins (the weakness is in `docs/STATE.md`). One migration, `20261028150000_add_user_settings`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Optional: `RATE_LIMIT_SETTINGS_READ_USER_MAX` / `_WINDOW_SECONDS`, `RATE_LIMIT_SETTINGS_WRITE_USER_MAX` / `_WINDOW_SECONDS`. In the app: the Settings tab (the sign-out buttons are under "Account & sessions"), and the theme setting now colours every signed-in screen. Quiet hours are stored but not yet enforced: that arrives with push notifications.
+
 ```sh
 openssl rand -base64 32   # copy the output into AUTH_JWT_SECRET in the root .env (at least 32 bytes once decoded)
 cd server && npm run build && npm run start:api
@@ -138,7 +140,7 @@ npm start                                                    # Metro; then open 
 ```
 
 Run the API on a free port in another terminal (`PORT=3100 npm run dev:api` in `server/`; the server's default 3000 may be taken by another
-project). The first screen is the sign-in screen. After signing in, the Schedule opens; the Settings tab has a development-only link to the API check
+project). The first screen is the sign-in screen. After signing in, the Schedule opens; the development-only link to the API check is under Settings, then Account & sessions
 (`/dev-api`: it calls `GET /health` and says "The API answered: ok."), and from there a link to a check of every native module
 (`rota://dev-check`, also reachable directly by that link, signed in or not).
 
@@ -198,6 +200,6 @@ adb shell am start -a android.intent.action.VIEW -d "exp+rota://expo-development
 
 Notes:
 - Each seed run adds a new team and four users to the **test** shards (it never deletes them: `app.stop()` would delete the team). Remove them by hand when you no longer need them.
-- If the app is already signed in as someone else, use Settings, then Log out first.
+- If the app is already signed in as someone else, use Settings, then Account & sessions, then Log out first.
 - When typing with `adb shell input text`, tap the field first and check it has focus. With no field focused, a double `r` in the text reloads the app (React Native's dev shortcut) and the rest of the text is lost.
 - To use the API from the host instead of the emulator, replace `10.0.2.2` with `127.0.0.1`.

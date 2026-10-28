@@ -9,7 +9,7 @@ import { addDays, dayKeyOf, formatLongDate, greetingFor, shiftsOnDay, weekWindow
 import { useScheduleContext } from '../../shifts/useScheduleContext';
 import { useShiftsRange } from '../../shifts/useShifts';
 import { WeekStrip } from '../../shifts/WeekStrip';
-import { ColorsOverrideProvider, lightColors, space } from '../../theme';
+import { space } from '../../theme';
 import { AppNav } from '../../ui/AppNav';
 import { Button } from '../../ui/Button';
 import { EmptyCard } from '../../ui/EmptyCard';
@@ -25,14 +25,10 @@ import { useOnline } from '../../ui/useOnline';
  * Schedule (Figma 04: calendar 7:6 and calendar-staff 102:276, with calendar-loading 10:370, calendar-empty 10:353 and calendar-error 7:174). The week
  * strip picks a day; the shifts of that day come from one request for the whole week (the server caps a range at 42 days). Owners and Managers see
  * every shift of the team and can create one; Staff see their own (`mine`). Which buttons exist comes from the server's `canEditShifts`; the server
- * decides again on every write. Times are the team's wall clock. Light-only for now (issue #24).
+ * decides again on every write. Times are the team's wall clock.
  */
 export default function ScheduleScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Schedule />
-    </ColorsOverrideProvider>
-  );
+  return <Schedule />;
 }
 
 function Schedule() {

@@ -13,7 +13,7 @@ import { useActivity } from '../../activity/useActivity';
 import { useScheduleContext } from '../../shifts/useScheduleContext';
 import { ApiError } from '../../api/errors';
 import { bannerCopy } from '../../auth/copy';
-import { ColorsOverrideProvider, lightColors, space, useColors } from '../../theme';
+import { space, useColors } from '../../theme';
 import { AppNav } from '../../ui/AppNav';
 import { Button } from '../../ui/Button';
 import { EmptyCard } from '../../ui/EmptyCard';
@@ -27,14 +27,10 @@ import { useOnline } from '../../ui/useOnline';
 /**
  * Team activity (Figma 04: activity 7:88 and its loading, loading-more, empty, end and error states). The newest changes first, a page at a time: the
  * server's cursor, FlashList, pull to refresh. Opened from Schedule's "View activity"; the bottom bar keeps Schedule selected and pressing it goes back.
- * The next page is asked for only when `mayFetchNextPage` says so (fast scrolling sends no duplicate requests). Light-only for now (issue #24).
+ * The next page is asked for only when `mayFetchNextPage` says so (fast scrolling sends no duplicate requests).
  */
 export default function ActivityScreen() {
-  return (
-    <ColorsOverrideProvider colors={lightColors}>
-      <Activity />
-    </ColorsOverrideProvider>
-  );
+  return <Activity />;
 }
 
 function Activity() {

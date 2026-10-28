@@ -16,6 +16,8 @@ import { createInviteApi } from './invites/inviteApi';
 import { createRecoveryApi } from './recovery/recoveryApi';
 import { createActivityApi } from './activity/activityApi';
 import { createShiftApi } from './shifts/shiftApi';
+import { createSettingsApi } from './settings/settingsApi';
+import { settingsKey } from './settings/settingsResponses';
 import { createSwapApi } from './swaps/swapApi';
 import { createTeamApi } from './teams/teamApi';
 
@@ -83,6 +85,34 @@ export function getSwapApi() {
   return createSwapApi(getApi());
 }
 
+/** The settings routes (docs/ARCHITECTURE.md, ADR 0024) over the one API client. Built on first use, like the client. */
+export function getSettingsApi() {
+  return createSettingsApi(getApi());
+}
+
+/** The settings request started when a session began, so the launch screen can wait for it (and so the theme is right on the first frame). */
+let settingsPrefetch: Promise<void> | null = null;
+
+/**
+ * Asks for the user's settings once, without retries: a failure (offline, a slow or unhappy server) must never hold the launch screen longer than the one
+ * request's own timeout. It never throws. The screens' own observer asks again as soon as one mounts (`staleTime: 0`).
+ */
+export function prefetchSettings(userId: string): Promise<void> {
+  settingsPrefetch = queryClient.prefetchQuery({
+    queryKey: settingsKey(userId),
+    queryFn: ({ signal }) => getSettingsApi().get(signal),
+    retry: false,
+    networkMode: 'always',
+    staleTime: 0,
+  });
+  return settingsPrefetch;
+}
+
+/** Resolves when the settings request of this session has finished, however it ended (or at once when none was started). */
+export function settingsPrefetchSettled(): Promise<void> {
+  return settingsPrefetch ?? Promise.resolve();
+}
+
 /** The activity feed route (docs/ARCHITECTURE.md 5e) over the one API client. Built on first use, like the client. */
 export function getActivityApi() {
   return createActivityApi(getApi());
@@ -126,7 +156,10 @@ export const meQueryKey = ['me'] as const;
 
 /** A session now exists (sign-in, sign-up, or a restore): seed the user the server returned and open the signed-in side. */
 function onSignedIn(user: AuthUser | null) {
-  if (user) queryClient.setQueryData(meQueryKey, user);
+  if (user) {
+    queryClient.setQueryData(meQueryKey, user);
+    void prefetchSettings(user.id);
+  }
   useSessionStore.getState().setSignedIn();
 }
 
