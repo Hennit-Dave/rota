@@ -127,7 +127,7 @@ function Activity() {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <View style={{ paddingBottom: space[12] }}>
-              <ActivityCard label={activityLabel(item)} detail={activityDetail(item, now, zone)} testID={`activity-${item.id}`} />
+              <ActivityCard label={activityLabel(item, zone)} detail={activityDetail(item, now, zone)} testID={`activity-${item.id}`} />
             </View>
           )}
           ListHeaderComponent={header}

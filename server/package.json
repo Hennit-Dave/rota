@@ -30,6 +30,7 @@
     "db:parity": "tsx --env-file-if-exists=../.env src/db/parity.ts",
     "db:generate": "SHARD=a SHARD_A_DIRECT_URL=postgresql://unused:unused@localhost:5432/unused node ./node_modules/prisma/build/index.js generate",
     "db:feed-proof": "tsx --env-file-if-exists=../.env src/db/feed-proof.ts",
+    "db:demo-swap": "tsx --env-file-if-exists=../.env src/db/demo-swap.ts",
     "db:check-pooled": "tsx --env-file-if-exists=../.env src/db/check-pooled.ts",
     "jobs:check-valkey": "tsx --env-file-if-exists=../.env src/jobs/scripts/check-valkey.ts",
     "jobs:prove:boxes-4-5": "tsx --env-file-if-exists=../.env src/jobs/scripts/prove-boxes-4-5.ts",

@@ -1,6 +1,6 @@
 import { ApiError } from '../api/errors';
 
-export type ActivityKind = 'shift_created' | 'shift_updated' | 'shift_deleted';
+export type ActivityKind = 'shift_created' | 'shift_updated' | 'shift_deleted' | 'swap_requested' | 'swap_approved' | 'swap_rejected';
 
 /** One row of the team's feed as the server describes it (docs/ARCHITECTURE.md 5e). Server data: the app formats it and decides nothing. */
 export interface ActivityItem {
@@ -9,6 +9,7 @@ export interface ActivityItem {
   createdAt: string;
   actor: { id: string; name: string } | null;
   shiftId: string | null;
+  /** For a swap: the shift the requester offered. */
   shift: { title: string; startsAt: string; endsAt: string } | null;
   changed: string[];
 }
@@ -21,7 +22,7 @@ export interface ActivityPage {
 
 const unreadable = () => new ApiError(200, 'invalid_response', 'The server answer could not be read.', null);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const KINDS: readonly string[] = ['shift_created', 'shift_updated', 'shift_deleted'];
+const KINDS: readonly string[] = ['shift_created', 'shift_updated', 'shift_deleted', 'swap_requested', 'swap_approved', 'swap_rejected'];
 
 export function parseActivityItem(value: unknown): ActivityItem | null {
   if (!isRecord(value)) return null;

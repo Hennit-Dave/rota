@@ -24,8 +24,9 @@ against a hand-written copy. Anything not in the table is refused. Rows without 
 | `team.view`, `members.list` | yes | yes | yes | `GET /teams/:teamId`, `GET /teams/:teamId/members` |
 | `shifts.view` | yes | yes | yes | `GET /teams/:teamId/shifts`, `GET /teams/:teamId/shifts/:shiftId`, `GET /teams/:teamId/activity` |
 | `shifts.edit` | yes | yes | no | `POST /teams/:teamId/shifts`, `PATCH` and `DELETE /teams/:teamId/shifts/:shiftId` |
-| `swaps.request`, `preferences.edit` (own) | yes | yes | yes | later |
-| `swaps.approve` | yes | yes | no | later |
+| `swaps.request` | yes | yes | yes | `GET` and `POST /teams/:teamId/swaps`, `GET /teams/:teamId/swaps/:swapId`, `POST …/:swapId/cancel` (the requester only) |
+| `swaps.approve` | yes | yes | no | `POST /teams/:teamId/swaps/:swapId/approve` and `/reject` (never by a person who is part of the swap, except an Owner who is the only approver) |
+| `preferences.edit` (own) | yes | yes | yes | later |
 | `invite.staff` | yes | yes | no | later |
 | `invite.manager` | yes | no | no | later |
 | `billing.manage` | yes | no | no | later |
@@ -42,7 +43,7 @@ Nobody is invited as Owner, and the database allows only one Owner per team (par
   applies to the very next request.
 - A member whose role may not do the action gets `403 forbidden`; the real reason (`role_staff_cannot_shifts.edit`) is in the server log only.
 
-**The brief's test.** "Staff calls delete-shift and is rejected": `DELETE /teams/:teamId/shifts/:shiftId` with a Staff token answers `403 forbidden`, and the shift and its history row are still there afterwards (`shifts.integration.test.ts`, "THE BRIEF"). Staff may view the schedule but every write (create, edit, delete) is refused with nothing written. **What remains.** `swaps.approve`, `invite.*` beyond the invitation routes and `billing.manage` get their routes in later slices on the same middleware.
+**The brief's test.** "Staff calls delete-shift and is rejected": `DELETE /teams/:teamId/shifts/:shiftId` with a Staff token answers `403 forbidden`, and the shift and its history row are still there afterwards (`shifts.integration.test.ts`, "THE BRIEF"). Staff may view the schedule but every write (create, edit, delete) is refused with nothing written. **Swaps (slice S1).** A Staff member who calls approve or reject directly, as the requester or the other person or anyone else, gets `403` and the request, both shifts and the feed are untouched (`swaps.integration.test.ts`, "THE SECURITY TEST"). A person who is part of a swap cannot decide it ("A PARTY CANNOT DECIDE THEIR OWN SWAP"; `rules.unit.test.ts`). **What remains.** `billing.manage` and the settings routes get their routes in later slices on the same middleware.
 
 **Proving tests.** `shifts.integration.test.ts`: "THE BRIEF", "a Staff member can view the schedule but cannot publish or change a shift", "ROLE FROM THE SERVER" (a demoted Manager is refused on the next request with the same token). `team-security.integration.test.ts`: "ROLE ENFORCEMENT" (Staff 403, Manager and Owner 200, Staff still allowed to view),
 "ROLE FROM THE SERVER, NOT THE TOKEN" (demote a Manager, the same token gets 403). `permissions.unit.test.ts`: the table. The test route is
@@ -183,12 +184,13 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `invite_preview_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_PREVIEW_IP_MAX` / `_WINDOW_SECONDS` |
 | `invite_accept_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_ACCEPT_IP_MAX` / `_WINDOW_SECONDS` |
 | `invite_accept_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_ACCEPT_USER_MAX` / `_WINDOW_SECONDS` |
+| `swap_request_user` | 10 | 1 hour | `RATE_LIMIT_SWAP_REQUEST_USER_MAX` / `_WINDOW_SECONDS` (per user ID, creating a swap request only; approved 2026-10-27; **chosen, not measured**; ADR 0023) |
 | `feed_user` | 120 | 1 minute | `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-26; **chosen, not measured**: the load test, with 200 distinct users, checks it; ADR 0022) |
 
 The app-wide invite cap exists because Resend's free plan sends 100 emails per UTC day in total, shared with password reset and magic link (slice 2b) and any proof sends (ADR 0015). A limit keyed by the team or the whole app runs **after** the membership and role check, so a stranger cannot spend another team's budget (`security.md`).
 
 - A blocked request is `429 rate_limited` with a `Retry-After` header, and never reaches password verification.
-- If Valkey is unreachable or rejects the write, these routes answer `503 service_unavailable` (fail closed). **That includes the activity feed** (decided 2026-10-26, issue #11, ADR 0022): it returns no rows rather than serving unprotected; test "with Valkey down the feed fails CLOSED".
+- If Valkey is unreachable or rejects the write, these routes answer `503 service_unavailable` (fail closed). **That includes the swap request and the activity feed** (the feed decided 2026-10-26, issue #11, ADR 0022): it returns no rows rather than serving unprotected; test "with Valkey down the feed fails CLOSED".
 - **They work again on their own when Valkey is back, with no restart.** A connection that went silently dead (a laptop sleep, a NAT that forgot the mapping) is replaced after the first command timeout, so the limited routes answer 503 only while Valkey is really unreachable (ADR 0018, issue #39). An error reply such as `OOM` under `noeviction` is not a timeout and changes nothing: it still fails closed, and `noeviction` is never altered.
 - The IP is the TCP peer address. `X-Forwarded-For` is not trusted until the host's proxy setup is verified.
 - A set-but-invalid override (not a positive integer) stops the server from starting.

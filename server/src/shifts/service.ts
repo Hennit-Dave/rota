@@ -47,7 +47,7 @@ function view(row: Shift, names: Names): ShiftView {
   };
 }
 
-type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
+export type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
 /**
  * Lock the assignee's membership row, so two requests that give the same person a shift queue up here (advisory locks are not available through the
@@ -60,7 +60,7 @@ async function lockAssignee(tx: Tx, teamId: string, userId: string): Promise<voi
 }
 
 /** A person may not have two shifts that overlap. Shifts that only touch (one ends when the next starts) are fine. */
-async function assertNoOverlap(tx: Tx, input: { teamId: string; userId: string; startsAt: Date; endsAt: Date; exceptShiftId?: string }): Promise<void> {
+export async function assertNoOverlap(tx: Tx, input: { teamId: string; userId: string; startsAt: Date; endsAt: Date; exceptShiftId?: string }): Promise<void> {
   const clash = await tx.shift.findFirst({
     where: {
       teamId: input.teamId,

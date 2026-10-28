@@ -2,10 +2,20 @@ import { activityCopy } from './activityCopy';
 import type { ActivityItem } from './activityResponses';
 import { addDays, dayKeyOf, formatLongDate, formatTime } from '../shifts/shiftTime';
 
-/** "New shift: Morning service", "Shift changed: Morning service", "Shift removed: Morning service". A row whose snapshot cannot be read still says what kind of change it was. */
-export function activityLabel(item: Pick<ActivityItem, 'kind' | 'shift'>): string {
+/**
+ * "New shift: Morning service", "Shift changed: Morning service", "Shift removed: Morning service", and for swaps "Swap approved for Friday" (Figma 5:96): the
+ * weekday of the shift the requester offered, on the team's calendar. A row whose snapshot cannot be read still says what kind of change it was.
+ */
+export function activityLabel(item: Pick<ActivityItem, 'kind' | 'shift'>, timeZone: string): string {
   const title = item.shift?.title;
+  const day = item.shift ? formatLongDate(dayKeyOf(new Date(item.shift.startsAt), timeZone)).split(',')[0] : undefined;
   switch (item.kind) {
+    case 'swap_requested':
+      return day ? activityCopy.swapRequested(day) : activityCopy.swapRequestedUntitled;
+    case 'swap_approved':
+      return day ? activityCopy.swapApproved(day) : activityCopy.swapApprovedUntitled;
+    case 'swap_rejected':
+      return day ? activityCopy.swapRejected(day) : activityCopy.swapRejectedUntitled;
     case 'shift_created':
       return title ? activityCopy.created(title) : activityCopy.createdUntitled;
     case 'shift_updated':

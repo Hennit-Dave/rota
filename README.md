@@ -82,6 +82,8 @@ Optional: `SHIFTS_MAX_RANGE_DAYS` (42). The app's home is now the Schedule, with
 
 **Activity feed** (slice C2, ADR 0022): `GET /teams/:teamId/activity?limit&cursor` returns what happened to the team's shifts, newest first, a page at a time by cursor (20 rows by default, 50 at most), limited to 120 requests a minute per user, and answering `503` when Valkey is down. New migration `20261027120000_add_activity_feed_index`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Optional: `ACTIVITY_PAGE_DEFAULT`, `ACTIVITY_PAGE_MAX`, `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS`. `npm run db:feed-proof -- seed | explain | clean` (test shards only) seeds 10,000 feed rows and prints the query plan. In the app, "View activity" on the Schedule opens it.
 
+**Shift swaps** (slice S1, ADR 0023): `GET/POST /teams/:teamId/swaps` and `/:swapId`, `/:swapId/cancel`, `/:swapId/approve`, `/:swapId/reject`. Staff ask to exchange one of their upcoming shifts for a teammate's; an Owner or Manager approves or rejects (never someone who is part of the swap, unless they are the Owner and the only approver). A retried request (same `Idempotency-Key`) never creates a second one; at most 3 requests wait per person and 10 may be made per hour. Two new migrations, `20261028100000_add_swap_activity_kinds` and `20261028110000_add_swap_requests`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Optional: `SWAPS_MAX_PENDING`, `RATE_LIMIT_SWAP_REQUEST_USER_MAX` / `_WINDOW_SECONDS`. In the app: the Swaps tab.
+
 ```sh
 openssl rand -base64 32   # copy the output into AUTH_JWT_SECRET in the root .env (at least 32 bytes once decoded)
 cd server && npm run build && npm run start:api
@@ -158,3 +160,44 @@ Run it on the EAS build's APK too, before installing it. It fails (exit 1) on an
 Push needs `app/google-services.json` (Firebase client config, gitignored; ask Dave for it, or download it from the Firebase console for the
 Android app `design.davebuilds.rota`). EAS cloud builds get it from the EAS file variable `GOOGLE_SERVICES_JSON`. Without it the app builds and runs but cannot
 register for push. See ADR 0011. Nothing else needs a secret: the only `EXPO_PUBLIC_` variable is the API address (`docs/SECURITY.md`).
+
+## Commands
+
+### Look at the Swaps tab on the emulator (test shards, local Valkey)
+
+Needs a root `.env` with the `TEST_SHARD_*` URLs and `TEST_DATABASE_ALLOWED=true`, an installed development build (see above), and a running emulator.
+Use one terminal for each of the first three steps. Nothing here touches a real shard or the shared Aiven Valkey.
+
+```sh
+# 1. A disposable local Valkey (the binary is not on PATH; see "Run the server locally")
+mkdir -p /tmp/rota-valkey && cd /tmp/rota-valkey
+/opt/homebrew/opt/valkey/bin/valkey-server --port 6392 --bind 127.0.0.1 --save "" --maxmemory-policy noeviction
+
+# 2. The API, pointed at the TEST shards, on port 3100
+cd server && npm run build
+set -a; . ../.env; set +a
+PORT=3100 VALKEY_URL=redis://127.0.0.1:6392 \
+  SHARD_A_DATABASE_URL="$TEST_SHARD_A_DATABASE_URL" SHARD_A_DIRECT_URL="$TEST_SHARD_A_DIRECT_URL" \
+  SHARD_B_DATABASE_URL="$TEST_SHARD_B_DATABASE_URL" SHARD_B_DIRECT_URL="$TEST_SHARD_B_DIRECT_URL" \
+  node dist/api/main.js                      # http://127.0.0.1:3100/health returns {"ok":true}
+
+# 3. Metro, in watch mode (CI mode does not serve edits)
+cd app
+EXPO_PUBLIC_API_URL=http://10.0.2.2:3100 npx expo start --dev-client --port 8081 --clear
+```
+
+```sh
+# 4. Seed "The Olive Room": a manager, two staff and one pending swap. Prints the manager's email and password.
+cd server
+VALKEY_URL=redis://127.0.0.1:6392 npm run db:demo-swap
+
+# 5. Open the app on the emulator, sign in with the printed email and password, then tap Swaps
+adb reverse tcp:8081 tcp:8081
+adb shell am start -a android.intent.action.VIEW -d "exp+rota://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081" design.davebuilds.rota
+```
+
+Notes:
+- Each seed run adds a new team and four users to the **test** shards (it never deletes them: `app.stop()` would delete the team). Remove them by hand when you no longer need them.
+- If the app is already signed in as someone else, use Settings, then Log out first.
+- When typing with `adb shell input text`, tap the field first and check it has focus. With no field focused, a double `r` in the text reloads the app (React Native's dev shortcut) and the rest of the text is lost.
+- To use the API from the host instead of the emulator, replace `10.0.2.2` with `127.0.0.1`.

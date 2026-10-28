@@ -13,11 +13,11 @@ import { encodeCursor } from './cursor.js';
  */
 export interface ActivityItem {
   id: string;
-  kind: 'shift_created' | 'shift_updated' | 'shift_deleted';
+  kind: 'shift_created' | 'shift_updated' | 'shift_deleted' | 'swap_requested' | 'swap_approved' | 'swap_rejected';
   createdAt: string;
   actor: { id: string; name: string } | null;
   shiftId: string | null;
-  /** The snapshot of the shift when it happened, whitelisted: only what the app shows. Null if the stored snapshot cannot be read. */
+  /** The snapshot of the shift when it happened (for a swap: the shift the requester offered), whitelisted: only what the app shows. Null if the stored snapshot cannot be read. */
   shift: { title: string; startsAt: string; endsAt: string } | null;
   /** For an update: the names of the fields that were changed. */
   changed: string[];
