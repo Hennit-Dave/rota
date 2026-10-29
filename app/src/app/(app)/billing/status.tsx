@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
+import { BillingHeader } from '../../../billing/BillingHeader';
 import { statusCopy } from '../../../billing/billingCopy';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { useCancelOperation, useOperation } from '../../../billing/useBilling';
@@ -7,7 +8,6 @@ import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { InfoCard } from '../../../ui/InfoCard';
-import { PageHeader } from '../../../ui/PageHeader';
 import { Screen, Spacer } from '../../../ui/Screen';
 import { StatusBanner } from '../../../ui/StatusBanner';
 import { Text } from '../../../ui/Text';
@@ -31,7 +31,7 @@ function PaymentStatus() {
   const cancel = useCancelOperation(userId, teamId);
   const [refused, setRefused] = useState<string | null>(null);
 
-  const header = (title: string, subtitle?: string) => <PageHeader eyebrowGap={16} teamName={teamName} title={title} subtitle={subtitle} />;
+  const header = (title: string, subtitle?: string) => <BillingHeader teamName={teamName} title={title} subtitle={subtitle} />;
   const toSchedule = (label: string) => <Button label={label} onPress={() => router.dismissTo('/')} testID="payment-done" />;
 
   /** Ends an open payment on the server (so a new one can start), then returns to the plan screen. If the server refuses, say why. */
@@ -98,6 +98,8 @@ function PaymentStatus() {
           {header(statusCopy.confirming.title, statusCopy.confirming.subtitle)}
           {summary}
           <StatusBanner tone="info" title={statusCopy.confirming.banner.title} body={statusCopy.confirming.banner.body} testID="payment-confirming" />
+          <Spacer />
+          {toSchedule(statusCopy.confirming.back)}
         </Screen>
       );
     case 'failed':

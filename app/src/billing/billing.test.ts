@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { ApiError, NotSignedInError, OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import { json, makeHarness } from '../testkit';
 import { createBillingApi } from './billingApi';
+import { billingBadgeCopy, statusCopy } from './billingCopy';
 import { describeBillingFailure } from './billingFailure';
 import { isSettled, isStripeCheckoutUrl, parseOperationResponse, parseOverview, parseQuote, parseStartResponse, type OperationStatus } from './billingResponses';
 
@@ -138,4 +139,20 @@ test('NO MONEY LOGIC IN THE APP: no price, no arithmetic on an amount, no divisi
     assert.ok(!/[/*]\s*100\b/.test(code), `${file}: dividing or multiplying by 100`);
     assert.ok(!/toFixed\(|parseFloat|Intl\.NumberFormat/.test(code), `${file}: formatting a number as money`);
   }
+});
+
+test('every billing screen carries the Test mode badge, and "Confirming" has a way back to the schedule', () => {
+  const read = (path: string) => readFileSync(join(__dirname, path), 'utf8');
+  assert.equal(billingBadgeCopy.testMode, 'Test mode');
+  assert.match(statusCopy.confirming.back, /schedule/i);
+  // Both billing screens build their header through BillingHeader, which is the only place the badge is added.
+  for (const screen of ['../app/(app)/billing/index.tsx', '../app/(app)/billing/status.tsx']) {
+    const code = read(screen);
+    assert.ok(code.includes('BillingHeader'), `${screen} uses BillingHeader`);
+    assert.ok(!code.includes('<PageHeader'), `${screen} does not build a header without the badge`);
+  }
+  assert.ok(read('BillingHeader.tsx').includes('<TestModeBadge'));
+  const status = read('../app/(app)/billing/status.tsx');
+  const confirming = status.slice(status.indexOf("case 'confirming':"), status.indexOf("case 'failed':"));
+  assert.ok(confirming.includes('statusCopy.confirming.back'), 'the confirming state offers the way back');
 });

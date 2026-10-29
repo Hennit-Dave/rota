@@ -110,6 +110,8 @@ expiring trial credits. If something can't be free, say so plainly.**
 
 ## Always-on reminders
 
+- **Running a proof?** (evidence for a PR, a manual end-to-end, a demo of a slice) Use `npm run proof:api` and `npm run proof:worker`:
+  they run on the **test shards**. The real shards only with Dave's explicit go, and the PR then says what was written there.
 - **A real bug appears?** Tell Dave to record it broken *before* fixing it, then again after.
 - **First touch of a self-study topic?** Name it and prompt his own-words `LEARNING-LOG.md` entry. The topics
   are EAS Build, AsyncStorage risk, refresh rotation and reuse, idempotency, observability, load testing, ADRs.
@@ -188,6 +190,7 @@ from `.env.example` (names only); the server scripts read it.
 | Build | `npm run build` |
 | Run API (compiled; build first) | `npm run start:api` |
 | Run worker (compiled; build first) | `npm run start:worker` |
+| **Run a proof** (API / worker on the **test shards**, own queue `work-proof`; build first) | `npm run proof:api` / `npm run proof:worker` |
 | Run API / worker with reload | `npm run dev:api` / `npm run dev:worker` |
 
 App commands run from `app/` (see `app/AGENTS.md`): `npm ci`, `npm run typecheck`, `npm test`, `npx expo-doctor`.

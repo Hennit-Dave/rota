@@ -24,6 +24,14 @@ the agent prompts Dave at the moment it matters.
 
 ## Our policies
 
+### Where a proof runs
+- **Proofs run on the test shards by default:** `npm run proof:api` and `npm run proof:worker` set `USE_TEST_SHARDS=true` (the
+  `TEST_SHARD_*` URLs behind the `TEST_DATABASE_ALLOWED` guard) and use their own queue, `work-proof`, so a proof worker never picks up
+  real jobs. Plain `start:api` / `start:worker` use the real shards.
+- **The real shards only with Dave's explicit go.** Ledger rows can never be deleted (ADR 0026), so anything a proof writes there stays
+  for good. When it does happen, the PR says exactly what is now in the real shards.
+- *Why: the P3 proof (PR #57) ran on the real shards by default, left a throwaway user, two teams and test ledger rows there, and nobody had decided that.*
+
 ### Bugs
 - **The moment a real bug appears, before changing any code: tell Dave to record it broken.** After the
   fix, tell him to record it working. *Why: a fixed bug can't be filmed.*

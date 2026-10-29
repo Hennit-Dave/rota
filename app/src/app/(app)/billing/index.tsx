@@ -3,6 +3,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
+import { BillingHeader } from '../../../billing/BillingHeader';
 import { activateCopy } from '../../../billing/billingCopy';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { PLAN_IDS, type PlanId } from '../../../billing/billingResponses';
@@ -12,7 +13,6 @@ import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
 import { EmptyCard } from '../../../ui/EmptyCard';
 import { InfoCard } from '../../../ui/InfoCard';
-import { PageHeader } from '../../../ui/PageHeader';
 import { Screen, Spacer } from '../../../ui/Screen';
 import { StatusBanner } from '../../../ui/StatusBanner';
 import { Text } from '../../../ui/Text';
@@ -88,7 +88,7 @@ function Billing() {
     );
   }
 
-  const header = <PageHeader eyebrowGap={16} teamName={teamName} title={activateCopy.title} subtitle={activateCopy.subtitle} />;
+  const header = <BillingHeader teamName={teamName} title={activateCopy.title} subtitle={activateCopy.subtitle} />;
   const back = <Button label={activateCopy.back} variant="secondary" onPress={() => router.dismissTo('/')} testID="billing-back" />;
 
   if (detail.data === undefined || (canManage && overview.data === undefined && !overview.isError)) {
@@ -127,7 +127,7 @@ function Billing() {
   if (data.activated && data.subscription) {
     return (
       <Screen gap={space[16]}>
-        <PageHeader eyebrowGap={16} teamName={teamName} title={activateCopy.yourPlan} subtitle={data.testModeNotice} />
+        <BillingHeader teamName={teamName} title={activateCopy.yourPlan} subtitle={data.testModeNotice} />
         <InfoCard title={activateCopy.planSummary(data.subscription.planName, data.subscription.seats)} body={data.subscription.monthlyDisplay} testID="billing-plan" />
         <Text variant="caption" tone="muted">
           {activateCopy.currentPeriod(data.subscription.periodStartsOn, data.subscription.periodEndsOn)}

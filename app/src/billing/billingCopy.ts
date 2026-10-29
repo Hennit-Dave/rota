@@ -29,6 +29,9 @@ export const activateCopy = {
   currentPeriod: (start: string, end: string) => `Current period: ${start} to ${end}`,
 } as const;
 
+/** The amber pill under every billing header (Figma 07). */
+export const billingBadgeCopy = { testMode: 'Test mode' } as const;
+
 export const statusCopy = {
   title: 'Payment',
   waiting: {
@@ -40,7 +43,9 @@ export const statusCopy = {
   confirming: {
     title: 'Confirming your payment',
     subtitle: 'This usually takes a few seconds.',
-    banner: { title: 'Waiting for the server to confirm', body: 'Your plan changes only after the server has confirmed the payment. Please keep this page open.' },
+    banner: { title: 'Waiting for the server to confirm', body: 'Your plan changes only after the server has confirmed the payment. You can safely go back to your schedule.' },
+    // Figma payment-pending / payment-in-progress: a way out while the server confirms. The payment carries on without this screen.
+    back: 'Back to schedule',
   },
   paid: { title: 'Subscription active', subtitle: 'Your payment was confirmed.', done: 'Back to schedule' },
   failed: {

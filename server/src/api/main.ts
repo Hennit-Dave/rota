@@ -4,7 +4,7 @@ import { createPasswordService } from '../auth/password.js';
 import { createTokenService } from '../auth/tokens.js';
 import { createStripeGateway } from '../billing/gateway.js';
 import { loadStripeConfig } from '../billing/stripeConfig.js';
-import { createShards } from '../db/clients.js';
+import { createRuntimeShards } from '../db/runtimeShards.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
 import { createProducerConnection, recycleIfStale } from '../jobs/connection.js';
@@ -52,7 +52,7 @@ try {
 }
 
 // data.md: the API's pool is 5 per shard primary. Identity lives on shard A.
-const shards = createShards({ primaryMax: 5 });
+const shards = createRuntimeShards({ primaryMax: 5 }, 'api');
 
 // Rate limiting uses the bounded producer-style connection: short timeouts, no offline queue, so a Valkey outage
 // fails the limited routes closed (503) quickly instead of hanging them.

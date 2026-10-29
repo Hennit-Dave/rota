@@ -1,5 +1,5 @@
 import { createStripeEventHandler } from '../billing/stripeEventJob.js';
-import { createShards } from '../db/clients.js';
+import { createRuntimeShards } from '../db/runtimeShards.js';
 import {
   createProducerConnection,
   createWorkerConnection,
@@ -23,7 +23,7 @@ import type { Redis } from 'ioredis';
 console.log('worker starting...');
 
 // data.md: Worker uses primary clients only, max 3 connections per shard primary
-const shards = createShards({ primaryMax: 3 });
+const shards = createRuntimeShards({ primaryMax: 3 }, 'worker');
 const redis = createWorkerConnection();
 
 try {
