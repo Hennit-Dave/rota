@@ -1,4 +1,5 @@
-import { createShards } from '../db/clients.js';
+import { createStripeEventHandler } from '../billing/stripeEventJob.js';
+import { createRuntimeShards } from '../db/runtimeShards.js';
 import {
   createProducerConnection,
   createWorkerConnection,
@@ -22,7 +23,7 @@ import type { Redis } from 'ioredis';
 console.log('worker starting...');
 
 // data.md: Worker uses primary clients only, max 3 connections per shard primary
-const shards = createShards({ primaryMax: 3 });
+const shards = createRuntimeShards({ primaryMax: 3 }, 'worker');
 const redis = createWorkerConnection();
 
 try {
@@ -48,6 +49,8 @@ const handlers = {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
+  // Stripe webhook events recorded by the API (ADR 0027). The worker holds no Stripe key: it only reads the recorded event and writes our own tables.
+  stripe_event: createStripeEventHandler({ shards }),
 };
 
 // Every worker that gets built, including one rebuilt by the watchdog below, gets the same handlers.

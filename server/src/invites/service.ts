@@ -4,6 +4,7 @@ import { getShard, type Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { shardFor, type ShardId } from '../db/shard.js';
 import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
+import { assertSeatForInvitation, assertSeatForNewMember } from '../billing/seats.js';
 import { ApiError } from '../http/errors.js';
 import { can, type Role } from '../teams/permissions.js';
 import { renderInviteEmail } from './emailTemplate.js';
@@ -155,6 +156,8 @@ export async function createInvitation(
 
   const { invitationId, work } = await prisma.$transaction(
     async (tx) => {
+      // Serialises with every other change to who is in the team (invitations, accepts, activation), so two cannot both take the last seat.
+      await tx.$queryRaw`SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
       const inserted = await tx.$queryRaw<Array<{ id: string }>>`
         INSERT INTO invitations (id, team_id, email, role, token_hash, expires_at, invited_by_user_id)
         VALUES (${newId}::uuid, ${teamId}::uuid, ${input.email}, ${input.role}::team_role, ${issued.tokenHash}, ${expiresAt}, ${input.actor.userId}::uuid)
@@ -175,6 +178,8 @@ export async function createInvitation(
               invited_by_user_id = ${input.actor.userId}::uuid, updated_at = NOW()
           WHERE id = ${id}::uuid`;
       }
+      // A usable invitation holds a seat for its person (billing/seats.ts): the sixth Starter seat is refused here, and rolled back.
+      await assertSeatForInvitation(tx, teamId);
       const work = await writeEmailRow(tx, deps, {
         invitationId: id,
         teamId,
@@ -226,6 +231,7 @@ export async function createInviteLink(
       await tx.$executeRaw`
         INSERT INTO invitations (id, team_id, kind, email, role, token_hash, expires_at, invited_by_user_id)
         VALUES (${id}::uuid, ${teamId}::uuid, 'link'::invitation_kind, NULL, 'staff'::team_role, ${issued.tokenHash}, ${expiresAt}, ${input.actor.userId}::uuid)`;
+      await assertSeatForInvitation(tx, teamId);
     },
     { maxWait: deps.config.transactionMaxWaitMs },
   );
@@ -528,7 +534,9 @@ export async function acceptInvitation(
   } catch (error) {
     // Several people may hold one link, so losing the race for it is ordinary: take back the directory row written above if the caller is NOT a member
     // (best effort; the orphan sweep, issue #33, covers a failure here), so a stranger's directory is not left pointing at a team.
-    if (inv.kind === 'link' && error instanceof ApiError && error.code === 'invite_unavailable') await dropUnusedDirectoryRow(shards, inv.teamId, input.userId);
+    if (error instanceof ApiError && ((inv.kind === 'link' && error.code === 'invite_unavailable') || error.code === 'seat_limit_reached')) {
+      await dropUnusedDirectoryRow(shards, inv.teamId, input.userId);
+    }
     throw error;
   }
   return { team: { id: inv.teamId, name: inv.teamName, timeZone: inv.teamTimeZone }, role: inv.role };
@@ -546,6 +554,8 @@ async function dropUnusedDirectoryRow(shards: Shards, teamId: string, userId: st
 /** Step 3: ONE transaction on the team's shard that consumes the invitation (conditional, so it is single use) and writes the membership. */
 async function consumeAndJoin(prisma: PrismaClient, inv: PendingInvitation, userId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // The team row lock serialises accepts with invitations and activation, so the seat check below cannot race another accept.
+    await tx.$queryRaw`SELECT id FROM teams WHERE id = ${inv.teamId}::uuid FOR UPDATE`;
     const consumed = await tx.$executeRaw`
       UPDATE invitations SET accepted_at = NOW(), accepted_by_user_id = ${userId}::uuid, updated_at = NOW()
       WHERE id = ${inv.id}::uuid AND team_id = ${inv.teamId}::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()`;
@@ -558,6 +568,9 @@ async function consumeAndJoin(prisma: PrismaClient, inv: PendingInvitation, user
       if (done.length === 0) throw new ApiError('invite_unavailable', { reason: 'lost_race' });
       return;
     }
+    // The authoritative seat check (money.md, the brief): a new member needs a free seat whatever the invitation said when it was made.
+    // Throwing rolls the consumption back, so the invitation stays usable once a seat is free.
+    await assertSeatForNewMember(tx, inv.teamId);
     await tx.$executeRaw`
       INSERT INTO memberships (team_id, user_id, role)
       VALUES (${inv.teamId}::uuid, ${userId}::uuid, ${inv.role}::team_role)

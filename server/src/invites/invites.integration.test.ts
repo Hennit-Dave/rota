@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
+import { seedActiveSubscription } from '../billing/testkit.js';
 import { shardFor } from '../db/shard.js';
 import { bearer, startTeamsTestApp, type TeamsTestApp } from '../teams/testkit.js';
 import { hashInviteSecret, parseInviteToken } from './tokens.js';
@@ -19,6 +20,9 @@ after(() => app.stop());
 
 const strip = (r: { body: { error: Record<string, unknown> } }) => ({ ...r.body.error, requestId: '<id>' });
 const invitee = () => `invitee-${randomUUID()}@example.com`;
+
+/** Starter holds five seats (ADR 0027). A test about something else gives its team room, the way a paying team has it. */
+const grantSeats = (teamId: string) => seedActiveSubscription(db(teamId), teamId, { plan: 'business', seats: 40 });
 
 async function setup(opts: { shard?: 'A' | 'B' } = {}) {
   const owner = await app.seedUser('Dave Hennit');
@@ -77,6 +81,7 @@ test('create: the invitation and its email work row commit together on the team 
 
 test('who may invite whom: Owner -> Manager or Staff; Manager -> Staff only; Staff -> nobody; nobody -> Owner', async () => {
   const { teamId, ownerH } = await setup();
+  await grantSeats(teamId);
   const manager = await app.seedUser('Daniel Mensah');
   const staff = await app.seedUser('Amara Okafor');
   await app.addMember(teamId, manager.id, 'manager');
@@ -227,6 +232,7 @@ test('GET /teams/:teamId tells the app which roles it may offer, from the permis
 
 test('list: Owner and Manager see pending invitations with the email state; Staff 403; expired, revoked and accepted are not listed', async () => {
   const { teamId, shard, ownerH } = await setup();
+  await grantSeats(teamId);
   const manager = await app.seedUser();
   const staff = await app.seedUser();
   await app.addMember(teamId, manager.id, 'manager');

@@ -40,6 +40,9 @@ export function describeSendInviteFailure(error: unknown): SendInviteFailure | n
     }
     case 'invite_link_limit':
       return { kind: 'link_limit', message: inviteFormCopy.link.limit };
+    // No free seat (the plan's seats are all taken or held by waiting invitations): shown like the link limit, as a banner. The server decided.
+    case 'seat_limit_reached':
+      return { kind: 'link_limit', message: inviteFormCopy.seatLimit };
     case 'forbidden':
     case 'not_found':
       return { kind: 'not_allowed', message: inviteFormCopy.notAllowed };

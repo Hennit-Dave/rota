@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
+import { seedActiveSubscription } from '../billing/testkit.js';
 import { shardFor } from '../db/shard.js';
 import { bearer, startTeamsTestApp, type TeamsTestApp } from '../teams/testkit.js';
 
@@ -312,6 +313,7 @@ test('link rate limits are per user and per team, and a link never uses the emai
   });
   try {
     const t = await setup({ a: limited });
+    await seedActiveSubscription(limited.raw[shardFor(t.teamId)].primary, t.teamId, { plan: 'business', seats: 40 });
     assert.equal((await limited.post(linksUrl(t.teamId), undefined, t.ownerH)).status, 201);
     assert.equal((await limited.post(linksUrl(t.teamId), undefined, t.ownerH)).status, 201);
     const blockedUser = await limited.post(linksUrl(t.teamId), undefined, t.ownerH);

@@ -144,7 +144,7 @@ function ConfirmView(props: { preview: PendingInvitePreview; accepting: boolean;
   let banner: React.ReactNode = null;
   if (!online) {
     banner = <StatusBanner tone="warning" title={bannerCopy.offline} />;
-  } else if (failure?.kind === 'rate_limited' || failure?.kind === 'offline') {
+  } else if (failure?.kind === 'rate_limited' || failure?.kind === 'offline' || failure?.kind === 'no_seat') {
     banner = <StatusBanner tone="warning" title={failure.message} />;
   } else if (failure?.kind === 'generic') {
     banner = (
@@ -214,7 +214,7 @@ function UnavailableView({ signedIn }: { signedIn: boolean }) {
 
 /** invite-offline (289:469), and the same layout for a rate limit or an unexpected error (no frames: login patterns). */
 function ProblemView(props: {
-  failure: Extract<InviteFailure, { kind: 'offline' | 'rate_limited' | 'generic' }>;
+  failure: Extract<InviteFailure, { kind: 'offline' | 'rate_limited' | 'no_seat' | 'generic' }>;
   signedIn: boolean;
   retrying: boolean;
   onRetry: () => void;
@@ -225,7 +225,7 @@ function ProblemView(props: {
   let banner: React.ReactNode;
   if (offline) {
     banner = <StatusBanner tone="warning" title={inviteCopy.offline.bannerTitle} body={inviteCopy.offline.bannerBody} />;
-  } else if (failure.kind === 'rate_limited') {
+  } else if (failure.kind === 'rate_limited' || failure.kind === 'no_seat') {
     banner = <StatusBanner tone="warning" title={failure.message} />;
   } else {
     banner = (

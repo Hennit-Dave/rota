@@ -14,6 +14,8 @@
     "dev:worker": "tsx watch --env-file-if-exists=../.env src/worker/main.ts",
     "start:api": "node --env-file-if-exists=../.env dist/api/main.js",
     "start:worker": "node --env-file-if-exists=../.env dist/worker/main.js",
+    "proof:api": "USE_TEST_SHARDS=true WORK_QUEUE_NAME=work-proof node --env-file-if-exists=../.env dist/api/main.js",
+    "proof:worker": "USE_TEST_SHARDS=true WORK_QUEUE_NAME=work-proof node --env-file-if-exists=../.env dist/worker/main.js",
     "test": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",
     "test:unit": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",
     "test:integration": "node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 \"src/**/*.integration.test.ts\"",
@@ -50,6 +52,7 @@
     "ioredis": "5.11.1",
     "jose": "6.2.12",
     "pg": "8.23.1",
+    "stripe": "23.0.1",
     "zod": "4.6.5"
   },
   "devDependencies": {

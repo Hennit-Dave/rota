@@ -24,6 +24,11 @@ export type ErrorCode =
   | 'already_member'
   | 'invite_pending'
   | 'invite_link_limit'
+  | 'seat_limit_reached'
+  | 'payment_in_progress'
+  | 'already_activated'
+  | 'seats_below_members'
+  | 'idempotency_mismatch'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -47,6 +52,11 @@ const STATUS: Record<ErrorCode, number> = {
   already_member: 409,
   invite_pending: 409,
   invite_link_limit: 409,
+  seat_limit_reached: 409,
+  payment_in_progress: 409,
+  already_activated: 409,
+  seats_below_members: 422,
+  idempotency_mismatch: 422,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -72,6 +82,11 @@ const MESSAGE: Record<ErrorCode, string> = {
   already_member: 'This person is already on the team.',
   invite_pending: 'An invitation is already pending for this email.',
   invite_link_limit: 'This team already has the most invite links it may have waiting.',
+  seat_limit_reached: 'This team has no free seat for another member.',
+  payment_in_progress: 'A payment for this team is already in progress.',
+  already_activated: 'This team already has a subscription.',
+  seats_below_members: 'There are more members than the seats requested.',
+  idempotency_mismatch: 'This Idempotency-Key was already used for a different request.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

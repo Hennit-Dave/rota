@@ -18,6 +18,7 @@ import { createActivityApi } from './activity/activityApi';
 import { createShiftApi } from './shifts/shiftApi';
 import { createSettingsApi } from './settings/settingsApi';
 import { settingsKey } from './settings/settingsResponses';
+import { createBillingApi } from './billing/billingApi';
 import { createSwapApi } from './swaps/swapApi';
 import { createTeamApi } from './teams/teamApi';
 
@@ -83,6 +84,11 @@ export function getShiftApi() {
 /** The swap routes (docs/ARCHITECTURE.md 5f) over the one API client. Built on first use, like the client. */
 export function getSwapApi() {
   return createSwapApi(getApi());
+}
+
+/** The billing routes (docs/ARCHITECTURE.md 5i, ADR 0027) over the one API client. Built on first use, like the client. */
+export function getBillingApi() {
+  return createBillingApi(getApi());
 }
 
 /** The settings routes (docs/ARCHITECTURE.md, ADR 0024) over the one API client. Built on first use, like the client. */

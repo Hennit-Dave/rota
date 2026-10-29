@@ -4,6 +4,9 @@ import type { AddressInfo } from 'node:net';
 import express, { Router } from 'express';
 import type { Redis } from 'ioredis';
 import { createApp } from '../api/app.js';
+import type { BillingDeps } from '../billing/activation.js';
+import type { StripeGateway } from '../billing/gateway.js';
+import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../billing/webhook.js';
 import { createInvitationsRouter } from '../invites/routes.js';
 import type { InviteDeps } from '../invites/service.js';
 import { enqueueCommittedRow } from '../jobs/queue.js';
@@ -40,6 +43,8 @@ export interface TeamsTestOptions {
   invites?: Partial<AuthConfig['invites']>;
   /** Point the limiter at a Valkey that is not there, to prove team creation fails closed. */
   deadValkey?: boolean;
+  /** Mounts the billing routes and the Stripe webhook, with this gateway standing in for Stripe (payments, ADR 0027). */
+  billing?: { stripe: StripeGateway };
 }
 
 export interface TestSession {
@@ -66,6 +71,8 @@ export interface TeamsTestApp {
   failEnqueue(on: boolean): void;
   /** Work rows the invitation routes asked to enqueue, in order. */
   enqueued(): Array<{ rowId: string; shard: ShardId }>;
+  /** The billing dependencies the app was built with, when `billing` was given. */
+  billingDeps?: BillingDeps;
   /** The invite token (the link's `<teamId>.<secret>`) read from an email work row's frozen payload. */
   tokenFromEmailRow(rowId: string, teamId: string): Promise<string>;
   
@@ -151,11 +158,26 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     },
   };
 
+  // Payments (ADR 0027): the real billing routes and webhook, with the given gateway in place of Stripe. The webhook's enqueue is the same spy.
+  const billingDeps: BillingDeps | undefined = options.billing
+    ? { shards, stripe: options.billing.stripe, linkBaseUrl: config.invites.linkBaseUrl, maxWaitMs: config.transactionMaxWaitMs }
+    : undefined;
+  const webhookDeps: Omit<WebhookDeps, 'logger'> | undefined = options.billing
+    ? {
+        shards,
+        stripe: options.billing.stripe,
+        enqueue: async (_prisma, row, shard) => {
+          enqueuedRows.push({ rowId: row.id, shard });
+        },
+      }
+    : undefined;
+
   // The harness app: the real router plus the one test-only route. The 403 proof needs an Owner/Manager-only action and none
   // exists yet (the shifts slice adds the real ones), so the route is registered HERE and nowhere in the production server.
   const harnessApp = express();
   installPreRoutes(harnessApp, logger);
-  harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config, invites }));
+  if (webhookDeps) harnessApp.post(STRIPE_WEBHOOK_PATH, ...createStripeWebhook({ ...webhookDeps, logger }));
+  harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config, invites, billing: billingDeps }));
   harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   harnessApp.use('/settings', createSettingsRouter({ shards, tokens, limiter, logger, config }));
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
@@ -175,9 +197,10 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
 
   const productionApp = createApp({
     logger,
-    teams: { shards, tokens, limiter, config, invites },
+    teams: { shards, tokens, limiter, config, invites, billing: billingDeps },
     invitations: { shards, tokens, limiter, config, invites },
     settings: { shards, tokens, limiter, config },
+    stripeWebhook: webhookDeps,
   });
 
   const listen = async (app: express.Express) => {
@@ -226,6 +249,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     failMembershipInserts: (on) => void (failMembership = on),
     failEnqueue: (on) => void (failEnqueueOn = on),
     enqueued: () => [...enqueuedRows],
+    billingDeps,
     async tokenFromEmailRow(rowId, teamId) {
       const row = await raw[shardFor(teamId)].primary.workRow.findUniqueOrThrow({ where: { id: rowId } });
       const html = String((row.payload as { html?: string } | null)?.html ?? '');
@@ -307,6 +331,9 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
           DELETE FROM work_rows
           WHERE kind = 'email' AND payload->>'invitationId' IN (SELECT id::text FROM invitations WHERE team_id = ${teamId}::uuid)`;
         await db.team.deleteMany({ where: { id: teamId } });
+        // The webhook inbox (shard A) and the work rows it made. Ledger, period and operation rows are NOT removed: the ledger is append-only (ADR 0026).
+        await raw.A.primary.$executeRaw`DELETE FROM stripe_events WHERE team_id = ${teamId}::uuid`;
+        await raw.A.primary.$executeRaw`DELETE FROM work_rows WHERE kind = 'stripe_event' AND payload->>'teamId' = ${teamId}`;
       }
       if (ids.length > 0) await raw.A.primary.user.deleteMany({ where: { id: { in: ids } } });
       await raw.A.primary.$disconnect();

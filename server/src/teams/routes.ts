@@ -13,6 +13,8 @@ import { createActivityRouter } from '../activity/routes.js';
 import { createSwapsRouter } from '../swaps/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
 import type { InviteDeps } from '../invites/service.js';
+import { createBillingRouter } from '../billing/routes.js';
+import type { BillingDeps } from '../billing/activation.js';
 import { createRequireTeamRole } from './middleware.js';
 import { can, invitableRoles } from './permissions.js';
 import { createTeamBody, teamIdParams } from './schemas.js';
@@ -25,6 +27,8 @@ export interface TeamsDeps {
   logger: Logger;
   config: AuthConfig;
   invites: InviteDeps;
+  /** When given, mounts /:teamId/billing (payments, ADR 0027). */
+  billing?: BillingDeps;
 }
 
 const noStore: RequestHandler = (_req, res, next) => {
@@ -35,7 +39,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 /** The team routes (mounted at /teams). The pipelines are the ones in security.md: user routes and team routes. */
 export function createTeamsRouter(deps: TeamsDeps): Router {
-  const { shards, tokens, limiter, logger, config, invites } = deps;
+  const { shards, tokens, limiter, logger, config, invites, billing } = deps;
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
 
@@ -80,6 +84,8 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
       // Whether to offer "Create an invite link" (ADR 0025): the server's answer from the permission table; the route checks again.
       canCreateInviteLink: can(role, 'invite.staff'),
       canEditShifts: can(role, 'shifts.edit'),
+      // Whether to offer the billing screens (Owner alone, from the permission table). The app shows what the server allows.
+      canManageBilling: can(role, 'billing.manage'),
     });
   });
 
@@ -103,6 +109,7 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
   router.use('/:teamId/shifts', createShiftsRouter({ shards, tokens }));
   router.use('/:teamId/activity', createActivityRouter({ shards, tokens, limiter, logger, config }));
   router.use('/:teamId/swaps', createSwapsRouter({ shards, tokens, limiter, logger, config }));
+  if (billing) router.use('/:teamId/billing', createBillingRouter({ shards, tokens, limiter, logger, config, billing }));
 
   return router;
 }

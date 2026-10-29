@@ -213,3 +213,7 @@ I learned that a link invite can be forwarded, so it should give only the limite
 ## 2026-10-28 — Proration engine and ledger (PR #56)
 
 I learned that the ledger keeps the history of money changes, so existing entries must not be edited or deleted. If something is wrong, a new correction or reversal entry is added instead. This preserves what originally happened and lets us trace how the current balance was reached.
+
+## 2026-10-29 — Payments activation: Checkout, webhook and seat limits (PR #57)
+
+I learned that logs help reveal what the system is actually doing. They exposed the 2,037 requests, making the unexpected activity visible instead of leaving us guessing. That is observability in practice: using recorded evidence to investigate a problem.
