@@ -9,6 +9,8 @@ export const inviteFormCopy = {
   emailHelper: 'We’ll send the invitation here.',
   roleLabel: 'Role',
   roleHelper: 'Choose a role for this teammate.',
+  // The server refused because every seat is taken or held by an invitation that is still waiting (not in Figma yet).
+  seatLimit: 'This team has no free seat. Every seat is taken or held by an invitation that is still waiting.',
   submit: 'Send invitation',
   emailInvalid: 'Enter a valid email address.', // 291:741
   alreadyMember: 'This person is already on your team.', // 291:781

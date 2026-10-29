@@ -12,7 +12,7 @@ export type InviteView =
   | { kind: 'wrong_account' }
   | { kind: 'already_member'; team: TeamSummary }
   | { kind: 'unavailable' }
-  | { kind: 'problem'; failure: Extract<InviteFailure, { kind: 'offline' | 'rate_limited' | 'generic' }> };
+  | { kind: 'problem'; failure: Extract<InviteFailure, { kind: 'offline' | 'rate_limited' | 'no_seat' | 'generic' }> };
 
 export type PreviewState = { status: 'pending' } | { status: 'success'; data: InvitePreview } | { status: 'error'; error: unknown };
 

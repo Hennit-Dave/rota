@@ -20,6 +20,10 @@ const ALLOWED = [
   'outcome',
   'reason',
   'rule',
+  // Payment tracing (observability.md): identifiers, never amounts or card data.
+  'eventId',
+  'operationId',
+  'teamId',
 ] as const;
 export type LogField = (typeof ALLOWED)[number];
 export type LogFields = Partial<Record<LogField, string | number | boolean>>;

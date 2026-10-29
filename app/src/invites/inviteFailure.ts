@@ -6,6 +6,7 @@ import { formatRetryWait } from '../auth/retryWait';
 export type InviteFailure =
   | { kind: 'unavailable' }
   | { kind: 'wrong_account' }
+  | { kind: 'no_seat'; message: string }
   | { kind: 'rate_limited'; message: string }
   | { kind: 'offline'; message: string }
   | { kind: 'generic'; message: string; reference: string | null };
@@ -24,6 +25,9 @@ export function describeInviteFailure(error: unknown): InviteFailure | null {
         return { kind: 'unavailable' };
       case 'invite_wrong_account':
         return { kind: 'wrong_account' };
+      // The team has no free seat (409). The invitation was NOT used up: it works again once a seat is free.
+      case 'seat_limit_reached':
+        return { kind: 'no_seat', message: 'This team has no free seat right now. Ask the Owner to make room, then open the link again.' };
       case 'rate_limited': {
         const wait = formatRetryWait(error.retryAfterSeconds);
         return { kind: 'rate_limited', message: wait ? bannerCopy.rateLimited(wait) : bannerCopy.rateLimitedNoWait };

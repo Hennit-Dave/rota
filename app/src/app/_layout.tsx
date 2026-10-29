@@ -75,6 +75,9 @@ function RootContent() {
           <Stack.Screen name="magic/index" />
           <Stack.Screen name="reset/[token]" />
           <Stack.Screen name="reset/index" />
+          {/* Stripe sends the buyer back here (App Links). Opening one consumes nothing: it opens the payment status screen, which asks the server. */}
+          <Stack.Screen name="checkout/return" />
+          <Stack.Screen name="checkout/cancel" />
           {/* Development-only check screens, reachable from either side. */}
           <Stack.Screen name="dev-api" />
           <Stack.Screen name="dev-check" />

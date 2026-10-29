@@ -11,7 +11,7 @@ completed in later slices; sections below are added by the slice that builds the
 | 4 | A stolen refresh token, and reuse | Written below (PR A) |
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
 | 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
-| 7 | Forged or replayed Stripe webhooks | Not yet written (needs payments) |
+| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged (a bad, missing or tampered signature is 400 and records nothing); live-mode events refused; the inbox is unique by Stripe's event ID, so a replay writes nothing; a valid signature is never treated as proof of payment: the job matches amount, currency, team, session and status against the frozen operation (ADR 0027). Tests: `server/src/billing/activation.integration.test.ts` |
 | 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens written below (Invites, slice 2a); reset and magic-link tokens in "Threat 8b" (slice 2b) |
 
 ## Permissions: the one table (threat 1)
@@ -196,6 +196,7 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `invite_preview_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_PREVIEW_IP_MAX` / `_WINDOW_SECONDS` |
 | `invite_accept_ip` | 30 | 15 minutes | `RATE_LIMIT_INVITE_ACCEPT_IP_MAX` / `_WINDOW_SECONDS` |
 | `invite_accept_user` | 10 | 1 hour | `RATE_LIMIT_INVITE_ACCEPT_USER_MAX` / `_WINDOW_SECONDS` |
+| `billing_user` | 10 | 1 hour | `RATE_LIMIT_BILLING_USER_MAX` / `_WINDOW_SECONDS` (per user ID, creating or cancelling a payment attempt only; **approved by Dave 2026-10-29; chosen, not measured**; ADR 0027) |
 | `swap_request_user` | 10 | 1 hour | `RATE_LIMIT_SWAP_REQUEST_USER_MAX` / `_WINDOW_SECONDS` (per user ID, creating a swap request only; approved 2026-10-27; **chosen, not measured**; ADR 0023) |
 | `feed_user` | 120 | 1 minute | `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-26; **chosen, not measured**: the load test, with 200 distinct users, checks it; ADR 0022) |
 | `settings_read_user` | 120 | 1 minute | `RATE_LIMIT_SETTINGS_READ_USER_MAX` / `_WINDOW_SECONDS` (per user ID; **proposed in the settings PR, awaiting approval; chosen, not measured**: it mirrors the feed, every foreground refetch is one read; ADR 0024) |

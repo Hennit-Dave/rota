@@ -54,6 +54,7 @@ export interface AuthConfig {
     resetRequestIp: RateRuleConfig;
     resetRequestEmail: RateRuleConfig;
     resetSubmitIp: RateRuleConfig;
+    billingUser: RateRuleConfig;
   };
   recovery: {
     /** App-wide cap on reset and magic-link emails per UTC day, counted only for requests that will really send one. */
@@ -148,6 +149,8 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       resetRequestIp: rule(env, 'RATE_LIMIT_RESET_REQUEST_IP', { max: 30, windowSeconds: 900 }),
       resetRequestEmail: rule(env, 'RATE_LIMIT_RESET_REQUEST_EMAIL', { max: 5, windowSeconds: 900 }),
       resetSubmitIp: rule(env, 'RATE_LIMIT_RESET_SUBMIT_IP', { max: 30, windowSeconds: 900 }),
+      // Approved by Dave 2026-10-29 (payments P3, ADR 0027); CHOSEN, NOT MEASURED: creating or cancelling a payment attempt, 10 per user per hour (the swap and invite-link precedent).
+      billingUser: rule(env, 'RATE_LIMIT_BILLING_USER', { max: 10, windowSeconds: 3600 }),
     },
     recovery: {
       // 30 per UTC day (Dave, 2026-10-26, ADR 0020): Resend's free plan sends 100 emails per UTC day in total and invitations keep 50 of them (ADR 0015).

@@ -1,3 +1,4 @@
+import { createStripeEventHandler } from '../billing/stripeEventJob.js';
 import { createShards } from '../db/clients.js';
 import {
   createProducerConnection,
@@ -48,6 +49,8 @@ const handlers = {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
+  // Stripe webhook events recorded by the API (ADR 0027). The worker holds no Stripe key: it only reads the recorded event and writes our own tables.
+  stripe_event: createStripeEventHandler({ shards }),
 };
 
 // Every worker that gets built, including one rebuilt by the watchdog below, gets the same handlers.

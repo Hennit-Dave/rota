@@ -24,3 +24,13 @@ test('a session that ended or an account that changed shows nothing: the screen 
   assert.equal(describeInviteFailure(new SessionEndedError('refresh_rejected')), null);
   assert.equal(describeInviteFailure(new NotSignedInError()), null);
 });
+
+test('seat_limit_reached on accept is its own warning and says the invitation is still usable; on send it is a banner', async () => {
+  const { ApiError } = await import('../api/errors');
+  const { describeSendInviteFailure } = await import('./sendInviteFailure');
+  const error = new ApiError(409, 'seat_limit_reached', 'x', 'req-1');
+  const accept = describeInviteFailure(error);
+  assert.equal(accept?.kind, 'no_seat');
+  assert.match((accept as { message: string }).message, /no free seat/);
+  assert.equal(describeSendInviteFailure(error)?.kind, 'link_limit');
+});

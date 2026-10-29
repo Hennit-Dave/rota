@@ -2,6 +2,8 @@ import { loadBundledBlocklist } from '../auth/blocklist.js';
 import { loadAuthConfig, loadJwtSecret, type AuthConfig } from '../auth/config.js';
 import { createPasswordService } from '../auth/password.js';
 import { createTokenService } from '../auth/tokens.js';
+import { createStripeGateway } from '../billing/gateway.js';
+import { loadStripeConfig } from '../billing/stripeConfig.js';
 import { createShards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
@@ -36,11 +38,14 @@ let config: AuthConfig;
 let secret: Uint8Array;
 let port: number;
 let mail: { from: string; replyTo: string };
+let stripeConfig: ReturnType<typeof loadStripeConfig>;
 try {
   port = readPort();
   config = loadAuthConfig();
   secret = loadJwtSecret();
   mail = loadSenderConfig();
+  // Test keys only: anything but sk_test_ stops the API here (ADR 0027).
+  stripeConfig = loadStripeConfig();
 } catch (err) {
   console.error(`api cannot start: ${sanitizeError(err)}`);
   process.exit(1);
@@ -117,11 +122,22 @@ const recovery = {
   },
 };
 
+const stripe = createStripeGateway(stripeConfig);
+const billing = { shards, stripe, linkBaseUrl: config.invites.linkBaseUrl, maxWaitMs: config.transactionMaxWaitMs };
+
 const app = createApp({
   logger,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
   recovery,
-  teams: { shards, tokens, limiter, config, invites },
+  teams: { shards, tokens, limiter, config, invites, billing },
+  // Verified, recorded on shard A, then the job is enqueued (it never throws): the request does no business processing (AGENTS.md rules 7 and 9).
+  stripeWebhook: {
+    shards,
+    stripe,
+    enqueue: async (prisma, row, shard) => {
+      await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
+    },
+  },
   invitations: { shards, tokens, limiter, config, invites },
   settings: { shards, tokens, limiter, config },
 });

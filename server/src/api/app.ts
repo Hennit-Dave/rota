@@ -1,6 +1,7 @@
 import express from 'express';
 import { createRecoveryRouter, type RecoveryRouteDeps } from '../auth/recoveryRoutes.js';
 import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
+import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../billing/webhook.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { createInvitationsRouter, type InvitesRouteDeps } from '../invites/routes.js';
@@ -19,6 +20,8 @@ export interface AppDeps {
   invitations?: Omit<InvitesRouteDeps, 'logger'>;
   /** When given, mounts /settings (ADR 0024). */
   settings?: Omit<SettingsRouteDeps, 'logger'>;
+  /** When given, mounts POST /webhooks/stripe with its raw-body parser, before any router that parses JSON (AGENTS.md rule 7). */
+  stripeWebhook?: Omit<WebhookDeps, 'logger'>;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -30,6 +33,12 @@ export function createApp(deps: AppDeps = {}) {
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
+
+  // The Stripe webhook needs the RAW body to verify the signature, so it is registered first, before any router that parses JSON. The app has
+  // no global express.json(): each router adds its own parser (http/json.ts).
+  if (deps.stripeWebhook) {
+    app.post(STRIPE_WEBHOOK_PATH, ...createStripeWebhook({ ...deps.stripeWebhook, logger }));
+  }
 
   if (deps.auth) {
     app.use('/auth', createAuthRouter({ ...deps.auth, logger }));

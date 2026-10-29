@@ -50,6 +50,7 @@
     "ioredis": "5.11.1",
     "jose": "6.2.12",
     "pg": "8.23.1",
+    "stripe": "23.0.1",
     "zod": "4.6.5"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
+import { seedActiveSubscription } from '../billing/testkit.js';
 import { shardFor } from '../db/shard.js';
 import { bearer, startTeamsTestApp, type TeamsTestApp } from '../teams/testkit.js';
 
@@ -30,6 +31,7 @@ test('the production values are the approved ones, unmodified by this harness', 
 test('INVITE CREATE at the production limit: the 10th invitation in the hour works, the 11th is 429 with Retry-After and writes nothing', async () => {
   const owner = await app.seedUser('Dave Hennit');
   const { teamId } = await app.seedTeam({ ownerId: owner.id });
+  await seedActiveSubscription(app.raw[shardFor(teamId)].primary, teamId, { plan: 'business', seats: 40 });
   const h = bearer((await app.signIn(owner.id)).accessToken);
   for (let i = 1; i <= 10; i++) {
     const res = await app.post(`/teams/${teamId}/invitations`, { email: invitee(), role: 'staff' }, h);
