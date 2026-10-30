@@ -46,7 +46,7 @@ export const reductionCopy = {
   chosen: (picked: number, needed: number) => `${picked} of ${needed} chosen`,
   fallbackTitle: 'If your team is still too big',
   fallbackOn: 'Accepted: keep my current plan and price',
-  fallbackOff: 'Not accepted: pause the reduction instead',
+  fallbackOff: 'Not accepted: pause my renewal until I fix it',
   schedule: 'Schedule reduction',
   scheduling: 'Scheduling…',
   scheduledTitle: 'Reduction scheduled',
