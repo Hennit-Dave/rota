@@ -217,3 +217,7 @@ I learned that the ledger keeps the history of money changes, so existing entrie
 ## 2026-10-29 — Payments activation: Checkout, webhook and seat limits (PR #57)
 
 I learned that logs help reveal what the system is actually doing. They exposed the 2,037 requests, making the unexpected activity visible instead of leaving us guessing. That is observability in practice: using recorded evidence to investigate a problem.
+
+## 2026-10-30 — Plan changes and reductions (PR #58)
+
+I learned that a reduction is saved as a scheduled change because it should not remove something the customer has already paid for. The current plan stays active until the period ends, and the smaller plan takes effect at renewal. This also lets the customer cancel the reduction beforehand without needing a refund or payment reversal.
