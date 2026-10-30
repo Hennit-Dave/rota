@@ -149,7 +149,7 @@ function Change() {
         testID="change-seats"
       />
       {q ? (
-        <InfoCard title={q.chargeTodayDisplay ? changeCopy.chargeTitle : changeCopy.noCharge} body={q.chargeTodayDisplay ?? undefined} testID="change-quote">
+        <InfoCard title={quoteTitle(q.effect, q.chargeTodayDisplay)} body={q.chargeTodayDisplay ?? undefined} testID="change-quote">
           <Text variant="body">{q.headline}</Text>
           <Text variant="caption" tone="muted">{`${changeCopy.renewalTitle}: ${q.nextRenewalDisplay}`}</Text>
           <Text variant="caption" tone="muted">{`${changeCopy.daysLeft(q.remainingDays)}. ${changeCopy.periodEnds(q.periodEndsOn)}`}</Text>
@@ -166,6 +166,14 @@ function Change() {
       {back}
     </Screen>
   );
+}
+
+/** The title over the server's sentence: what is charged, or why nothing is. Chosen from the server's `effect`; no amount is read or compared. */
+function quoteTitle(effect: string, chargeTodayDisplay: string | null): string {
+  if (chargeTodayDisplay) return changeCopy.chargeTitle;
+  if (effect === 'now') return changeCopy.noCharge;
+  if (effect === 'none') return changeCopy.noChange;
+  return changeCopy.notAvailable;
 }
 
 function describeQuoteProblem(error: unknown): string {

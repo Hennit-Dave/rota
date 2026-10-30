@@ -47,6 +47,8 @@ export const changeCopy = {
   seatsInvalid: 'Enter a whole number of seats.',
   chargeTitle: 'Charged today',
   noCharge: 'No charge today',
+  noChange: 'No change',
+  notAvailable: 'Not available yet',
   renewalTitle: 'Next renewal',
   daysLeft: (days: number) => `${days} ${days === 1 ? 'day' : 'days'} left in this period`,
   periodEnds: (date: string) => `This period ends on ${date}`,
