@@ -38,9 +38,32 @@ export const hubCopy = {
   seatsUsed: (members: number, limit: number) => `${members} of ${limit} seats in use`,
 } as const;
 
+/** Reductions at the end of the period (ADR 0029). The dates, counts, names and sentences come from the server; these are only the labels around them. */
+export const reductionCopy = {
+  scheduleTitle: 'Reduction at the end of your period',
+  chooseTitle: 'Who becomes inactive?',
+  chooseHelp: (count: number) => `Choose ${count} ${count === 1 ? 'person' : 'people'}. They lose access on the date above and can be added back later. You can’t choose yourself.`,
+  chosen: (picked: number, needed: number) => `${picked} of ${needed} chosen`,
+  fallbackTitle: 'If your team is still too big',
+  fallbackOn: 'Accepted: keep my current plan and price',
+  fallbackOff: 'Not accepted: pause the reduction instead',
+  schedule: 'Schedule reduction',
+  scheduling: 'Scheduling…',
+  scheduledTitle: 'Reduction scheduled',
+  scheduledSubtitle: 'Nothing changes until your period ends.',
+  loadingMembers: 'Loading your team…',
+  membersFailed: 'Couldn’t load your team. Go back and try again.',
+  bannerTitle: (date: string) => `Reduction scheduled for ${date}`,
+  bannerChecked: 'Reduction checked',
+  inactiveList: 'Will become inactive',
+  cancel: 'Cancel reduction',
+  cancelling: 'Cancelling…',
+  cancelFailed: 'Couldn’t cancel the reduction. Try again.',
+} as const;
+
 export const changeCopy = {
   title: 'Change plan or seats',
-  subtitle: 'You can add seats or move to a higher plan.',
+  subtitle: 'Add seats, change plan, or reduce at the end of your period.',
   current: 'Your plan now',
   planLabel: 'New plan',
   seatsLabel: 'New number of seats',

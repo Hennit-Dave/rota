@@ -5,6 +5,7 @@ import {
   parseHistory,
   parseOperationResponse,
   parseOverview,
+  parseScheduleAnswer,
   parseQuote,
   parseStartResponse,
   type ActivationQuote,
@@ -14,9 +15,10 @@ import {
   type HistoryEntry,
   type Operation,
   type PlanId,
+  type ScheduledChange,
 } from './billingResponses';
 
-type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post'>;
+type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post' | 'request'>;
 
 const base = (teamId: string) => `/teams/${encodeURIComponent(teamId)}/billing`;
 
@@ -53,6 +55,21 @@ export function createBillingApi(client: Client) {
     /** Charges, credits, refunds and plan or seat changes, newest first, as the ledger holds them. */
     async history(teamId: string, signal?: AbortSignal): Promise<{ history: HistoryEntry[]; hasMore: boolean }> {
       return parseHistory(await client.get<unknown>(`${base(teamId)}/history`, { signal }));
+    },
+    /**
+     * POST: schedule a decrease for the end of the period. Only the plan, the seat count, the chosen people and whether the Owner accepts the fallback are sent;
+     * the server checks who may be chosen and decides the date. A repeat with the same `idempotencyKey` returns the stored answer.
+     */
+    async scheduleReduction(
+      teamId: string,
+      input: { plan: PlanId; seats: number; selectedMemberIds: string[]; acceptFallback: boolean },
+      idempotencyKey: string,
+    ): Promise<ScheduledChange> {
+      return parseScheduleAnswer(await client.post<unknown>(`${base(teamId)}/reductions`, input, { headers: { 'Idempotency-Key': idempotencyKey } }));
+    },
+    /** DELETE …/reductions/current: take back the scheduled reduction (204, no body). The server says whether it can still be taken back. */
+    async cancelReduction(teamId: string): Promise<void> {
+      await client.request(`${base(teamId)}/reductions/current`, { method: 'DELETE' });
     },
     async cancel(teamId: string, operationId: string): Promise<Operation> {
       return parseOperationResponse(await client.post<unknown>(`${base(teamId)}/operations/${encodeURIComponent(operationId)}/cancel`));

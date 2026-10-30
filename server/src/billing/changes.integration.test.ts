@@ -199,17 +199,26 @@ test('THE money.md CHAIN: Team 50 to Business 50 is free now; Business 50 to 55 
   assert.deepEqual({ plan: rebuilt.plan, seats: rebuilt.seats, paidBasisCents: rebuilt.paidBasisCents, version: rebuilt.version }, { plan: 'business', seats: 60, paidBasisCents: 16000, version: 4 });
 });
 
-test('A DECREASE, A MIXED CHANGE AND "NOTHING" ARE REFUSED, and nothing is written: 409 scheduled_change_unavailable, 422 nothing_to_change', async () => {
+test('A DECREASE IS NOT MADE HERE (it is scheduled: POST /reductions), a MIXED CHANGE IS NOT OFFERED, and "NOTHING" IS 400: nothing is written', async () => {
   const t = await setup(team(18));
   const before = { sub: await subscriptionOf(t.teamId), ledger: (await ledgerOf(t.teamId)).length, ops: (await operationRows(t.teamId)).length };
-  for (const [plan, seats] of [['team', 15], ['starter', 5], ['business', 10]] as const) {
+  for (const [plan, seats] of [['team', 15], ['starter', 5]] as const) {
     const q = await quote(t, plan, seats);
-    assert.equal(q.body.quote.supported, false, `${plan} ${seats}`);
-    assert.match(q.body.quote.headline, /Reductions are not available yet/);
+    assert.equal(q.body.quote.supported, true, `${plan} ${seats}: a pure decrease is offered, as a reduction at period end`);
+    assert.equal(q.body.quote.effect, 'at_period_end');
+    assert.equal(q.body.quote.reduction.effectiveOn, '2031-07-01');
+    assert.match(q.body.quote.headline, /takes effect at the end of your period, on 2031-07-01\. Nothing is charged or refunded now/);
     const c = await change(t, plan, seats);
     assert.equal(c.res.status, 409, `${plan} ${seats}: ${JSON.stringify(c.res.body)}`);
     assert.equal(c.res.body.error.code, 'scheduled_change_unavailable');
   }
+  const mixed = await quote(t, 'business', 10);
+  assert.equal(mixed.body.quote.supported, false);
+  assert.equal(mixed.body.quote.effect, 'mixed');
+  assert.match(mixed.body.quote.headline, /Make the increase first, then schedule the reduction/);
+  const mixedChange = await change(t, 'business', 10);
+  assert.equal(mixedChange.res.status, 409);
+  assert.equal(mixedChange.res.body.error.code, 'scheduled_change_unavailable');
   const same = await change(t, 'team', 18);
   assert.equal(same.res.status, 400, 'same plan and seats');
   assert.equal(same.res.body.error.code, 'validation_failed');

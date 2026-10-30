@@ -68,6 +68,14 @@ checked to be absent from the production app in `teams.integration.test.ts`.
 shard function: 404 on the team and its members, byte-identical to an unknown ID, in both directions), the Staff variant, and "a removed member
 loses access on the next request". `shifts.integration.test.ts`: the same isolation for the shift routes (a member of team X gets the same 404 on list, create, update and delete for team Y as for an unknown team, across shards) and "a shift ID from ANOTHER team is not found under MY team's path". Mutation-checked (shift delete without the `team_id` scope fails them): making the middleware answer 403 for a stranger, or skipping the role check, fails them.
 
+## Deactivated members (ADR 0029)
+
+**What it is.** A reduction at period end makes some members inactive. A deactivated membership keeps its row (`memberships.deactivated_at`) so history and the ledger stay intact, but the person must lose every kind of access to the team at once.
+
+**The control.** The team middleware answers `404 not_a_member` for a deactivated membership, exactly as for a stranger, so no team route can be reached by ID. The member list and the team list skip them, shift assignment and the swap approver, caller and both-people locks require `deactivated_at IS NULL`, and a seat is an active member. The Owner can never be chosen. Only the Owner schedules a reduction, and the server validates the chosen people against the members as they are at that moment, under the team row lock. Tests: `server/src/billing/reductions.integration.test.ts` ("A DEACTIVATED MEMBER", "WHO MAY", "SCHEDULING").
+
+**What remains.** Nothing sets `deactivated_at` until the renewal slice applies a reduction. Any NEW query on `memberships` must filter `deactivated_at IS NULL`; a reviewer should look for it.
+
 ## Threat 8 (invite tokens): theft or reuse of an invitation link
 
 **What it is.** An invitation link is a credential that lets someone join a team in a role. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump.

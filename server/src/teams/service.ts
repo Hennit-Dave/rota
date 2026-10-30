@@ -68,7 +68,7 @@ export async function listTeamsForUser(shards: Shards, userId: string): Promise<
   const found = await Promise.all(
     [...byShard.entries()].map(([shard, teamIds]) =>
       shards[shard].primary.membership.findMany({
-        where: { userId, teamId: { in: teamIds } },
+        where: { userId, teamId: { in: teamIds }, deactivatedAt: null },
         include: { team: true },
       }),
     ),
@@ -91,7 +91,7 @@ export async function listMembers(
   onMissingUser?: (userId: string) => void,
 ): Promise<MemberView[]> {
   const memberships = await getShard(shards, teamId).primary.membership.findMany({
-    where: { teamId },
+    where: { teamId, deactivatedAt: null },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { userId: true, role: true, createdAt: true },
   });

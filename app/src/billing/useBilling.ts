@@ -91,3 +91,30 @@ export function useBillingHistory(userId: string | undefined, teamId: string | n
     queryFn: ({ signal }) => getBillingApi().history(teamId as string, signal),
   });
 }
+
+/** Schedules a reduction for the end of the period: one request the person watches. Never queued offline, never retried by the library. */
+export function useScheduleReduction(userId: string | undefined, teamId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: (v: { plan: PlanId; seats: number; selectedMemberIds: string[]; acceptFallback: boolean; idempotencyKey: string }) =>
+      getBillingApi().scheduleReduction(teamId as string, { plan: v.plan, seats: v.seats, selectedMemberIds: v.selectedMemberIds, acceptFallback: v.acceptFallback }, v.idempotencyKey),
+    onSuccess: () => {
+      if (userId !== undefined && teamId !== null) refreshAfterSettled(client, userId, teamId);
+    },
+  });
+}
+
+/** Takes the scheduled reduction back. The server decides whether it still can be. */
+export function useCancelReduction(userId: string | undefined, teamId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: () => getBillingApi().cancelReduction(teamId as string),
+    onSettled: () => {
+      if (userId !== undefined && teamId !== null) refreshAfterSettled(client, userId, teamId);
+    },
+  });
+}

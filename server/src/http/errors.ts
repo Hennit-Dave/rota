@@ -33,6 +33,9 @@ export type ErrorCode =
   | 'period_ended'
   | 'period_ending'
   | 'scheduled_change_unavailable'
+  | 'selection_required'
+  | 'selection_invalid'
+  | 'reduction_already_scheduled'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -65,6 +68,9 @@ const STATUS: Record<ErrorCode, number> = {
   period_ended: 409,
   period_ending: 409,
   scheduled_change_unavailable: 409,
+  selection_required: 422,
+  selection_invalid: 422,
+  reduction_already_scheduled: 409,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -98,7 +104,10 @@ const MESSAGE: Record<ErrorCode, string> = {
   not_activated: 'This team has no subscription yet.',
   period_ended: 'The billing period has ended. Try again after your renewal.',
   period_ending: 'The billing period is about to end. Try again after your renewal.',
-  scheduled_change_unavailable: 'Reductions are not available yet.',
+  scheduled_change_unavailable: 'This change is not available as a scheduled reduction.',
+  selection_required: 'Choose which members become inactive.',
+  selection_invalid: 'The members chosen cannot be made inactive.',
+  reduction_already_scheduled: 'A reduction is already scheduled for this team.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

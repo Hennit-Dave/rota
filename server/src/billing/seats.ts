@@ -14,8 +14,29 @@ export async function seatLimitOf(db: Db, teamId: string): Promise<number> {
   return rows[0]?.seats ?? PLANS.starter.includedSeats;
 }
 
+/** Active members: a deactivated member is not a seat (members are deactivated, never deleted: money.md, ADR 0029). */
 export async function memberCountOf(db: Db, teamId: string): Promise<number> {
-  const rows = await db.$queryRaw<Array<{ n: bigint }>>`SELECT count(*) AS n FROM memberships WHERE team_id = ${teamId}::uuid`;
+  const rows = await db.$queryRaw<Array<{ n: bigint }>>`SELECT count(*) AS n FROM memberships WHERE team_id = ${teamId}::uuid AND deactivated_at IS NULL`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * The seat limit AFTER a scheduled reduction, and the people who will be inactive by then, or null when none is scheduled (scheduled, or checked at the
+ * boundary and waiting to be applied). Once a reduction is scheduled, every new invitation and every new member must fit the FUTURE limit too.
+ */
+async function futureLimitOf(db: Db, teamId: string): Promise<{ targetSeats: number; selected: string[] } | null> {
+  const rows = await db.$queryRaw<Array<{ target_seats: number; selected: string[] }>>`
+    SELECT target_seats, selected_member_ids::text[] AS selected FROM scheduled_changes
+    WHERE team_id = ${teamId}::uuid AND status IN ('scheduled', 'ready', 'blocked', 'continuing')`;
+  const row = rows[0];
+  return row ? { targetSeats: row.target_seats, selected: row.selected } : null;
+}
+
+/** Active members who will still be active after the scheduled reduction: everyone except the people chosen to become inactive. */
+async function membersAfter(db: Db, teamId: string, selected: string[]): Promise<number> {
+  const rows = await db.$queryRaw<Array<{ n: bigint }>>`
+    SELECT count(*) AS n FROM memberships
+    WHERE team_id = ${teamId}::uuid AND deactivated_at IS NULL AND NOT (user_id = ANY(${selected}::uuid[]))`;
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -36,6 +57,12 @@ export async function assertSeatForInvitation(db: Db, teamId: string): Promise<v
   const members = await memberCountOf(db, teamId);
   const pending = await pendingInvitationCountOf(db, teamId);
   if (members + pending > limit) throw new ApiError('seat_limit_reached', { reason: `members_${members}_pending_${pending}_limit_${limit}` });
+  const future = await futureLimitOf(db, teamId);
+  if (future) {
+    const after = await membersAfter(db, teamId, future.selected);
+    // Invitations that would exceed the limit the team will have are refused once the reduction is scheduled (money.md).
+    if (after + pending > future.targetSeats) throw new ApiError('seat_limit_reached', { reason: `future_members_${after}_pending_${pending}_limit_${future.targetSeats}` });
+  }
 }
 
 /**
@@ -46,4 +73,9 @@ export async function assertSeatForNewMember(db: Db, teamId: string): Promise<vo
   const limit = await seatLimitOf(db, teamId);
   const members = await memberCountOf(db, teamId);
   if (members + 1 > limit) throw new ApiError('seat_limit_reached', { reason: `members_${members}_limit_${limit}` });
+  const future = await futureLimitOf(db, teamId);
+  if (future) {
+    const after = await membersAfter(db, teamId, future.selected);
+    if (after + 1 > future.targetSeats) throw new ApiError('seat_limit_reached', { reason: `future_members_${after}_limit_${future.targetSeats}` });
+  }
 }

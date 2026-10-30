@@ -25,6 +25,8 @@ import { insertLedgerRows } from './ledgerDb.js';
 import { monthlyCents, type Entitlements, type PlanId } from './plans.js';
 import { remainingDays, utcDateOf, type Period } from './periods.js';
 import { MIN_CHARGE_CENTS, quoteChange, type ChangeQuote } from './proration.js';
+import { memberCountOf } from './seats.js';
+import { FALLBACK_WORDING } from './reductionWording.js';
 
 /**
  * A paid change is refused in the last stretch of a period ("try after renewal"): a payment operation stays open for OPERATION_LIFETIME_MS, and one
@@ -34,7 +36,7 @@ import { MIN_CHARGE_CENTS, quoteChange, type ChangeQuote } from './proration.js'
 export const PAID_CHANGE_CUTOFF_MS = OPERATION_LIFETIME_MS;
 
 /** The subscription as the database holds it, with the period it is in. Read from the primary, never cached (AGENTS.md rule 11). */
-interface SubscriptionState {
+export interface SubscriptionState {
   plan: PlanId;
   seats: number;
   paid_basis_cents: number;
@@ -47,7 +49,7 @@ interface SubscriptionState {
 
 type Db = Pick<PrismaClient, '$queryRaw'>;
 
-async function loadSubscriptionState(db: Db, teamId: string, lock: boolean): Promise<SubscriptionState | null> {
+export async function loadSubscriptionState(db: Db, teamId: string, lock: boolean): Promise<SubscriptionState | null> {
   const rows = lock
     ? await db.$queryRaw<SubscriptionState[]>`
         SELECT s.plan::text AS plan, s.seats, s.paid_basis_cents, s.version, s.current_period_id::text AS current_period_id,
@@ -88,7 +90,17 @@ export interface ChangeQuoteView {
   periodEndsOn: string;
   /** The server's own sentence for this quote. */
   headline: string;
+  /** Present for a decrease: when it takes effect, who must be chosen, and the wording of the fallback the Owner may accept. Otherwise null. */
+  reduction: ReductionQuoteView | null;
   testModeNotice: string;
+}
+
+export interface ReductionQuoteView {
+  effectiveOn: string;
+  activeMembers: number;
+  /** How many people must be chosen to become inactive when the period ends (0 when the team already fits). */
+  membersToDeactivate: number;
+  fallbackWording: string;
 }
 
 const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
@@ -97,37 +109,53 @@ const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
  * The words for a quote. Pure: every number in the sentence comes from the engine's answer, formatted here.
  * An "immediate" change that nonetheless raises the monthly amount is the under-the-minimum case (money.md): the charge was smaller than Stripe can collect.
  */
-export function describeChange(input: { quote: ChangeQuote; paidBasisCents: number; remaining: number }): { effect: ChangeEffect; supported: boolean; headline: string } {
-  const { quote, paidBasisCents, remaining } = input;
+export function describeChange(input: {
+  quote: ChangeQuote;
+  paidBasisCents: number;
+  remaining: number;
+  /** For a decrease: the date it takes effect and how many people must become inactive. */
+  reduction?: { effectiveOn: string; membersToDeactivate: number };
+}): { effect: ChangeEffect; supported: boolean; headline: string } {
+  const { quote, paidBasisCents, remaining, reduction } = input;
   const later = quote.atPeriodEnd !== null;
+  const mixedNotYet = 'A change that adds and reduces at the same time is not available yet. Make the increase first, then schedule the reduction.';
   switch (quote.kind) {
     case 'none':
       return { effect: 'none', supported: false, headline: 'This is the plan and the number of seats you already have.' };
-    case 'scheduled_only':
-      return { effect: 'at_period_end', supported: false, headline: 'Reductions are not available yet. For now you can add seats or move to a higher plan.' };
+    case 'scheduled_only': {
+      // A pure decrease: nothing now, the target at the end of the period (money.md: even when it costs more, no refund).
+      const people = reduction?.membersToDeactivate ?? 0;
+      const date = reduction?.effectiveOn ?? '';
+      const choose = people > 0 ? ` ${people} ${people === 1 ? 'person' : 'people'} will become inactive on that date, and you choose who.` : '';
+      return {
+        effect: 'at_period_end',
+        supported: reduction !== undefined,
+        headline: `This change takes effect at the end of your period, on ${date}. Nothing is charged or refunded now, and your next renewal will be ${formatUsd(quote.nextRenewalCents)}.${choose}`,
+      };
+    }
     case 'paid':
       return {
         effect: later ? 'mixed' : 'after_payment',
         supported: !later,
         headline: later
-          ? 'Reductions are not available yet. For now you can add seats or move to a higher plan.'
-          : `You’ll be charged ${formatUsd(quote.chargeCents)} today for the ${days(remaining)} left in this period. Your change starts once the payment is confirmed.`,
+          ? mixedNotYet
+          : `You\u2019ll be charged ${formatUsd(quote.chargeCents)} today for the ${days(remaining)} left in this period. Your change starts once the payment is confirmed.`,
       };
     case 'immediate': {
-      if (later) return { effect: 'mixed', supported: false, headline: 'Reductions are not available yet. For now you can add seats or move to a higher plan.' };
+      if (later) return { effect: 'mixed', supported: false, headline: mixedNotYet };
       const underMinimum = monthlyCents(quote.applyNow) > paidBasisCents;
       return {
         effect: 'now',
         supported: true,
         headline: underMinimum
-          ? `This change costs less than Stripe’s ${formatUsd(MIN_CHARGE_CENTS)} minimum, so it starts now at no charge. The new monthly amount applies from your next renewal.`
+          ? `This change costs less than Stripe\u2019s ${formatUsd(MIN_CHARGE_CENTS)} minimum, so it starts now at no charge. The new monthly amount applies from your next renewal.`
           : 'No charge today. Your change starts now and the new monthly amount applies from your next renewal.',
       };
     }
   }
 }
 
-interface Assessment {
+export interface Assessment {
   quote: ChangeQuote;
   period: Period;
   remaining: number;
@@ -137,7 +165,7 @@ interface Assessment {
  * Asks the engine about a change against the state in the database. Refuses outright (409) a change at or after the end of the period (no renewal exists
  * yet to start the next one) and, for a paid change, one in the last PAID_CHANGE_CUTOFF_MS of the period.
  */
-function assess(state: SubscriptionState, target: Entitlements, now: Date): Assessment {
+export function assess(state: SubscriptionState, target: Entitlements, now: Date): Assessment {
   const today = utcDateOf(now);
   const period: Period = { startsOn: state.starts_on, endsOn: state.ends_on, periodDays: state.period_days };
   if (today >= period.endsOn || today < period.startsOn) throw new ApiError('period_ended', { reason: `today_${today}_period_${period.startsOn}_${period.endsOn}` });
@@ -158,10 +186,22 @@ function assess(state: SubscriptionState, target: Entitlements, now: Date): Asse
 export async function getChangeQuote(deps: BillingDeps, input: { teamId: string; plan: PlanId; seats: number }): Promise<ChangeQuoteView> {
   const target: Entitlements = { plan: input.plan, seats: input.seats };
   assertValidTarget(target);
-  const state = await loadSubscriptionState(getShard(deps.shards, input.teamId).primary, input.teamId, false);
+  const prisma = getShard(deps.shards, input.teamId).primary;
+  const state = await loadSubscriptionState(prisma, input.teamId, false);
   if (!state) throw new ApiError('not_activated');
   const { quote, period, remaining } = assess(state, target, nowOf(deps));
-  const words = describeChange({ quote, paidBasisCents: state.paid_basis_cents, remaining });
+
+  let reduction: ReductionQuoteView | null = null;
+  if (quote.kind === 'scheduled_only') {
+    const activeMembers = await memberCountOf(prisma, input.teamId);
+    reduction = { effectiveOn: period.endsOn, activeMembers, membersToDeactivate: Math.max(0, activeMembers - target.seats), fallbackWording: FALLBACK_WORDING };
+  }
+  const words = describeChange({
+    quote,
+    paidBasisCents: state.paid_basis_cents,
+    remaining,
+    reduction: reduction ? { effectiveOn: reduction.effectiveOn, membersToDeactivate: reduction.membersToDeactivate } : undefined,
+  });
   return {
     effect: words.effect,
     supported: words.supported,
@@ -173,6 +213,7 @@ export async function getChangeQuote(deps: BillingDeps, input: { teamId: string;
     remainingDays: remaining,
     periodEndsOn: period.endsOn,
     headline: words.headline,
+    reduction,
     testModeNotice: TEST_MODE_NOTICE,
   };
 }
@@ -215,7 +256,8 @@ export async function startChange(
         await requireNoOpenOperation(tx, teamId);
         const { quote, period, remaining } = assess(state, target, now);
         if (quote.kind === 'none') throw new ApiError('validation_failed', { details: [{ path: 'plan', code: 'nothing_to_change' }] });
-        if (quote.atPeriodEnd !== null) throw new ApiError('scheduled_change_unavailable');
+        // A decrease is not made here: it is scheduled for the end of the period (POST /reductions, ADR 0029). A mixed change is not available yet.
+        if (quote.atPeriodEnd !== null || quote.kind === 'scheduled_only') throw new ApiError('scheduled_change_unavailable');
 
         if (quote.kind === 'immediate') {
           await insertLedgerRows(tx, teamId, ledgerRowsForChange({ operationId: newOperationId, periodId: state.current_period_id, quote }), null);

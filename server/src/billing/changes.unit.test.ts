@@ -55,14 +55,24 @@ test('the money.md chain: 55 to 60 seats on Business, 10 days left, is $1.67 aga
   assert.match(w.headline, /charged \$1\.67 today for the 10 days left/);
 });
 
-test('a decrease, a mixed change and "nothing" are not offered: the quote says so in words and supported is false', () => {
-  const down = words(team(18), team(15), 5900, 12);
+test('a pure decrease is offered as a reduction at period end: nothing now, the date, the next renewal, and how many people must be chosen', () => {
+  const quote = quoteChange({ current: team(18), target: team(15), paidBasisCents: 5900, periodDays: 30, remainingDays: 12 });
+  const down = describeChange({ quote, paidBasisCents: 5900, remaining: 12, reduction: { effectiveOn: '2026-11-11', membersToDeactivate: 2 } });
   assert.equal(down.effect, 'at_period_end');
-  assert.equal(down.supported, false);
+  assert.equal(down.supported, true);
+  assert.match(down.headline, /takes effect at the end of your period, on 2026-11-11\. Nothing is charged or refunded now/);
+  assert.match(down.headline, /2 people will become inactive on that date, and you choose who\./);
+  const fits = describeChange({ quote, paidBasisCents: 5900, remaining: 12, reduction: { effectiveOn: '2026-11-11', membersToDeactivate: 0 } });
+  assert.doesNotMatch(fits.headline, /become inactive/);
+  const one = describeChange({ quote, paidBasisCents: 5900, remaining: 12, reduction: { effectiveOn: '2026-11-11', membersToDeactivate: 1 } });
+  assert.match(one.headline, /1 person will become inactive/);
+});
+
+test('a mixed change (increase now, decrease later) and "nothing" are not offered: the quote says so in words and supported is false', () => {
   const mixed = words(team(18), business(10), 5900, 12);
   assert.equal(mixed.effect, 'mixed');
   assert.equal(mixed.supported, false);
-  assert.match(mixed.headline, /Reductions are not available yet/);
+  assert.match(mixed.headline, /Make the increase first, then schedule the reduction/);
   const same = words(team(15), team(15), 5000, 12);
   assert.equal(same.effect, 'none');
   assert.equal(same.supported, false);

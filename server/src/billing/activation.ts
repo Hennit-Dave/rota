@@ -20,6 +20,7 @@ import {
   type PriorRequest,
   type StoredAnswer,
 } from './checkout.js';
+import { getScheduledChange, type ScheduledChangeView } from './reductions.js';
 import { formatUsd, FIRST_PERIOD_NOTE, PLAN_NAMES, planOptions, TEST_MODE_NOTICE, type PlanOption } from './display.js';
 import { monthlyCents, type Entitlements, type PlanId } from './plans.js';
 import { periodNumber, utcDateOf } from './periods.js';
@@ -39,6 +40,8 @@ export interface BillingOverview {
   seatLimit: number;
   /** A payment that is still open (waiting or being confirmed), or null. The hub shows it instead of offering another change. */
   openOperation: OperationView | null;
+  /** The reduction the Owner scheduled for the end of the period, or null. */
+  scheduledChange: ScheduledChangeView | null;
 }
 
 /** The team's open payment, if any (at most one exists: the partial unique index). An open one past its expiry is reported as expired, not as open. */
@@ -79,6 +82,7 @@ export async function getOverview(deps: BillingDeps, teamId: string): Promise<Bi
     members,
     seatLimit,
     openOperation: await openOperationOf(deps, teamId),
+    scheduledChange: await getScheduledChange(deps.shards, teamId),
   };
 }
 

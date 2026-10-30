@@ -123,7 +123,16 @@ const recovery = {
 };
 
 const stripe = createStripeGateway(stripeConfig);
-const billing = { shards, stripe, linkBaseUrl: config.invites.linkBaseUrl, maxWaitMs: config.transactionMaxWaitMs };
+const billing = {
+  shards,
+  stripe,
+  linkBaseUrl: config.invites.linkBaseUrl,
+  maxWaitMs: config.transactionMaxWaitMs,
+  // A scheduled reduction's boundary check: its work row commits with the schedule, then this enqueues it (it never throws).
+  enqueue: async (prisma: PrismaClient, row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>, shard: ShardId) => {
+    await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
+  },
+};
 
 const app = createApp({
   logger,

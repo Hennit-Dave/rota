@@ -68,7 +68,7 @@ interface Caller {
 }
 
 async function approverIdsOf(db: { membership: { findMany: Tx['membership']['findMany'] } }, teamId: string): Promise<string[]> {
-  const rows = await db.membership.findMany({ where: { teamId, role: { in: ['owner', 'manager'] } }, select: { userId: true } });
+  const rows = await db.membership.findMany({ where: { teamId, role: { in: ['owner', 'manager'] }, deactivatedAt: null }, select: { userId: true } });
   return rows.map((r) => r.userId);
 }
 
@@ -186,7 +186,7 @@ export async function createSwap(
     const made = await prisma.$transaction(async (tx) => {
       // Two requests from the same person queue here, so "at most N waiting" is exact (advisory locks are not available through the pooler, data.md).
       const locked = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id = ${caller.userId}::uuid FOR UPDATE`;
+        SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id = ${caller.userId}::uuid AND deactivated_at IS NULL FOR UPDATE`;
       if (locked.length === 0) throw new ApiError('not_found', { reason: 'not_a_member' });
 
       // Looked at AGAIN now that this person's requests are queued: a retry that raced the original waits here, and must get the original back, not run
@@ -334,7 +334,7 @@ export async function decideSwap(
     // Both people's membership rows, in a fixed order so two approvals cannot deadlock, then both shifts.
     const people = [swap.requesterUserId, swap.counterpartyUserId].sort();
     const members = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id IN (${people[0]}::uuid, ${people[1]}::uuid) ORDER BY user_id FOR UPDATE`;
+      SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id IN (${people[0]}::uuid, ${people[1]}::uuid) AND deactivated_at IS NULL ORDER BY user_id FOR UPDATE`;
     if (members.length !== 2) throw new ApiError('swap_not_possible', { reason: 'someone_left_the_team', details: [{ path: 'swap', code: 'someone_left' }] });
 
     const rows = await tx.$queryRaw<LockedShift[]>`

@@ -1,7 +1,8 @@
 // The machinery every payment shares: freezing a payment operation, the app's Idempotency-Key, the ONE synchronous Stripe call (AGENTS.md rule 10),
 // and what the app is told about an operation. Activation (activation.ts) and plan or seat changes (changes.ts) both build on it.
 // It never records a payment outcome; only a verified webhook, processed by the job in stripeEventJob.ts, decides that (rule 7).
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
+import type { ShardId } from '../db/shard.js';
 import { getShard, type Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { ApiError } from '../http/errors.js';
@@ -22,6 +23,8 @@ export interface BillingDeps {
   /** The https origin of the App Link host (config.invites.linkBaseUrl); Stripe sends the buyer back to `<origin>/checkout/...`. */
   linkBaseUrl: string;
   maxWaitMs: number;
+  /** Enqueues an ALREADY COMMITTED work row (a scheduled reduction's boundary check). Never throws (see `enqueueCommittedRow`). */
+  enqueue?: (prisma: PrismaClient, row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>, shard: ShardId) => Promise<void>;
   now?: () => Date;
 }
 

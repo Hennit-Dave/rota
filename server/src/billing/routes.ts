@@ -14,6 +14,7 @@ import { idempotencyKey } from '../swaps/schemas.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
 import { cancelOperation, getOperation, getOverview, quoteActivation, startActivation, type BillingDeps } from './activation.js';
 import { getChangeQuote, getHistory, startChange } from './changes.js';
+import { cancelReduction, scheduleReduction } from './reductions.js';
 import { PLAN_IDS, type PlanId } from './plans.js';
 
 export interface BillingRouteDeps {
@@ -37,6 +38,8 @@ const schemas = {
   teamParams: z.strictObject({ teamId: uuid }),
   operationParams: z.strictObject({ teamId: uuid, operationId: uuid }),
   activation: z.strictObject({ plan: z.enum(PLAN_IDS), seats }),
+  // The people chosen to become inactive. 100 is a request-size bound, not a product limit; the server checks the exact number needed against the members.
+  reduction: z.strictObject({ plan: z.enum(PLAN_IDS), seats, selectedMemberIds: z.array(uuid).max(100), acceptFallback: z.boolean() }),
   // A query string value is text: digits only, then the same range as the body.
   quoteQuery: z.strictObject({
     plan: z.enum(PLAN_IDS),
@@ -112,6 +115,37 @@ export function createBillingRouter(deps: BillingRouteDeps): Router {
       res.status(answer.status).json(answer.body);
     },
   );
+
+  // POST /teams/:teamId/billing/reductions   (Idempotency-Key header): schedules a decrease for the end of the period and the people who become inactive.
+  router.post(
+    '/reductions',
+    validateRequest({ params: schemas.teamParams, body: schemas.reduction }),
+    requireIdempotencyKey,
+    requireAuth,
+    writeLimit,
+    requireTeamRole('billing.manage'),
+    async (req, res) => {
+      const { teamId } = req.validated!.params as { teamId: string };
+      const body = req.validated!.body as { plan: PlanId; seats: number; selectedMemberIds: string[]; acceptFallback: boolean };
+      const answer = await scheduleReduction(billing, {
+        teamId,
+        actorUserId: req.auth!.userId,
+        idempotencyKey: String(res.locals.idempotencyKey),
+        plan: body.plan,
+        seats: body.seats,
+        selectedMemberIds: body.selectedMemberIds,
+        acceptFallback: body.acceptFallback,
+      });
+      res.status(answer.status).json(answer.body);
+    },
+  );
+
+  // DELETE /teams/:teamId/billing/reductions/current: takes back the scheduled reduction, while it is still only scheduled.
+  router.delete('/reductions/current', validateRequest({ params: schemas.teamParams }), requireAuth, writeLimit, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    await cancelReduction(billing, { teamId });
+    res.status(204).end();
+  });
 
   // GET /teams/:teamId/billing/history: charges, credits, refunds and plan or seat changes, newest first, from the ledger.
   router.get('/history', validateRequest({ params: schemas.teamParams }), requireAuth, requireTeamRole('billing.manage'), async (req, res) => {

@@ -5,12 +5,14 @@ import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { BillingHeader } from '../../../billing/BillingHeader';
-import { changeCopy } from '../../../billing/billingCopy';
+import { changeCopy, reductionCopy } from '../../../billing/billingCopy';
+import { ReductionPicker } from '../../../billing/ReductionPicker';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { PLAN_IDS, type ChangeAnswer, type PlanId } from '../../../billing/billingResponses';
 import { refreshAfterSettled } from '../../../billing/operationQuery';
 import { seatsFrom } from '../../../billing/seatsInput';
-import { useBillingOverview, useChangeQuote, useStartChange } from '../../../billing/useBilling';
+import { useBillingOverview, useChangeQuote, useScheduleReduction, useStartChange } from '../../../billing/useBilling';
+import { useMembers } from '../../../teams/useTeamData';
 import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { space } from '../../../theme';
 import { Button } from '../../../ui/Button';
@@ -44,6 +46,9 @@ function Change() {
   const [debouncedSeats, setDebouncedSeats] = useState<number | null>(null);
   const [applied, setApplied] = useState<Extract<ChangeAnswer, { status: 'applied' }> | null>(null);
   const [offlineBlocked, setOfflineBlocked] = useState(false);
+  // A reduction: who becomes inactive and whether the fallback is accepted. Cleared whenever the plan or the seats change (they would no longer match the quote).
+  const [picked, setPicked] = useState<{ for: string; ids: string[]; fallback: boolean }>({ for: '', ids: [], fallback: false });
+  const [scheduled, setScheduled] = useState<string | null>(null);
 
   // Start from what the team has now.
   const chosenPlan: PlanId | null = plan ?? sub?.plan ?? null;
@@ -56,16 +61,23 @@ function Change() {
   const seats = seatsFrom(chosenText);
   const quote = useChangeQuote(userId, sub && chosenPlan ? teamId : null, chosenPlan ?? 'starter', debouncedSeats);
   const start = useStartChange(teamId);
+  const schedule = useScheduleReduction(userId, teamId);
+  const members = useMembers(userId, teamId);
 
-  const attempt = useRef<{ key: string; plan: PlanId; seats: number } | null>(null);
-  function keyFor(p: PlanId, n: number): string {
-    if (!attempt.current || attempt.current.plan !== p || attempt.current.seats !== n) attempt.current = { key: Crypto.randomUUID(), plan: p, seats: n };
+  const attempt = useRef<{ key: string; sig: string } | null>(null);
+  // One key per choice (plan, seats, and for a reduction the people and the fallback): a retry of the same choice sends the same key.
+  function keyFor(p: PlanId, n: number, ids: string[] = [], fallback = false): string {
+    const sig = `${p}|${n}|${[...ids].sort().join(',')}|${fallback ? 1 : 0}`;
+    if (!attempt.current || attempt.current.sig !== sig) attempt.current = { key: Crypto.randomUUID(), sig };
     return attempt.current.key;
   }
 
   const quoteReady = quote.data !== undefined && seats !== null && seats === debouncedSeats && quote.data.applyNow.plan !== undefined && chosenPlan !== null;
   const q = quoteReady ? quote.data : undefined;
-  const canSubmit = q !== undefined && q.supported;
+  const reduction = q?.reduction ?? null;
+  const pickKey = `${chosenPlan}|${seats}`;
+  const choice = picked.for === pickKey ? picked : { for: pickKey, ids: [] as string[], fallback: false };
+  const canSubmit = q !== undefined && q.supported && (reduction === null || choice.ids.length === reduction.membersToDeactivate);
 
   function submit() {
     if (!canSubmit || !chosenPlan || seats === null || !q) return;
@@ -74,6 +86,13 @@ function Change() {
       return;
     }
     setOfflineBlocked(false);
+    if (reduction) {
+      schedule.mutate(
+        { plan: chosenPlan, seats, selectedMemberIds: choice.ids, acceptFallback: choice.fallback, idempotencyKey: keyFor(chosenPlan, seats, choice.ids, choice.fallback) },
+        { onSuccess: (change) => setScheduled(change.message) },
+      );
+      return;
+    }
     start.mutate(
       { plan: chosenPlan, seats, idempotencyKey: keyFor(chosenPlan, seats) },
       {
@@ -109,6 +128,16 @@ function Change() {
       </Screen>
     );
   }
+  if (scheduled !== null) {
+    return (
+      <Screen gap={space[16]}>
+        <BillingHeader teamName={teamName} title={reductionCopy.scheduledTitle} subtitle={reductionCopy.scheduledSubtitle} />
+        <InfoCard title={reductionCopy.scheduleTitle} body={scheduled} testID="reduce-scheduled" />
+        <Spacer />
+        <Button label={changeCopy.backToBilling} onPress={() => router.replace('/billing')} testID="reduce-done" />
+      </Screen>
+    );
+  }
   if (!sub || !chosenPlan) {
     return (
       <Screen gap={space[16]}>
@@ -120,14 +149,14 @@ function Change() {
     );
   }
 
-  const failure = offlineBlocked ? ({ kind: 'offline' } as const) : start.isError ? describeBillingFailure(start.error) : null;
+  const failure = offlineBlocked ? ({ kind: 'offline' } as const) : schedule.isError && reduction ? describeBillingFailure(schedule.error) : start.isError ? describeBillingFailure(start.error) : null;
   let banner: React.ReactNode = null;
   if (failure?.kind === 'offline') banner = <StatusBanner tone="warning" title={changeCopy.offline} testID="change-offline" />;
   else if (failure?.kind === 'banner' || failure?.kind === 'rate_limited') banner = <StatusBanner tone="warning" title={failure.message} testID="change-failed" />;
   else if (failure?.kind === 'unavailable') banner = <StatusBanner tone="warning" title="The payment service didn’t answer" body="Nothing was charged. Try again." testID="change-failed" />;
   else if (failure?.kind === 'generic') banner = <StatusBanner tone="error" title="Couldn’t make the change" body="Please try again." reference={failure.reference ?? undefined} testID="change-failed" />;
 
-  const submitLabel = q?.effect === 'now' ? changeCopy.applyNow : changeCopy.continueToPayment;
+  const submitLabel = reduction ? reductionCopy.schedule : q?.effect === 'now' ? changeCopy.applyNow : changeCopy.continueToPayment;
   return (
     <Screen gap={space[16]}>
       {header}
@@ -160,9 +189,23 @@ function Change() {
       ) : seats !== null ? (
         <Text variant="caption" tone="muted" testID="change-quote-loading">{changeCopy.loadingQuote}</Text>
       ) : null}
+      {reduction ? (
+        members.data ? (
+          <ReductionPicker
+            reduction={reduction}
+            members={members.data}
+            selected={choice.ids}
+            onToggle={(id) => setPicked({ for: pickKey, ids: choice.ids.includes(id) ? choice.ids.filter((x) => x !== id) : [...choice.ids, id], fallback: choice.fallback })}
+            acceptFallback={choice.fallback}
+            onToggleFallback={() => setPicked({ for: pickKey, ids: choice.ids, fallback: !choice.fallback })}
+          />
+        ) : (
+          <Text variant="caption" tone="muted" testID="reduce-members-loading">{members.isError ? reductionCopy.membersFailed : reductionCopy.loadingMembers}</Text>
+        )
+      ) : null}
       {banner}
       <Spacer />
-      <Button label={submitLabel} loading={start.isPending} loadingLabel={q?.effect === 'now' ? changeCopy.applying : changeCopy.opening} disabled={!canSubmit} onPress={submit} testID="change-submit" />
+      <Button label={submitLabel} loading={start.isPending || schedule.isPending} loadingLabel={reduction ? reductionCopy.scheduling : q?.effect === 'now' ? changeCopy.applying : changeCopy.opening} disabled={!canSubmit} onPress={submit} testID="change-submit" />
       {back}
     </Screen>
   );
@@ -173,6 +216,7 @@ function quoteTitle(effect: string, chargeTodayDisplay: string | null): string {
   if (chargeTodayDisplay) return changeCopy.chargeTitle;
   if (effect === 'now') return changeCopy.noCharge;
   if (effect === 'none') return changeCopy.noChange;
+  if (effect === 'at_period_end') return reductionCopy.scheduleTitle;
   return changeCopy.notAvailable;
 }
 

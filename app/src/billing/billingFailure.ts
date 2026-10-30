@@ -21,7 +21,10 @@ const messages = {
   notActivated: 'This team has no subscription yet.',
   periodEnded: 'This billing period has ended. Try again after your renewal.',
   periodEnding: 'This billing period is about to end. Try again after your renewal.',
-  reductionsLater: 'Reductions are not available yet. For now you can add seats or move to a higher plan.',
+  notAvailable: 'This change can’t be made this way. Add seats first, then schedule the reduction.',
+  selectionRequired: 'Choose the people who become inactive.',
+  selectionInvalid: 'Check the people you chose. You can’t choose yourself, and you must choose exactly the number shown.',
+  reductionExists: 'A reduction is already scheduled for this team.',
 } as const;
 
 /**
@@ -46,7 +49,13 @@ export function describeBillingFailure(error: unknown): BillingFailure | null {
     case 'period_ending':
       return { kind: 'banner', message: messages.periodEnding };
     case 'scheduled_change_unavailable':
-      return { kind: 'banner', message: messages.reductionsLater };
+      return { kind: 'banner', message: messages.notAvailable };
+    case 'selection_required':
+      return { kind: 'banner', message: messages.selectionRequired };
+    case 'selection_invalid':
+      return { kind: 'banner', message: messages.selectionInvalid };
+    case 'reduction_already_scheduled':
+      return { kind: 'banner', message: messages.reductionExists };
     case 'already_activated':
       return { kind: 'banner', message: messages.alreadyActivated };
     case 'seats_below_members':

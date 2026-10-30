@@ -7,6 +7,7 @@ import { BillingHeader } from '../../../billing/BillingHeader';
 import { activateCopy, hubCopy } from '../../../billing/billingCopy';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { PLAN_IDS, type PlanId } from '../../../billing/billingResponses';
+import { ScheduledReduction } from '../../../billing/ScheduledReduction';
 import { seatsFrom } from '../../../billing/seatsInput';
 import { useActivationQuote, useBillingOverview, useStartActivation } from '../../../billing/useBilling';
 import { useScheduleContext } from '../../../shifts/useScheduleContext';
@@ -127,6 +128,7 @@ function Billing() {
           <Text variant="caption" tone="muted">{hubCopy.seatsUsed(data.members, data.seatLimit)}</Text>
           <Text variant="caption" tone="muted">{activateCopy.currentPeriod(data.subscription.periodStartsOn, data.subscription.periodEndsOn)}</Text>
         </InfoCard>
+        {data.scheduledChange ? <ScheduledReduction change={data.scheduledChange} userId={userId} teamId={teamId} /> : null}
         {open ? (
           <>
             <StatusBanner tone="info" title={hubCopy.paymentOpen.title} body={hubCopy.paymentOpen.body} testID="billing-payment-open" />

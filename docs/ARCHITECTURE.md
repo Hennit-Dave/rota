@@ -176,6 +176,12 @@ Routes, Owner only, at `/teams/:teamId/billing`: `GET /change-quote?plan=&seats=
 
 The job applies a paid change only against the subscription version it was quoted against, re-derives the charge with our engine, and writes the credit, the charge and the entitlement change in one transaction. App: `app/src/app/(app)/billing/` (`index.tsx` the hub, `change.tsx`, `history.tsx`). This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
 
+### 5k. Reductions at the end of the period (ADR 0029)
+
+Routes, Owner only, at `/teams/:teamId/billing`: `POST /reductions` (Idempotency-Key; body `{ plan, seats, selectedMemberIds, acceptFallback }`), `DELETE /reductions/current` (only while `scheduled`); the overview and `GET /change-quote` carry the scheduled change and the reduction details. Code: `server/src/billing/reductions.ts` (the pure selection check, the pure boundary outcome, the service, the `reduction_boundary` job), `reductionWording.ts` (the fallback wording), `seats.ts` (the future limit for invitations and accepts). Schema: `scheduled_changes` and `memberships.deactivated_at` (both shards, one migration).
+
+The schedule and its boundary work row commit together on the team's shard; then the row is enqueued. At 00:00 UTC on the period end the worker re-counts the members who stay and records `ready`, `continuing` or `blocked`. It applies nothing; applying a reduction is the renewal slice. A deactivated member is a non-member on every route and not a seat. App: `app/src/billing/ReductionPicker.tsx`, `ScheduledReduction.tsx`, and the change and hub screens. This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
+
 ### 6. Mobile app
 
 Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and

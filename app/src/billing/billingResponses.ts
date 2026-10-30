@@ -25,6 +25,55 @@ export interface BillingOverview {
   seatLimit: number;
   /** A payment that is still open (waiting or being confirmed), or null. */
   openOperation: Operation | null;
+  /** The reduction the Owner scheduled for the end of the period, or null (ADR 0029). */
+  scheduledChange: ScheduledChange | null;
+}
+
+export type ScheduledStatus = 'scheduled' | 'ready' | 'blocked' | 'continuing';
+const SCHEDULED_STATUSES: readonly string[] = ['scheduled', 'ready', 'blocked', 'continuing'];
+
+/** A decrease that takes effect when the period ends. `message` is the server's sentence; `canCancel` is the server's decision. */
+export interface ScheduledChange {
+  id: string;
+  status: ScheduledStatus;
+  targetPlan: PlanId;
+  targetPlanName: string;
+  targetSeats: number;
+  effectiveOn: string;
+  membersToDeactivate: Array<{ userId: string; name: string }>;
+  fallbackAccepted: boolean;
+  fallbackWording: string | null;
+  message: string;
+  canCancel: boolean;
+}
+
+export function parseScheduledChange(v: unknown): ScheduledChange {
+  if (!isRecord(v) || typeof v.id !== 'string' || typeof v.status !== 'string' || !SCHEDULED_STATUSES.includes(v.status)) throw unreadable();
+  if (!isPlan(v.targetPlan) || typeof v.targetPlanName !== 'string' || !isCount(v.targetSeats) || !isDate(v.effectiveOn) || !Array.isArray(v.membersToDeactivate)) throw unreadable();
+  if (typeof v.fallbackAccepted !== 'boolean' || (v.fallbackWording !== null && typeof v.fallbackWording !== 'string') || typeof v.message !== 'string' || typeof v.canCancel !== 'boolean') throw unreadable();
+  const membersToDeactivate = v.membersToDeactivate.map((m: unknown) => {
+    if (!isRecord(m) || typeof m.userId !== 'string' || typeof m.name !== 'string') throw unreadable();
+    return { userId: m.userId, name: m.name };
+  });
+  return {
+    id: v.id,
+    status: v.status as ScheduledStatus,
+    targetPlan: v.targetPlan,
+    targetPlanName: v.targetPlanName,
+    targetSeats: v.targetSeats,
+    effectiveOn: v.effectiveOn,
+    membersToDeactivate,
+    fallbackAccepted: v.fallbackAccepted,
+    fallbackWording: v.fallbackWording,
+    message: v.message,
+    canCancel: v.canCancel,
+  };
+}
+
+/** `{ status: 'scheduled', scheduledChange }` as POST /reductions answers. */
+export function parseScheduleAnswer(body: unknown): ScheduledChange {
+  if (!isRecord(body) || body.status !== 'scheduled') throw unreadable();
+  return parseScheduledChange(body.scheduledChange);
 }
 
 export interface ActivationQuote {
@@ -76,7 +125,8 @@ export function parseOverview(body: unknown): BillingOverview {
   }
   if (body.activated !== (subscription !== null)) throw unreadable();
   const openOperation = body.openOperation === null || body.openOperation === undefined ? null : parseOperation(body.openOperation);
-  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation };
+  const scheduledChange = body.scheduledChange === null || body.scheduledChange === undefined ? null : parseScheduledChange(body.scheduledChange);
+  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation, scheduledChange };
 }
 
 export function parseQuote(body: unknown): ActivationQuote {
@@ -148,7 +198,22 @@ export interface ChangeQuote {
   remainingDays: number;
   periodEndsOn: string;
   headline: string;
+  /** Present for a decrease: the date it takes effect, how many people the Owner must choose, and the fallback wording to show. Otherwise null. */
+  reduction: ReductionQuote | null;
   testModeNotice: string;
+}
+
+export interface ReductionQuote {
+  effectiveOn: string;
+  activeMembers: number;
+  membersToDeactivate: number;
+  fallbackWording: string;
+}
+
+function parseReductionQuote(v: unknown): ReductionQuote | null {
+  if (v === null || v === undefined) return null;
+  if (!isRecord(v) || !isDate(v.effectiveOn) || !isCount(v.activeMembers) || !isCount(v.membersToDeactivate) || typeof v.fallbackWording !== 'string') throw unreadable();
+  return { effectiveOn: v.effectiveOn, activeMembers: v.activeMembers, membersToDeactivate: v.membersToDeactivate, fallbackWording: v.fallbackWording };
 }
 
 function parseEntitlement(v: unknown): EntitlementView {
@@ -172,6 +237,7 @@ export function parseChangeQuote(body: unknown): ChangeQuote {
     remainingDays: q.remainingDays,
     periodEndsOn: q.periodEndsOn,
     headline: q.headline,
+    reduction: parseReductionQuote(q.reduction),
     testModeNotice: q.testModeNotice,
   };
 }
