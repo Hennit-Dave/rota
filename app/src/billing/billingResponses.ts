@@ -23,6 +23,8 @@ export interface BillingOverview {
   subscription: { plan: PlanId; planName: string; seats: number; monthlyDisplay: string; periodStartsOn: string; periodEndsOn: string } | null;
   members: number;
   seatLimit: number;
+  /** A payment that is still open (waiting or being confirmed), or null. */
+  openOperation: Operation | null;
 }
 
 export interface ActivationQuote {
@@ -41,6 +43,8 @@ const STATUSES: readonly string[] = ['awaiting_payment', 'confirming', 'paid', '
 
 export interface Operation {
   id: string;
+  /** `activation` is the first payment; `change` is a paid plan or seat change (ADR 0028). */
+  kind: 'activation' | 'change';
   status: OperationStatus;
   plan: PlanId;
   planName: string;
@@ -71,7 +75,8 @@ export function parseOverview(body: unknown): BillingOverview {
     subscription = { plan: s.plan, planName: s.planName, seats: s.seats, monthlyDisplay: s.monthlyDisplay, periodStartsOn: s.periodStartsOn, periodEndsOn: s.periodEndsOn };
   }
   if (body.activated !== (subscription !== null)) throw unreadable();
-  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit };
+  const openOperation = body.openOperation === null || body.openOperation === undefined ? null : parseOperation(body.openOperation);
+  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation };
 }
 
 export function parseQuote(body: unknown): ActivationQuote {
@@ -84,7 +89,8 @@ export function parseQuote(body: unknown): ActivationQuote {
 export function parseOperation(v: unknown): Operation {
   if (!isRecord(v) || typeof v.id !== 'string' || typeof v.status !== 'string' || !STATUSES.includes(v.status)) throw unreadable();
   if (!isPlan(v.plan) || typeof v.planName !== 'string' || !isCount(v.seats) || typeof v.amountDisplay !== 'string' || typeof v.expiresAt !== 'string') throw unreadable();
-  return { id: v.id, status: v.status as OperationStatus, plan: v.plan, planName: v.planName, seats: v.seats, amountDisplay: v.amountDisplay, expiresAt: v.expiresAt };
+  const kind = v.kind === 'change' ? 'change' : 'activation';
+  return { id: v.id, kind, status: v.status as OperationStatus, plan: v.plan, planName: v.planName, seats: v.seats, amountDisplay: v.amountDisplay, expiresAt: v.expiresAt };
 }
 
 /** `{ operation }` as GET and cancel answer. */
@@ -118,3 +124,98 @@ export function isSettled(status: OperationStatus): boolean {
 /** Personal, team-scoped server data: the keys carry the user and the team (app-state.md). Never persisted, never cached long (a payment status must not be stale). */
 export const billingKey = (userId: string, teamId: string) => ['billing', userId, teamId] as const;
 export const operationKey = (userId: string, teamId: string, operationId: string) => ['billing', userId, teamId, 'operation', operationId] as const;
+
+// ---- Plan and seat changes (ADR 0028) ----
+
+export type ChangeEffect = 'none' | 'now' | 'after_payment' | 'at_period_end' | 'mixed';
+const EFFECTS: readonly string[] = ['none', 'now', 'after_payment', 'at_period_end', 'mixed'];
+
+export interface EntitlementView {
+  plan: PlanId;
+  planName: string;
+  seats: number;
+}
+
+/** What a change would cost and when it takes effect. Every figure is the server's finished text; `supported: false` means the server offers no button. */
+export interface ChangeQuote {
+  effect: ChangeEffect;
+  supported: boolean;
+  current: EntitlementView;
+  applyNow: EntitlementView;
+  atPeriodEnd: EntitlementView | null;
+  chargeTodayDisplay: string | null;
+  nextRenewalDisplay: string;
+  remainingDays: number;
+  periodEndsOn: string;
+  headline: string;
+  testModeNotice: string;
+}
+
+function parseEntitlement(v: unknown): EntitlementView {
+  if (!isRecord(v) || !isPlan(v.plan) || typeof v.planName !== 'string' || !isCount(v.seats)) throw unreadable();
+  return { plan: v.plan, planName: v.planName, seats: v.seats };
+}
+
+export function parseChangeQuote(body: unknown): ChangeQuote {
+  const q = isRecord(body) ? body.quote : null;
+  if (!isRecord(q) || typeof q.effect !== 'string' || !EFFECTS.includes(q.effect) || typeof q.supported !== 'boolean') throw unreadable();
+  if (q.chargeTodayDisplay !== null && typeof q.chargeTodayDisplay !== 'string') throw unreadable();
+  if (typeof q.nextRenewalDisplay !== 'string' || !isCount(q.remainingDays) || !isDate(q.periodEndsOn) || typeof q.headline !== 'string' || typeof q.testModeNotice !== 'string') throw unreadable();
+  return {
+    effect: q.effect as ChangeEffect,
+    supported: q.supported,
+    current: parseEntitlement(q.current),
+    applyNow: parseEntitlement(q.applyNow),
+    atPeriodEnd: q.atPeriodEnd === null ? null : parseEntitlement(q.atPeriodEnd),
+    chargeTodayDisplay: q.chargeTodayDisplay,
+    nextRenewalDisplay: q.nextRenewalDisplay,
+    remainingDays: q.remainingDays,
+    periodEndsOn: q.periodEndsOn,
+    headline: q.headline,
+    testModeNotice: q.testModeNotice,
+  };
+}
+
+/** The answer to "make this change": it was applied at once (no payment), or a payment is needed and Stripe's page is the next step. */
+export type ChangeAnswer =
+  | { status: 'applied'; change: EntitlementView & { message: string; nextRenewalDisplay: string; periodEndsOn: string } }
+  | { status: 'payment_required'; operation: Operation; checkoutUrl: string };
+
+export function parseChangeAnswer(body: unknown): ChangeAnswer {
+  if (!isRecord(body)) throw unreadable();
+  if (body.status === 'payment_required') return { status: 'payment_required', ...parseStartResponse(body) };
+  if (body.status !== 'applied' || !isRecord(body.change)) throw unreadable();
+  const c = body.change;
+  if (typeof c.message !== 'string' || typeof c.nextRenewalDisplay !== 'string' || !isDate(c.periodEndsOn)) throw unreadable();
+  return { status: 'applied', change: { ...parseEntitlement(c), message: c.message, nextRenewalDisplay: c.nextRenewalDisplay, periodEndsOn: c.periodEndsOn } };
+}
+
+export interface HistoryLine {
+  label: string;
+  amountDisplay: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  date: string;
+  title: string;
+  detail: string | null;
+  netDisplay: string;
+  lines: HistoryLine[];
+}
+
+export function parseHistory(body: unknown): { history: HistoryEntry[]; hasMore: boolean } {
+  if (!isRecord(body) || !Array.isArray(body.history) || typeof body.hasMore !== 'boolean') throw unreadable();
+  const history = body.history.map((e: unknown): HistoryEntry => {
+    if (!isRecord(e) || typeof e.id !== 'string' || !isDate(e.date) || typeof e.title !== 'string' || typeof e.netDisplay !== 'string' || !Array.isArray(e.lines)) throw unreadable();
+    if (e.detail !== null && typeof e.detail !== 'string') throw unreadable();
+    const lines = e.lines.map((l: unknown): HistoryLine => {
+      if (!isRecord(l) || typeof l.label !== 'string' || typeof l.amountDisplay !== 'string') throw unreadable();
+      return { label: l.label, amountDisplay: l.amountDisplay };
+    });
+    return { id: e.id, date: e.date, title: e.title, detail: e.detail, netDisplay: e.netDisplay, lines };
+  });
+  return { history, hasMore: body.hasMore };
+}
+
+export const historyKey = (userId: string, teamId: string) => ['billing', userId, teamId, 'history'] as const;

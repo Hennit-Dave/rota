@@ -8,6 +8,10 @@ import { FakeStripe, checkoutEventBody, runStripeJobs, sendWebhook, signedHeader
 
 // Activation end to end (ADR 0027): the real routes, the real webhook route, the real job processor, the TEST shards. Only Stripe itself is a fake
 // (FakeStripe) and its events are signed with Stripe's own test-header generator. The ledger can never be deleted, so every test uses fresh random teams.
+/** Payment ids are unique per RUN: operations and ledger rows can never be deleted (ADR 0026), so a fixed id would collide with the last run's rows on the same test shard. */
+const RUN = randomUUID().slice(0, 8);
+const pi = (name: string) => `pi_test_${name}_${RUN}`;
+
 let app: TeamsTestApp;
 let stripe: FakeStripe;
 before(async () => {
@@ -89,7 +93,7 @@ for (const shard of ['A', 'B'] as const) {
     assert.deepEqual(await ledgerOf(t.teamId), []);
 
     const sessionId = await sessionOf(t, operationId);
-    const delivered = await deliver(t, operationId, sessionId, { paymentIntent: 'pi_test_activation_1' });
+    const delivered = await deliver(t, operationId, sessionId, { paymentIntent: pi('activation_1') });
     assert.equal(delivered.res.status, 200);
     assert.deepEqual(await eventRow(delivered.eventId), { outcome: 'applied', processed: true, team_id: t.teamId, operation_id: operationId });
 
@@ -98,14 +102,14 @@ for (const shard of ['A', 'B'] as const) {
       ledger.map((r) => [r.entry_type, r.amount_cents, r.plan, r.seats, r.paid_basis_after_cents, r.stripe_payment_intent_id]),
       [
         ['period_start', 0, 'team', 9, 5000, null],
-        ['charge', 5000, null, null, null, 'pi_test_activation_1'],
+        ['charge', 5000, null, null, null, pi('activation_1')],
       ],
     );
     const sub = await subscriptionOf(t.teamId);
     assert.deepEqual({ plan: sub!.plan, seats: sub!.seats, paid: sub!.paid_basis_cents, version: sub!.version }, { plan: 'team', seats: 9, paid: 5000, version: 1 });
     const done = await operationRow(t.teamId, operationId);
     assert.equal(done.status, 'completed');
-    assert.equal(done.stripe_payment_intent_id, 'pi_test_activation_1');
+    assert.equal(done.stripe_payment_intent_id, pi('activation_1'));
 
     // Rebuildable from the ledger alone (AGENTS.md rule 8).
     const rows: LedgerRow[] = ledger.map((r) => ({ operationId: r.operation_id, entryType: r.entry_type as LedgerRow['entryType'], sequence: r.sequence, amountCents: r.amount_cents, periodId: r.period_id, plan: r.plan as LedgerRow['plan'], seats: r.seats, paidBasisAfterCents: r.paid_basis_after_cents }));
@@ -126,7 +130,7 @@ test('A REPLAYED WEBHOOK (the same event id, three times) writes no new rows', a
   const t = await setup();
   const { operationId } = await activate(t, 'starter', 5);
   const sessionId = await sessionOf(t, operationId);
-  const first = await deliver(t, operationId, sessionId, { amountTotal: 2000, paymentIntent: 'pi_test_replay' });
+  const first = await deliver(t, operationId, sessionId, { amountTotal: 2000, paymentIntent: pi('replay') });
   assert.equal(first.res.status, 200);
   const ledgerBefore = await ledgerOf(t.teamId);
   assert.equal(ledgerBefore.length, 2);
@@ -149,8 +153,8 @@ test('TWO EVENTS FOR ONE PAYMENT (completed, then async_payment_succeeded) apply
   const t = await setup();
   const { operationId } = await activate(t, 'starter', 5);
   const sessionId = await sessionOf(t, operationId);
-  const one = await deliver(t, operationId, sessionId, { amountTotal: 2000, paymentIntent: 'pi_test_two_events' });
-  const two = await deliver(t, operationId, sessionId, { type: 'checkout.session.async_payment_succeeded', amountTotal: 2000, paymentIntent: 'pi_test_two_events' });
+  const one = await deliver(t, operationId, sessionId, { amountTotal: 2000, paymentIntent: pi('two_events') });
+  const two = await deliver(t, operationId, sessionId, { type: 'checkout.session.async_payment_succeeded', amountTotal: 2000, paymentIntent: pi('two_events') });
   assert.equal((await eventRow(one.eventId))!.outcome, 'applied');
   assert.equal((await eventRow(two.eventId))!.outcome, 'duplicate');
   assert.equal((await ledgerOf(t.teamId)).length, 2, 'one set of ledger rows');
@@ -162,7 +166,7 @@ test('A DECLINED CARD applies nothing: Stripe sends no completed event, so the o
   const { operationId } = await activate(t, 'team', 9);
   // The declined card (4000 0000 0000 0002) is refused on Stripe's page; the session stays open for another try and Stripe sends us NOTHING.
   // The nearest thing it can send is a session that is "complete" but not paid: that must apply nothing either.
-  const unpaid = await deliver(t, operationId, await sessionOf(t, operationId), { paymentStatus: 'unpaid', amountTotal: 5000, paymentIntent: 'pi_test_unpaid' });
+  const unpaid = await deliver(t, operationId, await sessionOf(t, operationId), { paymentStatus: 'unpaid', amountTotal: 5000, paymentIntent: pi('unpaid') });
   assert.equal(unpaid.res.status, 200);
   assert.equal((await eventRow(unpaid.eventId))!.outcome, 'ignored');
   assert.equal((await operationRow(t.teamId, operationId)).status, 'open');
@@ -216,7 +220,7 @@ test('WRONG TEAM: an event naming this operation under another team id finds not
   const { operationId } = await activate(t, 'team', 9);
   const sessionId = await sessionOf(t, operationId);
   const other = randomUUID();
-  const d = await deliver(t, operationId, sessionId, { teamId: other, amountTotal: 5000, paymentIntent: 'pi_test_wrong_team' });
+  const d = await deliver(t, operationId, sessionId, { teamId: other, amountTotal: 5000, paymentIntent: pi('wrong_team') });
   assert.equal(d.res.status, 200);
   assert.equal((await eventRow(d.eventId))!.outcome, 'review');
   assert.equal((await operationRow(t.teamId, operationId)).status, 'open', 'the real team operation is untouched');
@@ -232,7 +236,7 @@ test('a payment for an operation that already ended, or already completed under 
   const { operationId } = await activate(t, 'team', 9);
   const sessionId = await sessionOf(t, operationId);
   await db(t.teamId).$executeRaw`UPDATE payment_operations SET status = 'expired'::payment_operation_status WHERE id = ${operationId}::uuid`;
-  const late = await deliver(t, operationId, sessionId, { amountTotal: 5000, paymentIntent: 'pi_test_late' });
+  const late = await deliver(t, operationId, sessionId, { amountTotal: 5000, paymentIntent: pi('late') });
   assert.equal((await eventRow(late.eventId))!.outcome, 'review');
   const op = await operationRow(t.teamId, operationId);
   assert.equal(op.status, 'needs_review');
@@ -243,12 +247,12 @@ test('a payment for an operation that already ended, or already completed under 
   const u = await setup();
   const { operationId: op2 } = await activate(u, 'starter', 5);
   const s2 = await sessionOf(u, op2);
-  await deliver(u, op2, s2, { amountTotal: 2000, paymentIntent: 'pi_test_first_payment' });
+  await deliver(u, op2, s2, { amountTotal: 2000, paymentIntent: pi('first_payment') });
   const ledgerAfterFirst = await ledgerOf(u.teamId);
-  const extra = await deliver(u, op2, s2, { amountTotal: 2000, paymentIntent: 'pi_test_second_payment' });
+  const extra = await deliver(u, op2, s2, { amountTotal: 2000, paymentIntent: pi('second_payment') });
   assert.equal((await eventRow(extra.eventId))!.outcome, 'review');
   assert.equal((await operationRow(u.teamId, op2)).status, 'completed', 'a completed operation stays completed');
-  assert.equal((await operationRow(u.teamId, op2)).stripe_payment_intent_id, 'pi_test_first_payment');
+  assert.equal((await operationRow(u.teamId, op2)).stripe_payment_intent_id, pi('first_payment'));
   assert.deepEqual(await ledgerOf(u.teamId), ledgerAfterFirst);
 });
 
@@ -256,7 +260,7 @@ test('a team that outgrew the seats while paying is not activated: members_excee
   const t = await setup();
   const { operationId } = await activate(t, 'starter', 5);
   for (let i = 0; i < 4; i++) await app.addMember(t.teamId, (await app.seedUser(`Late ${i}`)).id, 'staff'); // now 6 members
-  const d = await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 2000, paymentIntent: 'pi_test_outgrown' });
+  const d = await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 2000, paymentIntent: pi('outgrown') });
   assert.equal((await eventRow(d.eventId))!.outcome, 'review');
   assert.match((await operationRow(t.teamId, operationId)).review_reason, /^members_exceed_seats/);
   assert.equal(await subscriptionOf(t.teamId), undefined);
@@ -265,7 +269,7 @@ test('a team that outgrew the seats while paying is not activated: members_excee
 test('CRASH after the team-shard transaction: the replay finds the operation complete and only finishes the inbox', async () => {
   const t = await setup();
   const { operationId } = await activate(t, 'team', 9);
-  const first = await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 5000, paymentIntent: 'pi_test_crash' });
+  const first = await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 5000, paymentIntent: pi('crash') });
   const ledgerBefore = await ledgerOf(t.teamId);
   // Undo only what the crash would have prevented: the inbox mark and the work row's completion.
   await app.raw.A.primary.$executeRaw`UPDATE stripe_events SET processed_at = NULL, outcome = NULL WHERE event_id = ${first.eventId}`;
@@ -280,7 +284,7 @@ test('CRASH after the team-shard transaction: the replay finds the operation com
 test('an event recorded but not processed is put back on the queue when Stripe sends it again; a processed one is not', async () => {
   const t = await setup();
   const { operationId } = await activate(t, 'team', 9);
-  const payload = checkoutEventBody({ sessionId: await sessionOf(t, operationId), teamId: t.teamId, operationId, amountTotal: 5000, paymentIntent: 'pi_test_redelivery' });
+  const payload = checkoutEventBody({ sessionId: await sessionOf(t, operationId), teamId: t.teamId, operationId, amountTotal: 5000, paymentIntent: pi('redelivery') });
   const before = app.enqueued().length;
   assert.equal((await sendWebhook(app.base, payload)).status, 200); // recorded, enqueued, NOT run
   assert.equal(app.enqueued().length, before + 1);
@@ -297,7 +301,7 @@ test('THE WEBHOOK IS VERIFIED BEFORE ANYTHING IS READ: a bad signature, no signa
   const t = await setup();
   const { operationId } = await activate(t, 'team', 9);
   const sessionId = await sessionOf(t, operationId);
-  const payload = checkoutEventBody({ sessionId, teamId: t.teamId, operationId, amountTotal: 5000, paymentIntent: 'pi_test_forged' });
+  const payload = checkoutEventBody({ sessionId, teamId: t.teamId, operationId, amountTotal: 5000, paymentIntent: pi('forged') });
   const eventId = JSON.parse(payload).id as string;
   const good = signedHeaders(payload);
   const attempts: Array<[string, string, Record<string, string>]> = [
@@ -319,7 +323,7 @@ test('THE WEBHOOK IS VERIFIED BEFORE ANYTHING IS READ: a bad signature, no signa
   assert.deepEqual(await ledgerOf(t.teamId), []);
   // Logs before verification hold the request line and an outcome only: nothing from the body (the event id, the session, the payment).
   const logs = app.logLines().join('\n');
-  assert.ok(!logs.includes(eventId) && !logs.includes(sessionId) && !logs.includes('pi_test_forged'), 'no event field reached a log line');
+  assert.ok(!logs.includes(eventId) && !logs.includes(sessionId) && !logs.includes(pi('forged')), 'no event field reached a log line');
 });
 
 test('a LIVE-mode event is refused and never recorded, even when correctly signed', async () => {
@@ -400,7 +404,7 @@ test('cancel: backing out of Stripe ends the operation so the buyer can try agai
   const u = await setup();
   const second = await activate(u, 'team', 9);
   // A verified event is recorded but its job has not run: the payment is "confirming".
-  const payload = checkoutEventBody({ sessionId: await sessionOf(u, second.operationId), teamId: u.teamId, operationId: second.operationId, amountTotal: 5000, paymentIntent: 'pi_test_confirming' });
+  const payload = checkoutEventBody({ sessionId: await sessionOf(u, second.operationId), teamId: u.teamId, operationId: second.operationId, amountTotal: 5000, paymentIntent: pi('confirming') });
   await sendWebhook(app.base, payload);
   assert.equal((await app.get(`${billingUrl(u.teamId)}/operations/${second.operationId}`, u.ownerH)).body.operation.status, 'confirming');
   const refused = await app.post(`${billingUrl(u.teamId)}/operations/${second.operationId}/cancel`, {}, u.ownerH);
@@ -477,7 +481,7 @@ test('an activated team cannot activate again, and the overview shows the plans 
   assert.match(before.body.testModeNotice, /^This integration uses Stripe test mode only/);
 
   const { operationId } = await activate(t, 'starter', 5);
-  await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 2000, paymentIntent: 'pi_test_again' });
+  await deliver(t, operationId, await sessionOf(t, operationId), { amountTotal: 2000, paymentIntent: pi('again') });
   const again = await activate(t, 'team', 9);
   assert.equal(again.res.status, 409);
   assert.equal(again.res.body.error.code, 'already_activated');
@@ -517,7 +521,7 @@ test('REDACTION: no log line carries the checkout URL, the session or the paymen
   const t = await setup();
   const { operationId, checkoutUrl } = await activate(t, 'team', 9);
   const sessionId = await sessionOf(t, operationId);
-  await deliver(t, operationId, sessionId, { amountTotal: 5000, paymentIntent: 'pi_test_log_check' });
+  await deliver(t, operationId, sessionId, { amountTotal: 5000, paymentIntent: pi('log_check') });
   const logs = app.logLines().join('\n');
-  for (const secret of [checkoutUrl, sessionId, 'pi_test_log_check']) assert.ok(!logs.includes(secret), `a log line contains ${secret.slice(0, 12)}...`);
+  for (const secret of [checkoutUrl, sessionId, pi('log_check')]) assert.ok(!logs.includes(secret), `a log line contains ${secret.slice(0, 12)}...`);
 });

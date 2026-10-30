@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBillingApi } from '../services';
 import { useEffect } from 'react';
-import { billingKey, isSettled, operationKey, type PlanId } from './billingResponses';
+import { billingKey, historyKey, isSettled, operationKey, type PlanId } from './billingResponses';
 import { operationQueryOptions, refreshAfterSettled } from './operationQuery';
 
 /** The Owner's billing overview. Only asked when the server said this person may manage billing. Never persisted: a subscription is not cached (money.md). */
@@ -58,5 +58,36 @@ export function useCancelOperation(userId: string | undefined, teamId: string | 
       if (userId === undefined || teamId === null) return;
       void client.invalidateQueries({ queryKey: operationKey(userId, teamId, operationId) });
     },
+  });
+}
+
+/** What a change would cost, calculated by the server for this plan and seat count. */
+export function useChangeQuote(userId: string | undefined, teamId: string | null, plan: PlanId, seats: number | null) {
+  return useQuery({
+    queryKey: [...billingKey(userId ?? '', teamId ?? ''), 'change-quote', plan, seats] as const,
+    enabled: userId !== undefined && teamId !== null && seats !== null,
+    networkMode: 'always',
+    retry: false,
+    queryFn: ({ signal }) => getBillingApi().changeQuote(teamId as string, plan, seats as number, signal),
+  });
+}
+
+/** Makes the change: one request the person watches. Never queued offline, never retried by the library (a retry sends the same idempotency key by hand). */
+export function useStartChange(teamId: string | null) {
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: (v: { plan: PlanId; seats: number; idempotencyKey: string }) =>
+      getBillingApi().startChange(teamId as string, { plan: v.plan, seats: v.seats }, v.idempotencyKey),
+  });
+}
+
+/** The team's money history. Never persisted: it is read from the ledger every time it is asked for. */
+export function useBillingHistory(userId: string | undefined, teamId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: historyKey(userId ?? '', teamId ?? ''),
+    enabled: enabled && userId !== undefined && teamId !== null,
+    networkMode: 'always',
+    queryFn: ({ signal }) => getBillingApi().history(teamId as string, signal),
   });
 }

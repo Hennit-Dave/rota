@@ -11,6 +11,13 @@ export function formatUsd(cents: number): string {
   return `$${dollars.toString()}.${rest.toString().padStart(2, '0')}`;
 }
 
+/** A ledger amount with its sign, for the billing history: 360 -> "+$3.60", -2000 -> "\u2212$20.00". Integer arithmetic only. */
+export function formatSignedUsd(cents: number): string {
+  if (!Number.isSafeInteger(cents)) throw new BillingInputError('an amount to display must be a whole number of cents');
+  if (cents === 0) return formatUsd(0);
+  return `${cents < 0 ? '\u2212' : '+'}${formatUsd(Math.abs(cents))}`;
+}
+
 export const PLAN_NAMES: Readonly<Record<PlanId, string>> = { starter: 'Starter', team: 'Team', business: 'Business' };
 
 export interface PlanOption {

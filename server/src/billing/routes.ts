@@ -13,6 +13,7 @@ import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { idempotencyKey } from '../swaps/schemas.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
 import { cancelOperation, getOperation, getOverview, quoteActivation, startActivation, type BillingDeps } from './activation.js';
+import { getChangeQuote, getHistory, startChange } from './changes.js';
 import { PLAN_IDS, type PlanId } from './plans.js';
 
 export interface BillingRouteDeps {
@@ -81,6 +82,41 @@ export function createBillingRouter(deps: BillingRouteDeps): Router {
     const { teamId } = req.validated!.params as { teamId: string };
     const query = req.validated!.query as { plan: PlanId; seats: number };
     res.json({ quote: await quoteActivation(billing, { teamId, plan: query.plan, seats: query.seats }) });
+  });
+
+  // GET /teams/:teamId/billing/change-quote?plan=&seats=: what a change would cost and when it would take effect, calculated by the server. Read-only.
+  router.get('/change-quote', validateRequest({ params: schemas.teamParams, query: schemas.quoteQuery }), requireAuth, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    const query = req.validated!.query as { plan: PlanId; seats: number };
+    res.json({ quote: await getChangeQuote(billing, { teamId, plan: query.plan, seats: query.seats }) });
+  });
+
+  // POST /teams/:teamId/billing/changes   (Idempotency-Key header): a change that needs no payment applies now; a paid one freezes the quote and returns Checkout's URL.
+  router.post(
+    '/changes',
+    validateRequest({ params: schemas.teamParams, body: schemas.activation }),
+    requireIdempotencyKey,
+    requireAuth,
+    writeLimit,
+    requireTeamRole('billing.manage'),
+    async (req, res) => {
+      const { teamId } = req.validated!.params as { teamId: string };
+      const body = req.validated!.body as { plan: PlanId; seats: number };
+      const answer = await startChange(billing, {
+        teamId,
+        actorUserId: req.auth!.userId,
+        idempotencyKey: String(res.locals.idempotencyKey),
+        plan: body.plan,
+        seats: body.seats,
+      });
+      res.status(answer.status).json(answer.body);
+    },
+  );
+
+  // GET /teams/:teamId/billing/history: charges, credits, refunds and plan or seat changes, newest first, from the ledger.
+  router.get('/history', validateRequest({ params: schemas.teamParams }), requireAuth, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    res.json(await getHistory(billing, teamId));
   });
 
   // POST /teams/:teamId/billing/activation   (Idempotency-Key header): freezes the quote and returns Stripe's Checkout URL.

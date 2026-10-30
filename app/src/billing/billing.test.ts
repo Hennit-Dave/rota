@@ -25,6 +25,7 @@ const overviewBody = (over: Record<string, unknown> = {}) => ({
   subscription: null,
   members: 2,
   seatLimit: 5,
+  openOperation: null,
   ...over,
 });
 const operationBody = (over: Record<string, unknown> = {}) => ({

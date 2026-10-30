@@ -29,6 +29,10 @@ export type ErrorCode =
   | 'already_activated'
   | 'seats_below_members'
   | 'idempotency_mismatch'
+  | 'not_activated'
+  | 'period_ended'
+  | 'period_ending'
+  | 'scheduled_change_unavailable'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -57,6 +61,10 @@ const STATUS: Record<ErrorCode, number> = {
   already_activated: 409,
   seats_below_members: 422,
   idempotency_mismatch: 422,
+  not_activated: 409,
+  period_ended: 409,
+  period_ending: 409,
+  scheduled_change_unavailable: 409,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -87,6 +95,10 @@ const MESSAGE: Record<ErrorCode, string> = {
   already_activated: 'This team already has a subscription.',
   seats_below_members: 'There are more members than the seats requested.',
   idempotency_mismatch: 'This Idempotency-Key was already used for a different request.',
+  not_activated: 'This team has no subscription yet.',
+  period_ended: 'The billing period has ended. Try again after your renewal.',
+  period_ending: 'The billing period is about to end. Try again after your renewal.',
+  scheduled_change_unavailable: 'Reductions are not available yet.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

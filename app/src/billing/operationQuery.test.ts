@@ -8,7 +8,7 @@ import { operationQueryOptions, refreshAfterSettled } from './operationQuery';
 const USER = 'u-1';
 const TEAM = 't-1';
 const OP = 'op-1';
-const op = (status: OperationStatus): Operation => ({ id: OP, status, plan: 'team', planName: 'Team', seats: 9, amountDisplay: '$50.00', expiresAt: '2031-06-01T12:31:00.000Z' });
+const op = (status: OperationStatus): Operation => ({ id: OP, kind: 'change', status, plan: 'team', planName: 'Team', seats: 9, amountDisplay: '$50.00', expiresAt: '2031-06-01T12:31:00.000Z' });
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Regression (found on the emulator, 2026-10-29): the server said `paid` but the screen stayed on "Confirming" and the app asked every 0.6 s. */

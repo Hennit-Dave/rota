@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/query-core';
 import { teamDetailQueryKey } from '../teams/teamResponses';
-import { billingKey, isSettled, operationKey, type Operation } from './billingResponses';
+import { billingKey, historyKey, isSettled, operationKey, type Operation } from './billingResponses';
 
 /**
  * How often the payment screen asks the server whether the payment is settled, in milliseconds. CHOSEN, NOT MEASURED (docs/STATE.md): short enough that
@@ -37,5 +37,6 @@ export function operationQueryOptions(client: QueryClient, input: OperationInput
  */
 export function refreshAfterSettled(client: QueryClient, userId: string, teamId: string): void {
   void client.invalidateQueries({ queryKey: billingKey(userId, teamId), exact: true });
+  void client.invalidateQueries({ queryKey: historyKey(userId, teamId), exact: true });
   void client.invalidateQueries({ queryKey: teamDetailQueryKey(userId, teamId) });
 }

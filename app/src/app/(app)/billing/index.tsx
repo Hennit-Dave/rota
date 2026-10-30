@@ -4,9 +4,10 @@ import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { BillingHeader } from '../../../billing/BillingHeader';
-import { activateCopy } from '../../../billing/billingCopy';
+import { activateCopy, hubCopy } from '../../../billing/billingCopy';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { PLAN_IDS, type PlanId } from '../../../billing/billingResponses';
+import { seatsFrom } from '../../../billing/seatsInput';
 import { useActivationQuote, useBillingOverview, useStartActivation } from '../../../billing/useBilling';
 import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { space } from '../../../theme';
@@ -27,13 +28,6 @@ import { useOnline } from '../../../ui/useOnline';
  */
 export default function BillingScreen() {
   return <Billing />;
-}
-
-/** The digits typed in the seats field as a whole number of seats, or null when it is not one. Not an amount. */
-function seatsFrom(text: string): number | null {
-  if (!/^[0-9]{1,5}$/.test(text)) return null;
-  const n = Number(text);
-  return n >= 1 ? n : null;
 }
 
 function Billing() {
@@ -125,13 +119,23 @@ function Billing() {
 
   const data = overview.data;
   if (data.activated && data.subscription) {
+    const open = data.openOperation;
     return (
       <Screen gap={space[16]}>
-        <BillingHeader teamName={teamName} title={activateCopy.yourPlan} subtitle={data.testModeNotice} />
-        <InfoCard title={activateCopy.planSummary(data.subscription.planName, data.subscription.seats)} body={data.subscription.monthlyDisplay} testID="billing-plan" />
-        <Text variant="caption" tone="muted">
-          {activateCopy.currentPeriod(data.subscription.periodStartsOn, data.subscription.periodEndsOn)}
-        </Text>
+        <BillingHeader teamName={teamName} title={hubCopy.title} subtitle={data.testModeNotice} />
+        <InfoCard title={activateCopy.planSummary(data.subscription.planName, data.subscription.seats)} body={data.subscription.monthlyDisplay} testID="billing-plan">
+          <Text variant="caption" tone="muted">{hubCopy.seatsUsed(data.members, data.seatLimit)}</Text>
+          <Text variant="caption" tone="muted">{activateCopy.currentPeriod(data.subscription.periodStartsOn, data.subscription.periodEndsOn)}</Text>
+        </InfoCard>
+        {open ? (
+          <>
+            <StatusBanner tone="info" title={hubCopy.paymentOpen.title} body={hubCopy.paymentOpen.body} testID="billing-payment-open" />
+            <Button label={hubCopy.paymentOpen.action} variant="outline" onPress={() => router.push({ pathname: '/billing/status', params: { operation: open.id } })} testID="billing-view-payment" />
+          </>
+        ) : (
+          <Button label={hubCopy.change} onPress={() => router.push('/billing/change')} testID="billing-change" />
+        )}
+        <Button label={hubCopy.history} variant="outline" onPress={() => router.push('/billing/history')} testID="billing-history" />
         <Spacer />
         {back}
       </Screen>

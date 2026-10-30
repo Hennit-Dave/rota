@@ -11,12 +11,13 @@ export async function seedActiveSubscription(
   db: PrismaClient,
   teamId: string,
   entitlements: { plan: PlanId; seats: number },
-  options: { activationDate?: string; requestedByUserId?: string } = {},
+  options: { activationDate?: string; requestedByUserId?: string; period?: { startsOn: string; endsOn: string; periodDays: number } } = {},
 ): Promise<{ operationId: string; periodId: string; paymentIntentId: string }> {
   const operationId = randomUUID();
   const paymentIntentId = `pi_test_${randomUUID().replaceAll('-', '')}`;
   const activationDate = options.activationDate ?? utcDateOf(new Date());
-  const period = periodNumber(activationDate, 0);
+  // A fixture may give the period explicitly (the $3.60 proof needs a 30-day period that ends 12 days from today, which no calendar anniversary gives).
+  const period = options.period ?? periodNumber(activationDate, 0);
   const monthly = monthlyCents(entitlements);
 
   return db.$transaction(async (tx) => {
@@ -38,7 +39,7 @@ export async function seedActiveSubscription(
     }
     await tx.$executeRaw`
       INSERT INTO subscriptions (team_id, plan, seats, billing_anchor_day, paid_basis_cents, version, current_period_id, activated_at)
-      VALUES (${teamId}::uuid, ${entitlements.plan}::billing_plan, ${entitlements.seats}, ${anchorDayOf(activationDate)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
+      VALUES (${teamId}::uuid, ${entitlements.plan}::billing_plan, ${entitlements.seats}, ${anchorDayOf(options.period?.startsOn ?? activationDate)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
     return { operationId, periodId, paymentIntentId };
   });
 }

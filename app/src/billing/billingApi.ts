@@ -1,5 +1,20 @@
 import type { createApiClient } from '../api/client';
-import { parseOperationResponse, parseOverview, parseQuote, parseStartResponse, type ActivationQuote, type BillingOverview, type Operation, type PlanId } from './billingResponses';
+import {
+  parseChangeAnswer,
+  parseChangeQuote,
+  parseHistory,
+  parseOperationResponse,
+  parseOverview,
+  parseQuote,
+  parseStartResponse,
+  type ActivationQuote,
+  type BillingOverview,
+  type ChangeAnswer,
+  type ChangeQuote,
+  type HistoryEntry,
+  type Operation,
+  type PlanId,
+} from './billingResponses';
 
 type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post'>;
 
@@ -26,6 +41,18 @@ export function createBillingApi(client: Client) {
     /** The server says whether the payment is waiting, being confirmed, paid, failed, expired or under review. The app never decides that. */
     async operation(teamId: string, operationId: string, signal?: AbortSignal): Promise<Operation> {
       return parseOperationResponse(await client.get<unknown>(`${base(teamId)}/operations/${encodeURIComponent(operationId)}`, { signal }));
+    },
+    /** What a change to this plan and seat count would cost and when it starts. The server calculates it; nothing is charged or frozen. */
+    async changeQuote(teamId: string, plan: PlanId, seats: number, signal?: AbortSignal): Promise<ChangeQuote> {
+      return parseChangeQuote(await client.get<unknown>(`${base(teamId)}/change-quote?plan=${encodeURIComponent(plan)}&seats=${encodeURIComponent(String(seats))}`, { signal }));
+    },
+    /** POST: make the change. Only the plan and the seat count are sent. A repeat with the same `idempotencyKey` returns the stored answer instead of acting twice. */
+    async startChange(teamId: string, input: { plan: PlanId; seats: number }, idempotencyKey: string): Promise<ChangeAnswer> {
+      return parseChangeAnswer(await client.post<unknown>(`${base(teamId)}/changes`, input, { headers: { 'Idempotency-Key': idempotencyKey } }));
+    },
+    /** Charges, credits, refunds and plan or seat changes, newest first, as the ledger holds them. */
+    async history(teamId: string, signal?: AbortSignal): Promise<{ history: HistoryEntry[]; hasMore: boolean }> {
+      return parseHistory(await client.get<unknown>(`${base(teamId)}/history`, { signal }));
     },
     async cancel(teamId: string, operationId: string): Promise<Operation> {
       return parseOperationResponse(await client.post<unknown>(`${base(teamId)}/operations/${encodeURIComponent(operationId)}/cancel`));
