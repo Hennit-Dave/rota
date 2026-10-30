@@ -83,15 +83,18 @@ function PaymentStatus() {
   const refusal = refused ? <StatusBanner tone="warning" title={refused} testID="payment-cancel-refused" /> : null;
 
   switch (op.status) {
-    case 'paid':
+    case 'paid': {
+      const change = op.kind === 'change';
+      const copy = change ? statusCopy.paidChange : statusCopy.paid;
       return (
         <Screen gap={space[16]}>
-          {header(statusCopy.paid.title, statusCopy.paid.subtitle)}
+          {header(copy.title, copy.subtitle)}
           {summary}
           <Spacer />
-          {toSchedule(statusCopy.paid.done)}
+          {change ? <Button label={copy.done} onPress={() => router.replace('/billing')} testID="payment-done" /> : toSchedule(copy.done)}
         </Screen>
       );
+    }
     case 'confirming':
       return (
         <Screen gap={space[16]}>

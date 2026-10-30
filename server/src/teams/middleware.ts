@@ -30,7 +30,8 @@ export function createRequireTeamRole(deps: { shards: Shards }): (action: Permis
       where: { teamId_userId: { teamId, userId } },
       include: { team: true },
     });
-    if (!membership) {
+    // A deactivated member is not a member of the team on any route: the same 404 as a stranger (members are deactivated, never deleted; ADR 0029).
+    if (!membership || membership.deactivatedAt !== null) {
       next(new ApiError('not_found', { reason: 'not_a_member' }));
       return;
     }

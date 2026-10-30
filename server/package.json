@@ -15,6 +15,7 @@
     "start:api": "node --env-file-if-exists=../.env dist/api/main.js",
     "start:worker": "node --env-file-if-exists=../.env dist/worker/main.js",
     "proof:api": "USE_TEST_SHARDS=true WORK_QUEUE_NAME=work-proof node --env-file-if-exists=../.env dist/api/main.js",
+    "proof:seed-subscription": "tsx --env-file-if-exists=../.env src/billing/proof-seed.ts",
     "proof:worker": "USE_TEST_SHARDS=true WORK_QUEUE_NAME=work-proof node --env-file-if-exists=../.env dist/worker/main.js",
     "test": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",
     "test:unit": "node --env-file-if-exists=../.env --import tsx --test \"src/**/*.unit.test.ts\" src/db/shard.test.ts",

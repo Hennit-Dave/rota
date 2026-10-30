@@ -7,8 +7,10 @@
 import { getShard, type Shards } from '../db/clients.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { TerminalJobError, type JobHandler } from '../jobs/worker.js';
-import { ledgerRowsForActivation } from './ledger.js';
+import { insertLedgerRows } from './ledgerDb.js';
+import { ledgerRowsForActivation, ledgerRowsForChange } from './ledger.js';
 import { CURRENCY, monthlyCents, type PlanId } from './plans.js';
+import { quoteChange } from './proration.js';
 import { anchorDayOf, periodNumber } from './periods.js';
 import { stripeEventJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
 import { memberCountOf } from './seats.js';
@@ -26,11 +28,106 @@ interface OperationRow {
   status: string;
   base_version: number;
   activation_date: string | null;
+  period_id: string | null;
+  from_plan: PlanId | null;
+  from_seats: number | null;
   apply_plan: PlanId;
   apply_seats: number;
+  scheduled_plan: PlanId | null;
+  scheduled_seats: number | null;
+  period_days: number;
+  remaining_days: number;
+  paid_basis_before_cents: number;
+  gross_charge_cents: number;
+  credit_cents: number;
   quote_cents: number;
+  paid_basis_after_cents: number;
   currency: string;
   stripe_checkout_session_id: string | null;
+}
+
+type Tx = Pick<PrismaClient, '$queryRaw' | '$executeRaw'>;
+type Flag = (reason: string) => Promise<Result>;
+
+async function completeOperation(tx: Tx, p: StripeEventJobPayload, operationId: string): Promise<void> {
+  await tx.$executeRaw`
+    UPDATE payment_operations
+    SET status = 'completed'::payment_operation_status, stripe_payment_intent_id = ${p.paymentIntentId}, stripe_checkout_session_id = ${p.sessionId},
+        completed_at = NOW(), updated_at = NOW()
+    WHERE id = ${operationId}::uuid AND team_id = ${p.teamId}::uuid`;
+}
+
+/** The first payment: starts the team's subscription and its first period. Run inside the apply transaction, after every field matched. */
+async function applyActivation(tx: Tx, p: StripeEventJobPayload, op: OperationRow, flag: Flag): Promise<Result> {
+  if (op.activation_date === null) return flag('unsupported_operation_kind');
+  // The amount is re-derived by our own engine, not trusted from the row alone.
+  const entitlements = { plan: op.apply_plan, seats: op.apply_seats };
+  const monthly = monthlyCents(entitlements);
+  if (monthly !== op.quote_cents) return flag('quote_does_not_match_engine');
+
+  // Serialise with invitations being accepted (they take the same lock), then check the team still fits the seats it bought.
+  await tx.$queryRaw`SELECT id FROM teams WHERE id = ${p.teamId}::uuid FOR UPDATE`;
+  const existing = await tx.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok FROM subscriptions WHERE team_id = ${p.teamId}::uuid`;
+  if (existing.length > 0 || op.base_version !== 0) return flag('subscription_already_exists');
+  if ((await memberCountOf(tx, p.teamId)) > op.apply_seats) return flag('members_exceed_seats');
+
+  const period = periodNumber(op.activation_date, 0);
+  const periodRows = await tx.$queryRaw<Array<{ id: string }>>`
+    INSERT INTO billing_periods (team_id, starts_on, ends_on, period_days)
+    VALUES (${p.teamId}::uuid, ${period.startsOn}::date, ${period.endsOn}::date, ${period.periodDays})
+    ON CONFLICT (team_id, starts_on) DO UPDATE SET team_id = EXCLUDED.team_id
+    RETURNING id`;
+  const periodId = periodRows[0]!.id;
+
+  await insertLedgerRows(tx, p.teamId, ledgerRowsForActivation({ operationId: op.id, periodId, entitlements }), p.paymentIntentId!);
+  await tx.$executeRaw`
+    INSERT INTO subscriptions (team_id, plan, seats, billing_anchor_day, paid_basis_cents, version, current_period_id, activated_at)
+    VALUES (${p.teamId}::uuid, ${op.apply_plan}::billing_plan, ${op.apply_seats}, ${anchorDayOf(op.activation_date)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
+  await completeOperation(tx, p, op.id);
+  return { outcome: 'applied', detail: 'activation_applied' };
+}
+
+/**
+ * A paid plan or seat change (money.md): applies only against the subscription version it was quoted against. A mismatch NEVER applies: the payment is
+ * recorded and the operation goes to human review. The charge is re-derived by our own engine from the frozen inputs and must equal the quote. One
+ * transaction writes the credit, the charge and the entitlement change, raises the subscription's paid basis and version, and completes the operation.
+ */
+async function applyChange(tx: Tx, p: StripeEventJobPayload, op: OperationRow, flag: Flag): Promise<Result> {
+  if (!op.period_id || !op.from_plan || op.from_seats === null) return flag('unsupported_operation_kind');
+  await tx.$queryRaw`SELECT id FROM teams WHERE id = ${p.teamId}::uuid FOR UPDATE`;
+  const subs = await tx.$queryRaw<Array<{ plan: PlanId; seats: number; paid_basis_cents: number; version: number; current_period_id: string }>>`
+    SELECT plan::text AS plan, seats, paid_basis_cents, version, current_period_id::text AS current_period_id
+    FROM subscriptions WHERE team_id = ${p.teamId}::uuid FOR UPDATE`;
+  const sub = subs[0];
+  if (!sub) return flag('subscription_missing');
+  if (sub.version !== op.base_version) return flag('version_mismatch');
+  if (sub.current_period_id !== op.period_id) return flag('period_changed');
+  if (sub.plan !== op.from_plan || sub.seats !== op.from_seats) return flag('base_state_mismatch');
+
+  const target = op.scheduled_plan && op.scheduled_seats !== null ? { plan: op.scheduled_plan, seats: op.scheduled_seats } : { plan: op.apply_plan, seats: op.apply_seats };
+  const quote = quoteChange({
+    current: { plan: sub.plan, seats: sub.seats },
+    target,
+    paidBasisCents: sub.paid_basis_cents,
+    periodDays: op.period_days,
+    remainingDays: op.remaining_days,
+  });
+  const calc = quote.calculation;
+  if (
+    quote.kind !== 'paid' || !calc || quote.chargeCents !== op.quote_cents || quote.paidBasisAfterCents !== op.paid_basis_after_cents ||
+    calc.grossChargeCents !== op.gross_charge_cents || calc.creditCents !== op.credit_cents ||
+    quote.applyNow.plan !== op.apply_plan || quote.applyNow.seats !== op.apply_seats
+  ) {
+    return flag('quote_does_not_match_engine');
+  }
+
+  await insertLedgerRows(tx, p.teamId, ledgerRowsForChange({ operationId: op.id, periodId: op.period_id, quote }), p.paymentIntentId!);
+  await tx.$executeRaw`
+    UPDATE subscriptions
+    SET plan = ${quote.applyNow.plan}::billing_plan, seats = ${quote.applyNow.seats}, paid_basis_cents = ${quote.paidBasisAfterCents}, version = version + 1, updated_at = NOW()
+    WHERE team_id = ${p.teamId}::uuid`;
+  await completeOperation(tx, p, op.id);
+  return { outcome: 'applied', detail: 'change_applied' };
 }
 
 /** An operation that ended without a payment (expired, failed) when Stripe says the session ended that way. Only an OPEN operation can end. */
@@ -50,8 +147,10 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
   return team.$transaction(
     async (tx): Promise<Result> => {
       const found = await tx.$queryRaw<OperationRow[]>`
-        SELECT id, kind::text AS kind, status::text AS status, base_version, activation_date::text AS activation_date, apply_plan::text AS apply_plan, apply_seats,
-          quote_cents, currency, stripe_checkout_session_id
+        SELECT id, kind::text AS kind, status::text AS status, base_version, activation_date::text AS activation_date, period_id::text AS period_id,
+          from_plan::text AS from_plan, from_seats, apply_plan::text AS apply_plan, apply_seats, scheduled_plan::text AS scheduled_plan, scheduled_seats,
+          period_days, remaining_days, paid_basis_before_cents, gross_charge_cents, credit_cents, quote_cents, paid_basis_after_cents, currency,
+          stripe_checkout_session_id
         FROM payment_operations WHERE id = ${p.operationId}::uuid AND team_id = ${p.teamId}::uuid FOR UPDATE`;
       const op = found[0];
       if (!op) return { outcome: 'review', detail: 'operation_not_found' };
@@ -60,7 +159,7 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
       if (p.paymentStatus !== 'paid') return { outcome: 'ignored', detail: `payment_status_${p.paymentStatus ?? 'missing'}` };
 
       /** Records that a payment was taken but could not be applied: a human looks. Never raises, never applies. */
-      const flag = async (reason: string): Promise<Result> => {
+      const flag: Flag = async (reason) => {
         await tx.$executeRaw`
           UPDATE payment_operations SET status = 'needs_review'::payment_operation_status, review_reason = ${`${reason} (payment ${p.paymentIntentId ?? 'unknown'})`}, updated_at = NOW()
           WHERE id = ${op.id}::uuid AND team_id = ${p.teamId}::uuid AND status IN ('open'::payment_operation_status, 'expired'::payment_operation_status, 'failed'::payment_operation_status)`;
@@ -84,42 +183,9 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
       if (p.amountTotal !== op.quote_cents) return flag('amount_mismatch');
       if (p.currency !== CURRENCY || op.currency !== CURRENCY) return flag('currency_mismatch');
       if (op.stripe_checkout_session_id !== null && op.stripe_checkout_session_id !== p.sessionId) return flag('session_mismatch');
-      if (op.kind !== 'activation' || op.activation_date === null) return flag('unsupported_operation_kind');
-      // The amount is re-derived by our own engine, not trusted from the row alone.
-      const entitlements = { plan: op.apply_plan, seats: op.apply_seats };
-      const monthly = monthlyCents(entitlements);
-      if (monthly !== op.quote_cents) return flag('quote_does_not_match_engine');
-
-      // Serialise with invitations being accepted (they take the same lock), then check the team still fits the seats it bought.
-      await tx.$queryRaw`SELECT id FROM teams WHERE id = ${p.teamId}::uuid FOR UPDATE`;
-      const existing = await tx.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok FROM subscriptions WHERE team_id = ${p.teamId}::uuid`;
-      if (existing.length > 0 || op.base_version !== 0) return flag('subscription_already_exists');
-      if ((await memberCountOf(tx, p.teamId)) > op.apply_seats) return flag('members_exceed_seats');
-
-      const period = periodNumber(op.activation_date, 0);
-      const periodRows = await tx.$queryRaw<Array<{ id: string }>>`
-        INSERT INTO billing_periods (team_id, starts_on, ends_on, period_days)
-        VALUES (${p.teamId}::uuid, ${period.startsOn}::date, ${period.endsOn}::date, ${period.periodDays})
-        ON CONFLICT (team_id, starts_on) DO UPDATE SET team_id = EXCLUDED.team_id
-        RETURNING id`;
-      const periodId = periodRows[0]!.id;
-
-      for (const row of ledgerRowsForActivation({ operationId: op.id, periodId, entitlements })) {
-        const isMoney = row.entryType === 'charge';
-        await tx.$executeRaw`
-          INSERT INTO ledger_entries (team_id, operation_id, entry_type, sequence, amount_cents, currency, period_id, plan, seats, paid_basis_after_cents, stripe_payment_intent_id)
-          VALUES (${p.teamId}::uuid, ${row.operationId}::uuid, ${row.entryType}::ledger_entry_type, ${row.sequence}, ${row.amountCents}, ${CURRENCY}, ${row.periodId}::uuid,
-            ${row.plan}::billing_plan, ${row.seats}, ${row.paidBasisAfterCents}, ${isMoney ? p.paymentIntentId : null})`;
-      }
-      await tx.$executeRaw`
-        INSERT INTO subscriptions (team_id, plan, seats, billing_anchor_day, paid_basis_cents, version, current_period_id, activated_at)
-        VALUES (${p.teamId}::uuid, ${op.apply_plan}::billing_plan, ${op.apply_seats}, ${anchorDayOf(op.activation_date)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
-      await tx.$executeRaw`
-        UPDATE payment_operations
-        SET status = 'completed'::payment_operation_status, stripe_payment_intent_id = ${p.paymentIntentId}, stripe_checkout_session_id = ${p.sessionId},
-            completed_at = NOW(), updated_at = NOW()
-        WHERE id = ${op.id}::uuid AND team_id = ${p.teamId}::uuid`;
-      return { outcome: 'applied', detail: 'activation_applied' };
+      if (op.kind === 'activation') return applyActivation(tx, p, op, flag);
+      if (op.kind === 'change') return applyChange(tx, p, op, flag);
+      return flag('unsupported_operation_kind');
     },
     // The job runs in the background; a cold Neon connection can take seconds to start (auth config: transactionMaxWaitMs).
     { maxWait: 5000, timeout: 15_000 },

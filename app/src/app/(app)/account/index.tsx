@@ -9,6 +9,7 @@ import { settingsCopy } from '../../../settings/settingsCopy';
 import { describeChange, formatQuietHours, languageLabel, onOff, ownsATeam, settingLabel, settingsHeader, themeLabel } from '../../../settings/settingsDisplay';
 import { THEME_SETTINGS, type SettingChange, type ThemeSetting } from '../../../settings/settingsResponses';
 import { useChangeSetting, useIsAnySettingPending, useSettings } from '../../../settings/useSettings';
+import { useScheduleContext } from '../../../shifts/useScheduleContext';
 import { useSessionStore } from '../../../state/sessionStore';
 import { LANGUAGE_SETTINGS } from '../../../settings/settingsResponses';
 import { timeZones } from '../../../teams/timeZones';
@@ -36,6 +37,8 @@ import { useOnline } from '../../../ui/useOnline';
 export default function SettingsScreen() {
   const online = useOnline();
   const me = useMe();
+  // Whether to offer "Plan & billing": the server's `billing.manage` answer (the Owner alone). The server checks again on every billing request.
+  const { detail: teamDetail } = useScheduleContext();
   const userId = me.data?.id;
   const settings = useSettings(userId);
   const teams = useTeams(userId);
@@ -189,6 +192,7 @@ export default function SettingsScreen() {
       ) : null}
       {body}
       <Spacer />
+      {teamDetail.data?.canManageBilling ? <Button label="Plan & billing" variant="secondary" onPress={() => router.push('/billing')} testID="settings-billing" /> : null}
       <Button label={settingsCopy.account} variant="secondary" onPress={() => router.push('/account/sessions')} testID="settings-account" />
       <AppNav selected="settings" />
 

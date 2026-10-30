@@ -55,7 +55,7 @@ export type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
  */
 async function lockAssignee(tx: Tx, teamId: string, userId: string): Promise<void> {
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id = ${userId}::uuid FOR UPDATE`;
+    SELECT id FROM memberships WHERE team_id = ${teamId}::uuid AND user_id = ${userId}::uuid AND deactivated_at IS NULL FOR UPDATE`;
   if (rows.length === 0) throw new ApiError('validation_failed', { details: [{ path: 'assignedUserId', code: 'not_a_member' }] });
 }
 

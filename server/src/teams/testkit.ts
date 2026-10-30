@@ -44,7 +44,7 @@ export interface TeamsTestOptions {
   /** Point the limiter at a Valkey that is not there, to prove team creation fails closed. */
   deadValkey?: boolean;
   /** Mounts the billing routes and the Stripe webhook, with this gateway standing in for Stripe (payments, ADR 0027). */
-  billing?: { stripe: StripeGateway };
+  billing?: { stripe: StripeGateway; /** Pins "now" for the billing code, so a test can sit on a chosen day of a period. */ now?: () => Date };
 }
 
 export interface TestSession {
@@ -160,7 +160,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
 
   // Payments (ADR 0027): the real billing routes and webhook, with the given gateway in place of Stripe. The webhook's enqueue is the same spy.
   const billingDeps: BillingDeps | undefined = options.billing
-    ? { shards, stripe: options.billing.stripe, linkBaseUrl: config.invites.linkBaseUrl, maxWaitMs: config.transactionMaxWaitMs }
+    ? { shards, stripe: options.billing.stripe, linkBaseUrl: config.invites.linkBaseUrl, maxWaitMs: config.transactionMaxWaitMs, now: options.billing.now, enqueue: async (_prisma, row, shard) => { enqueuedRows.push({ rowId: row.id, shard }); } }
     : undefined;
   const webhookDeps: Omit<WebhookDeps, 'logger'> | undefined = options.billing
     ? {
@@ -330,6 +330,9 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
         await db.$executeRaw`
           DELETE FROM work_rows
           WHERE kind = 'email' AND payload->>'invitationId' IN (SELECT id::text FROM invitations WHERE team_id = ${teamId}::uuid)`;
+        // A scheduled reduction and its boundary work row (the work row has no foreign key to the team).
+        await db.$executeRaw`DELETE FROM work_rows WHERE kind = 'reduction_boundary' AND payload->>'teamId' = ${teamId}`;
+        await db.$executeRaw`DELETE FROM scheduled_changes WHERE team_id = ${teamId}::uuid`;
         await db.team.deleteMany({ where: { id: teamId } });
         // The webhook inbox (shard A) and the work rows it made. Ledger, period and operation rows are NOT removed: the ledger is append-only (ADR 0026).
         await raw.A.primary.$executeRaw`DELETE FROM stripe_events WHERE team_id = ${teamId}::uuid`;

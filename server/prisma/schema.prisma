@@ -165,6 +165,9 @@ model Membership {
   teamId    String   @map("team_id") @db.Uuid
   userId    String   @map("user_id") @db.Uuid
   role      TeamRole
+  // Members are deactivated, never deleted (money.md; ADR 0029). Not NULL = not a member of the team on any route, and not a seat. Set only when a reduction
+  // is APPLIED at the period boundary (the renewal slice).
+  deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -433,6 +436,7 @@ model BillingPeriod {
   subscriptions     Subscription[]
   paymentOperations PaymentOperation[]
   ledgerEntries     LedgerEntry[]
+  scheduledChanges  ScheduledChange[]
 
   @@unique([teamId, startsOn], map: "billing_periods_team_id_starts_on_key")
   @@map("billing_periods")
@@ -556,4 +560,44 @@ model StripeEvent {
 
   @@index([paymentIntentId], map: "stripe_events_payment_intent_id_idx")
   @@map("stripe_events")
+}
+
+// A decrease the Owner scheduled for the end of the current period (ADR 0029). It moves no money and changes no entitlement until it is applied (the renewal
+// slice). Also in the SQL, which Prisma cannot express: CHECKs on seats, the fallback pair and "a checked status has a check time", and the partial unique index
+// "scheduled_changes_one_live_per_team" on (team_id) WHERE status IN ('scheduled','ready','blocked','continuing').
+enum ScheduledChangeStatus {
+  scheduled
+  cancelled
+  ready
+  blocked
+  continuing
+  applied
+
+  @@map("scheduled_change_status")
+}
+
+model ScheduledChange {
+  id                 String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId             String                @map("team_id") @db.Uuid
+  requestedByUserId  String                @map("requested_by_user_id") @db.Uuid
+  fromPeriodId       String                @map("from_period_id") @db.Uuid
+  baseVersion        Int                   @map("base_version")
+  fromPlan           BillingPlan           @map("from_plan")
+  fromSeats          Int                   @map("from_seats")
+  targetPlan         BillingPlan           @map("target_plan")
+  targetSeats        Int                   @map("target_seats")
+  effectiveOn        DateTime              @map("effective_on") @db.Date
+  selectedMemberIds  String[]              @default([]) @map("selected_member_ids") @db.Uuid
+  fallbackAcceptedAt DateTime?             @map("fallback_accepted_at") @db.Timestamptz(3)
+  fallbackWording    String?               @map("fallback_wording")
+  status             ScheduledChangeStatus @default(scheduled)
+  checkedAt          DateTime?             @map("checked_at") @db.Timestamptz(3)
+  checkDetail        String?               @map("check_detail")
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  period BillingPeriod @relation(fields: [fromPeriodId], references: [id], onDelete: Restrict)
+
+  @@index([teamId, createdAt(sort: Desc)], map: "scheduled_changes_team_id_created_at_idx")
+  @@map("scheduled_changes")
 }

@@ -3,113 +3,32 @@
 // webhook, processed by the job in stripeEventJob.ts, decides that (rule 7). Every figure the app shows is made here as a finished string.
 import { createHash, randomUUID } from 'node:crypto';
 import { getShard, type Shards } from '../db/clients.js';
-import { identityDb } from '../db/identity.js';
 import { ApiError } from '../http/errors.js';
+import {
+  assertValidTarget,
+  completeCheckout,
+  hasUnprocessedEvent,
+  loadOperation,
+  lockTeamAndFindPrior,
+  nowOf,
+  OPERATION_LIFETIME_MS,
+  requireNoOpenOperation,
+  rethrowOneOpenViolation,
+  viewOf,
+  type BillingDeps,
+  type OperationView,
+  type PriorRequest,
+  type StoredAnswer,
+} from './checkout.js';
+import { getScheduledChange, type ScheduledChangeView } from './reductions.js';
 import { formatUsd, FIRST_PERIOD_NOTE, PLAN_NAMES, planOptions, TEST_MODE_NOTICE, type PlanOption } from './display.js';
-import { StripeRejectedError, StripeUncertainError, type StripeGateway } from './gateway.js';
-import { entitlementsProblem, monthlyCents, PLANS, type Entitlements, type PlanId } from './plans.js';
+import { monthlyCents, type Entitlements, type PlanId } from './plans.js';
 import { periodNumber, utcDateOf } from './periods.js';
 import { MIN_CHARGE_CENTS } from './proration.js';
 import { memberCountOf, seatLimitOf } from './seats.js';
 
-/**
- * How long a payment operation, and the Checkout Session it opened, stay payable: Stripe's 30-minute minimum plus 60 seconds, because Stripe refuses an
- * expiry under 30 minutes from the moment it receives the request and ours is set a moment earlier. The operation and the session end together, so an
- * operation is never open while its session is already dead. CHOSEN, NOT MEASURED (Dave, 2026-10-28: "30 minutes"; the 60 seconds is the margin).
- */
-export const OPERATION_LIFETIME_MS = 31 * 60 * 1000;
-
-export interface BillingDeps {
-  shards: Shards;
-  stripe: StripeGateway;
-  /** The https origin of the App Link host (config.invites.linkBaseUrl); Stripe sends the buyer back to `<origin>/checkout/...`. */
-  linkBaseUrl: string;
-  maxWaitMs: number;
-  now?: () => Date;
-}
-
-const nowOf = (deps: BillingDeps) => (deps.now ?? (() => new Date()))();
-
-/** What the app is told about an operation: decided here, never by the app. */
-export type OperationStatusView = 'awaiting_payment' | 'confirming' | 'paid' | 'failed' | 'expired' | 'under_review';
-
-export interface OperationView {
-  id: string;
-  kind: 'activation';
-  status: OperationStatusView;
-  plan: PlanId;
-  planName: string;
-  seats: number;
-  amountDisplay: string;
-  expiresAt: string;
-}
-
-interface OperationRow {
-  id: string;
-  team_id: string;
-  kind: string;
-  status: string;
-  apply_plan: PlanId;
-  apply_seats: number;
-  quote_cents: number;
-  expires_at: Date;
-  activation_date: string | null;
-  stripe_checkout_session_id: string | null;
-}
-
-function statusView(row: Pick<OperationRow, 'status' | 'expires_at'>, confirming: boolean, now: Date): OperationStatusView {
-  switch (row.status) {
-    case 'completed':
-      return 'paid';
-    case 'failed':
-      return 'failed';
-    case 'expired':
-      return 'expired';
-    case 'needs_review':
-      return 'under_review';
-    default:
-      if (confirming) return 'confirming';
-      return row.expires_at.getTime() <= now.getTime() ? 'expired' : 'awaiting_payment';
-  }
-}
-
-function viewOf(row: OperationRow, confirming: boolean, now: Date): OperationView {
-  return {
-    id: row.id,
-    kind: 'activation',
-    status: statusView(row, confirming, now),
-    plan: row.apply_plan,
-    planName: PLAN_NAMES[row.apply_plan],
-    seats: row.apply_seats,
-    amountDisplay: formatUsd(row.quote_cents),
-    expiresAt: row.expires_at.toISOString(),
-  };
-}
-
-async function loadOperation(shards: Shards, teamId: string, operationId: string): Promise<OperationRow | null> {
-  // The team id is part of the lookup: another team's operation looks exactly like one that does not exist (404).
-  const rows = await getShard(shards, teamId).primary.$queryRaw<OperationRow[]>`
-    SELECT id, team_id, kind::text AS kind, status::text AS status, apply_plan::text AS apply_plan, apply_seats, quote_cents, expires_at,
-      activation_date::text AS activation_date, stripe_checkout_session_id
-    FROM payment_operations WHERE id = ${operationId}::uuid AND team_id = ${teamId}::uuid`;
-  return rows[0] ?? null;
-}
-
-/** Whether a verified Stripe event for this operation is recorded but not yet processed: the payment is "confirming". Never cached (rule 11). */
-async function hasUnprocessedEvent(shards: Shards, operationId: string): Promise<boolean> {
-  const row = await identityDb(shards).stripeEvent.findFirst({ where: { operationId, processedAt: null }, select: { eventId: true } });
-  return row !== null;
-}
-
-function entitlementDetails(problem: string, plan: PlanId, seats: number) {
-  if (problem === 'seats_over_plan_limit') return [{ path: 'seats', code: 'too_long', max: PLANS[plan].includedSeats }];
-  return [{ path: 'seats', code: 'too_short', min: 1 }];
-}
-
-function assertValidTarget(target: Entitlements): void {
-  const problem = entitlementsProblem(target);
-  if (problem) throw new ApiError('validation_failed', { details: entitlementDetails(problem, target.plan, target.seats) });
-}
+export { OPERATION_LIFETIME_MS };
+export type { BillingDeps, OperationView, StoredAnswer };
 
 export interface BillingOverview {
   testModeNotice: string;
@@ -119,6 +38,21 @@ export interface BillingOverview {
   subscription: { plan: PlanId; planName: string; seats: number; monthlyDisplay: string; periodStartsOn: string; periodEndsOn: string } | null;
   members: number;
   seatLimit: number;
+  /** A payment that is still open (waiting or being confirmed), or null. The hub shows it instead of offering another change. */
+  openOperation: OperationView | null;
+  /** The reduction the Owner scheduled for the end of the period, or null. */
+  scheduledChange: ScheduledChangeView | null;
+}
+
+/** The team's open payment, if any (at most one exists: the partial unique index). An open one past its expiry is reported as expired, not as open. */
+async function openOperationOf(deps: BillingDeps, teamId: string): Promise<OperationView | null> {
+  const open = await getShard(deps.shards, teamId).primary.$queryRaw<Array<{ id: string }>>`
+    SELECT id::text AS id FROM payment_operations WHERE team_id = ${teamId}::uuid AND status = 'open'::payment_operation_status AND expires_at > NOW() LIMIT 1`;
+  const id = open[0]?.id;
+  if (!id) return null;
+  const row = await loadOperation(deps.shards, teamId, id);
+  if (!row) return null;
+  return viewOf(row, await hasUnprocessedEvent(deps.shards, row.id), nowOf(deps));
 }
 
 /** The Owner's billing screen: what the team has, what it could buy, every price already formatted. */
@@ -147,6 +81,8 @@ export async function getOverview(deps: BillingDeps, teamId: string): Promise<Bi
       : null,
     members,
     seatLimit,
+    openOperation: await openOperationOf(deps, teamId),
+    scheduledChange: await getScheduledChange(deps.shards, teamId),
   };
 }
 
@@ -184,21 +120,9 @@ export async function quoteActivation(deps: BillingDeps, input: { teamId: string
   };
 }
 
-export interface StoredAnswer {
-  /** The HTTP status to send. */
-  status: number;
-  body: unknown;
-  /** True when this is the stored answer to a repeat of the same Idempotency-Key. */
-  replay: boolean;
-}
-
 function fingerprintOf(plan: PlanId, seats: number): string {
   return createHash('sha256').update(`activation|${plan}|${seats}`, 'utf8').digest('hex');
 }
-
-type Tx1 =
-  | { kind: 'replay'; status: number; body: unknown }
-  | { kind: 'proceed'; operationId: string };
 
 /**
  * Starts an activation: freezes the quote as a payment operation, makes the one bounded Stripe call, returns the Checkout URL.
@@ -224,34 +148,17 @@ export async function startActivation(
   const expiresAt = new Date(now.getTime() + OPERATION_LIFETIME_MS);
   const newOperationId = randomUUID();
 
-  let step: Tx1;
+  let step: PriorRequest;
   try {
     step = await prisma.$transaction(
-      async (tx): Promise<Tx1> => {
-        // The team row lock serialises everything that changes who is in the team or what it pays: two requests with one key, an invitation
-        // being accepted, a second payment attempt.
-        await tx.$queryRaw`SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
-
-        const prior = await tx.$queryRaw<Array<{ request_fingerprint: string; operation_id: string | null; response_status: number; response: unknown }>>`
-          SELECT request_fingerprint, operation_id, response_status, response FROM payment_requests
-          WHERE team_id = ${teamId}::uuid AND idempotency_key = ${input.idempotencyKey}`;
-        const found = prior[0];
-        if (found) {
-          if (found.request_fingerprint !== fingerprint) throw new ApiError('idempotency_mismatch', { reason: 'same_key_different_request' });
-          if (found.response_status !== 0) return { kind: 'replay', status: found.response_status, body: found.response };
-          // An earlier attempt froze the operation but never learned Stripe's answer: resume it.
-          if (!found.operation_id) throw new ApiError('internal_error', { reason: 'payment_request_without_operation' });
-          return { kind: 'proceed', operationId: found.operation_id };
-        }
+      async (tx): Promise<PriorRequest> => {
+        const prior = await lockTeamAndFindPrior(tx, teamId, input.idempotencyKey, fingerprint);
+        if (prior.kind !== 'new') return prior;
 
         const existing = await tx.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok FROM subscriptions WHERE team_id = ${teamId}::uuid`;
         if (existing.length > 0) throw new ApiError('already_activated');
         if ((await memberCountOf(tx, teamId)) > input.seats) throw new ApiError('seats_below_members');
-
-        // An operation nobody paid for before it expired no longer blocks the team.
-        await tx.$executeRaw`UPDATE payment_operations SET status = 'expired'::payment_operation_status, updated_at = NOW() WHERE team_id = ${teamId}::uuid AND status = 'open'::payment_operation_status AND expires_at <= NOW()`;
-        const open = await tx.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok FROM payment_operations WHERE team_id = ${teamId}::uuid AND status = 'open'::payment_operation_status`;
-        if (open.length > 0) throw new ApiError('payment_in_progress', { reason: 'an_operation_is_already_open' });
+        await requireNoOpenOperation(tx, teamId);
 
         const period = periodNumber(utcDateOf(now), 0);
         // The first period is charged in full (money.md): remaining = period_days, nothing already paid, so nothing credited.
@@ -268,65 +175,12 @@ export async function startActivation(
       { maxWait: deps.maxWaitMs },
     );
   } catch (err) {
-    // The partial unique index is the backstop for "one open operation per team" (the lock and the check above make it unreachable in practice).
-    if (!(err instanceof ApiError) && String((err as { message?: unknown })?.message).includes('payment_operations_one_open_per_team')) {
-      throw new ApiError('payment_in_progress', { reason: 'unique_index' });
-    }
-    throw err;
+    rethrowOneOpenViolation(err);
   }
 
   if (step.kind === 'replay') return { status: step.status === 201 ? 200 : step.status, body: step.body, replay: true };
-
-  const operation = await loadOperation(deps.shards, teamId, step.operationId);
-  if (!operation) throw new ApiError('internal_error', { reason: 'operation_vanished' });
-  // A resumed attempt whose operation has since ended cannot be completed with this key: the app starts again with a new one.
-  if (operation.status !== 'open') throw new ApiError('validation_failed', { details: [{ path: 'header.idempotency-key', code: 'key_expired' }] });
-
-  // The one synchronous provider call: bounded by the gateway's timeout, idempotent by operation, and it records NO outcome.
-  let session;
-  try {
-    session = await deps.stripe.createCheckoutSession({
-      operationId: operation.id,
-      teamId,
-      amountCents: operation.quote_cents,
-      productName: `Rota ${PLAN_NAMES[operation.apply_plan]} plan, ${operation.apply_seats} seats`,
-      successUrl: `${deps.linkBaseUrl}/checkout/return?operation=${operation.id}`,
-      cancelUrl: `${deps.linkBaseUrl}/checkout/cancel?operation=${operation.id}`,
-      expiresAt: operation.expires_at,
-    });
-  } catch (err) {
-    if (err instanceof StripeRejectedError) {
-      // Stripe refused outright: close the operation so the team is not blocked, and remember the answer for this key.
-      const failure = { error: { code: 'service_unavailable', message: new ApiError('service_unavailable').message } };
-      await prisma.$transaction(
-        async (tx) => {
-          await tx.$executeRaw`UPDATE payment_operations SET status = 'failed'::payment_operation_status, updated_at = NOW() WHERE id = ${operation.id}::uuid AND team_id = ${teamId}::uuid AND status = 'open'::payment_operation_status`;
-          await tx.$executeRaw`UPDATE payment_requests SET response_status = 503, response = ${JSON.stringify(failure)}::jsonb WHERE team_id = ${teamId}::uuid AND idempotency_key = ${input.idempotencyKey} AND response_status = 0`;
-        },
-        { maxWait: deps.maxWaitMs },
-      );
-      throw new ApiError('service_unavailable', { reason: `stripe_${err.reason}` });
-    }
-    if (err instanceof StripeUncertainError) {
-      // The outcome is unknown. Nothing is recorded as paid or failed; the same key resumes it.
-      throw new ApiError('service_unavailable', { reason: `stripe_uncertain_${err.reason}` });
-    }
-    throw err;
-  }
-
-  const body = { operation: viewOf(operation, false, nowOf(deps)), checkoutUrl: session.url };
-  await prisma.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`
-        UPDATE payment_operations SET stripe_checkout_session_id = ${session.id}, updated_at = NOW()
-        WHERE id = ${operation.id}::uuid AND team_id = ${teamId}::uuid AND (stripe_checkout_session_id IS NULL OR stripe_checkout_session_id = ${session.id})`;
-      await tx.$executeRaw`
-        UPDATE payment_requests SET response_status = 201, response = ${JSON.stringify(body)}::jsonb
-        WHERE team_id = ${teamId}::uuid AND idempotency_key = ${input.idempotencyKey} AND response_status = 0`;
-    },
-    { maxWait: deps.maxWaitMs },
-  );
-  return { status: 201, body, replay: false };
+  if (step.kind !== 'proceed') throw new ApiError('internal_error', { reason: 'unexpected_prior_request' });
+  return completeCheckout(deps, { teamId, idempotencyKey: input.idempotencyKey, operationId: step.operationId });
 }
 
 /** An operation of this team, as the app should see it. Another team's, or none: 404. */

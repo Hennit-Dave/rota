@@ -1,3 +1,4 @@
+import { createReductionBoundaryHandler, REDUCTION_BOUNDARY_KIND } from '../billing/reductions.js';
 import { createStripeEventHandler } from '../billing/stripeEventJob.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
 import {
@@ -51,6 +52,8 @@ const handlers = {
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
   // Stripe webhook events recorded by the API (ADR 0027). The worker holds no Stripe key: it only reads the recorded event and writes our own tables.
   stripe_event: createStripeEventHandler({ shards }),
+  // The check at the end of a period for a scheduled reduction (ADR 0029). It records ready, blocked or continuing and applies nothing (P6 does).
+  [REDUCTION_BOUNDARY_KIND]: createReductionBoundaryHandler({ shards }),
 };
 
 // Every worker that gets built, including one rebuilt by the watchdog below, gets the same handlers.

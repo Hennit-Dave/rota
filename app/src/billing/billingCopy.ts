@@ -29,6 +29,75 @@ export const activateCopy = {
   currentPeriod: (start: string, end: string) => `Current period: ${start} to ${end}`,
 } as const;
 
+/** The hub an Owner lands on once the team has a subscription (Figma 07 "billing"; not compared frame by frame yet). */
+export const hubCopy = {
+  title: 'Plan & billing',
+  change: 'Change plan or seats',
+  history: 'Billing history',
+  paymentOpen: { title: 'A payment is in progress', body: 'Finish it, or wait for it to be confirmed, before changing your plan.', action: 'View payment' },
+  seatsUsed: (members: number, limit: number) => `${members} of ${limit} seats in use`,
+} as const;
+
+/** Reductions at the end of the period (ADR 0029). The dates, counts, names and sentences come from the server; these are only the labels around them. */
+export const reductionCopy = {
+  scheduleTitle: 'Reduction at the end of your period',
+  chooseTitle: 'Who becomes inactive?',
+  chooseHelp: (count: number) => `Choose ${count} ${count === 1 ? 'person' : 'people'}. They lose access on the date above and can be added back later. You can’t choose yourself.`,
+  chosen: (picked: number, needed: number) => `${picked} of ${needed} chosen`,
+  fallbackTitle: 'If your team is still too big',
+  fallbackOn: 'Accepted: keep my current plan and price',
+  fallbackOff: 'Not accepted: pause my renewal until I fix it',
+  schedule: 'Schedule reduction',
+  scheduling: 'Scheduling…',
+  scheduledTitle: 'Reduction scheduled',
+  scheduledSubtitle: 'Nothing changes until your period ends.',
+  loadingMembers: 'Loading your team…',
+  membersFailed: 'Couldn’t load your team. Go back and try again.',
+  bannerTitle: (date: string) => `Reduction scheduled for ${date}`,
+  bannerChecked: 'Reduction checked',
+  inactiveList: 'Will become inactive',
+  cancel: 'Cancel reduction',
+  cancelling: 'Cancelling…',
+  cancelFailed: 'Couldn’t cancel the reduction. Try again.',
+} as const;
+
+export const changeCopy = {
+  title: 'Change plan or seats',
+  subtitle: 'Add seats, change plan, or reduce at the end of your period.',
+  current: 'Your plan now',
+  planLabel: 'New plan',
+  seatsLabel: 'New number of seats',
+  seatsInvalid: 'Enter a whole number of seats.',
+  chargeTitle: 'Charged today',
+  noCharge: 'No charge today',
+  noChange: 'No change',
+  notAvailable: 'Not available yet',
+  renewalTitle: 'Next renewal',
+  daysLeft: (days: number) => `${days} ${days === 1 ? 'day' : 'days'} left in this period`,
+  periodEnds: (date: string) => `This period ends on ${date}`,
+  continueToPayment: 'Continue to payment',
+  applyNow: 'Apply change',
+  applying: 'Applying…',
+  opening: 'Opening payment page…',
+  loadingQuote: 'Calculating…',
+  appliedTitle: 'Change applied',
+  appliedSubtitle: 'Your plan was updated.',
+  backToBilling: 'Back to billing',
+  back: 'Back',
+  offline: 'You’re offline. Changes need a connection.',
+} as const;
+
+export const historyCopy = {
+  title: 'Billing history',
+  subtitle: 'Charges, credits and refunds',
+  loading: 'Loading billing history…',
+  empty: { title: 'Nothing here yet', body: 'Payments and plan changes will show here.' },
+  error: { title: 'Couldn’t load billing history', body: 'Check your connection and try again.', retry: 'Try again' },
+  end: 'That’s everything',
+  hasMore: 'Older entries are not shown yet.',
+  back: 'Back to billing',
+} as const;
+
 /** The amber pill under every billing header (Figma 07). */
 export const billingBadgeCopy = { testMode: 'Test mode' } as const;
 
@@ -48,6 +117,8 @@ export const statusCopy = {
     back: 'Back to schedule',
   },
   paid: { title: 'Subscription active', subtitle: 'Your payment was confirmed.', done: 'Back to schedule' },
+  // A paid plan or seat change (ADR 0028): the same server-confirmed payment, different words.
+  paidChange: { title: 'Change applied', subtitle: 'Your payment was confirmed and your plan is updated.', done: 'Back to billing' },
   failed: {
     title: 'Payment didn’t go through',
     subtitle: 'Nothing was applied to your team.',
