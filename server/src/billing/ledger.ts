@@ -44,6 +44,14 @@ export function ledgerRowsForActivation(args: { operationId: string; periodId: s
 }
 
 /**
+ * The rows a confirmed renewal writes: the new period starts with the entitlements it has (after any scheduled reduction) and the monthly amount it was paid at,
+ * and the charge is the full monthly amount. One operation (the renewal), so the ledger rebuilds the subscription from them like any other change.
+ */
+export function ledgerRowsForRenewal(args: { operationId: string; periodId: string; entitlements: Entitlements }): LedgerRow[] {
+  return ledgerRowsForActivation(args);
+}
+
+/**
  * The rows an applied change writes. A paid change writes a credit for the unused part of what the period already paid, a charge for the new
  * amount over the days left (their sum is the payment), and the entitlement change. A change that is free writes only the entitlement change.
  * A change that only schedules a decrease writes nothing yet: the scheduled change itself gets a ledger type with the slice that builds it.

@@ -5,6 +5,7 @@
 //
 // Outcomes, stored on the inbox row: applied | duplicate (already applied) | review (recorded, not applied, a human looks) | ignored (nothing to do).
 import { getShard, type Shards } from '../db/clients.js';
+import { shardFor } from '../db/shard.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { TerminalJobError, type JobHandler } from '../jobs/worker.js';
 import { insertLedgerRows } from './ledgerDb.js';
@@ -12,7 +13,9 @@ import { ledgerRowsForActivation, ledgerRowsForChange } from './ledger.js';
 import { CURRENCY, monthlyCents, type PlanId } from './plans.js';
 import { quoteChange } from './proration.js';
 import { anchorDayOf, periodNumber } from './periods.js';
-import { cardSetupJobPayload, stripeEventJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
+import { cardSetupJobPayload, renewalPaymentJobPayload, stripeEventJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
+import { handleRenewalPaymentEvent, scheduleRenewal, type EnqueueRow } from './renewal.js';
+import type { NewWork, Sender } from './renewalNotice.js';
 import { handleCardSetupEvent, saveActivationCard } from './cardSaveJob.js';
 import type { StripeGateway } from './gateway.js';
 import { memberCountOf } from './seats.js';
@@ -60,7 +63,7 @@ async function completeOperation(tx: Tx, p: StripeEventJobPayload, operationId: 
 }
 
 /** The first payment: starts the team's subscription and its first period. Run inside the apply transaction, after every field matched. */
-async function applyActivation(tx: Tx, p: StripeEventJobPayload, op: OperationRow, flag: Flag): Promise<Result> {
+async function applyActivation(tx: Tx, p: StripeEventJobPayload, op: OperationRow, flag: Flag, follow: NewWork[]): Promise<Result> {
   if (op.activation_date === null) return flag('unsupported_operation_kind');
   // The amount is re-derived by our own engine, not trusted from the row alone.
   const entitlements = { plan: op.apply_plan, seats: op.apply_seats };
@@ -86,6 +89,9 @@ async function applyActivation(tx: Tx, p: StripeEventJobPayload, op: OperationRo
     INSERT INTO subscriptions (team_id, plan, seats, billing_anchor_day, paid_basis_cents, version, current_period_id, activated_at)
     VALUES (${p.teamId}::uuid, ${op.apply_plan}::billing_plan, ${op.apply_seats}, ${anchorDayOf(op.activation_date)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
   await completeOperation(tx, p, op.id);
+  // The first period will end, and the team will be charged for the next one: the renewal and its work row commit with the activation (ADR 0031).
+  const renewal = await scheduleRenewal(tx, { teamId: p.teamId, periodId, endsOn: period.endsOn });
+  if (renewal) follow.push(renewal);
   return { outcome: 'applied', detail: 'activation_applied' };
 }
 
@@ -145,7 +151,7 @@ async function closeOperation(team: PrismaClient, p: StripeEventJobPayload, stat
  * Applies a verified, successful payment to the operation it names, or records why it did not. One transaction on the team's shard: the ledger rows,
  * the subscription, the payment id and the operation's completion commit together or not at all.
  */
-async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promise<Result> {
+async function applyPayment(team: PrismaClient, p: StripeEventJobPayload, follow: NewWork[]): Promise<Result> {
   return team.$transaction(
     async (tx): Promise<Result> => {
       const found = await tx.$queryRaw<OperationRow[]>`
@@ -185,7 +191,7 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
       if (p.amountTotal !== op.quote_cents) return flag('amount_mismatch');
       if (p.currency !== CURRENCY || op.currency !== CURRENCY) return flag('currency_mismatch');
       if (op.stripe_checkout_session_id !== null && op.stripe_checkout_session_id !== p.sessionId) return flag('session_mismatch');
-      if (op.kind === 'activation') return applyActivation(tx, p, op, flag);
+      if (op.kind === 'activation') return applyActivation(tx, p, op, flag, follow);
       if (op.kind === 'change') return applyChange(tx, p, op, flag);
       return flag('unsupported_operation_kind');
     },
@@ -198,16 +204,24 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
  * `stripe` is used for READS only (the card a payment or a setup saved; ADR 0030). The worker holds the Stripe test key for that (ADR 0030 supersedes "the worker
  * holds no Stripe key" from ADR 0027); it never creates anything on Stripe from here.
  */
-export function createStripeEventHandler(deps: { shards: Shards; stripe: StripeGateway }): JobHandler {
+export function createStripeEventHandler(deps: {
+  shards: Shards;
+  stripe: StripeGateway;
+  /** What the renewal branch needs (ADR 0031): the grace period, the sender of the Owner's emails, and how to enqueue the work it writes. */
+  renewal?: { graceDays: number; sender: Sender; enqueue?: EnqueueRow; now?: () => Date };
+}): JobHandler {
   return async (ctx) => {
     const { row, prisma } = ctx;
     const logBase = `[stripe_event] row_id=${row.id} generation=${row.generation} origin_request_id=${row.originRequestId ?? '-'}`;
 
-    const isSetup = (row.payload as { purpose?: unknown } | null)?.purpose === 'card_setup';
+    const purpose = (row.payload as { purpose?: unknown } | null)?.purpose;
+    const isSetup = purpose === 'card_setup';
+    const isRenewal = purpose === 'renewal_payment';
     const setupParsed = isSetup ? cardSetupJobPayload.safeParse(row.payload) : null;
-    const paymentParsed = isSetup ? null : stripeEventJobPayload.safeParse(row.payload);
-    if ((setupParsed && !setupParsed.success) || (paymentParsed && !paymentParsed.success)) throw new TerminalJobError('invalid_payload');
-    const eventId = (setupParsed?.data ?? paymentParsed!.data!).eventId;
+    const renewalParsed = isRenewal ? renewalPaymentJobPayload.safeParse(row.payload) : null;
+    const paymentParsed = isSetup || isRenewal ? null : stripeEventJobPayload.safeParse(row.payload);
+    if ((setupParsed && !setupParsed.success) || (renewalParsed && !renewalParsed.success) || (paymentParsed && !paymentParsed.success)) throw new TerminalJobError('invalid_payload');
+    const eventId = (setupParsed?.data ?? renewalParsed?.data ?? paymentParsed!.data!).eventId;
 
     const event = await prisma.stripeEvent.findUnique({ where: { eventId } });
     if (!event) throw new TerminalJobError('event_missing');
@@ -219,7 +233,13 @@ export function createStripeEventHandler(deps: { shards: Shards; stripe: StripeG
 
     let result: Result;
     let subject: string;
-    if (setupParsed) {
+    const follow: NewWork[] = [];
+    if (renewalParsed) {
+      const p = renewalParsed.data!;
+      subject = `renewal_id=${p.renewalId} team_id=${p.teamId} type=${p.type} attempt=${p.attempt}`;
+      if (!deps.renewal) throw new TerminalJobError('renewals_not_configured');
+      result = await handleRenewalPaymentEvent({ shards: deps.shards, stripe: deps.stripe, ...deps.renewal }, p);
+    } else if (setupParsed) {
       const p = setupParsed.data!;
       subject = `card_setup_id=${p.cardSetupId} team_id=${p.teamId} type=${p.type}`;
       result = await handleCardSetupEvent({ shards: deps.shards, stripe: deps.stripe }, p, event.stripeCreatedAt);
@@ -229,7 +249,7 @@ export function createStripeEventHandler(deps: { shards: Shards; stripe: StripeG
       const team = getShard(deps.shards, p.teamId).primary;
       if (p.type === 'checkout.session.expired') result = await closeOperation(team, p, 'expired');
       else if (p.type === 'checkout.session.async_payment_failed') result = await closeOperation(team, p, 'failed');
-      else result = await applyPayment(team, p);
+      else result = await applyPayment(team, p, follow);
 
       // An activation that applied (or replayed) may also have asked Checkout to save the card. A card problem never undoes the payment (ADR 0030).
       if ((result.outcome === 'applied' || result.outcome === 'duplicate') && (p.type === 'checkout.session.completed' || p.type === 'checkout.session.async_payment_succeeded')) {
@@ -237,6 +257,12 @@ export function createStripeEventHandler(deps: { shards: Shards; stripe: StripeG
         result = { ...result, detail: `${result.detail} ${card.detail}` };
         if (card.detail.startsWith('card_not_saved')) console.error(`${logBase} event_id=${eventId} ${subject} CARD_NOT_SAVED ${card.detail}`);
       }
+    }
+
+    // The renewal an activation scheduled is enqueued once the activation has committed (it never throws; a Valkey failure leaves it for the sweep).
+    if (follow.length > 0 && deps.renewal?.enqueue) {
+      const teamPrisma = getShard(deps.shards, (paymentParsed?.data ?? setupParsed?.data)!.teamId).primary;
+      for (const work of follow) await deps.renewal.enqueue(teamPrisma, work, shardFor((paymentParsed?.data ?? setupParsed?.data)!.teamId));
     }
 
     // Only now, after the team-shard transaction committed, is the inbox row marked processed (money.md). A crash before this line re-runs the job,

@@ -9,6 +9,7 @@ import type { Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
+import { createRequireWritable } from '../teams/writeGuard.js';
 import { loadSwapsConfig, type SwapsConfig } from './config.js';
 import { createSwapSchemas, idempotencyKey } from './schemas.js';
 import { cancelSwap, createSwap, decideSwap, getSwap, listSwaps } from './service.js';
@@ -48,6 +49,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
   const schemas = createSwapSchemas();
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
+  const requireWritable = createRequireWritable({ shards });
   const requestLimit = rateLimit(limiter, logger, (req) => [{ name: 'swap_request_user', subject: req.auth!.userId, ...config.rateLimits.swapRequestUser }]);
   const caller = (req: Parameters<RequestHandler>[0]) => ({ userId: req.auth!.userId, role: req.teamContext!.role });
 
@@ -74,6 +76,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
     requireAuth,
     requestLimit,
     requireTeamRole('swaps.request'),
+    requireWritable,
     async (req, res) => {
       const { teamId } = req.validated!.params as { teamId: string };
       const body = req.validated!.body as { offeredShiftId: string; requestedShiftId: string };
@@ -92,14 +95,14 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
   );
 
   // POST /teams/:teamId/swaps/:swapId/cancel
-  router.post('/:swapId/cancel', validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.request'), async (req, res) => {
+  router.post('/:swapId/cancel', validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.request'), requireWritable, async (req, res) => {
     const { teamId, swapId } = req.validated!.params as { teamId: string; swapId: string };
     res.json({ swap: await cancelSwap(shards, { teamId, swapId, caller: caller(req) }) });
   });
 
   // POST /teams/:teamId/swaps/:swapId/approve and /reject
   for (const decision of ['approve', 'reject'] as const) {
-    router.post(`/:swapId/${decision}`, validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.approve'), async (req, res) => {
+    router.post(`/:swapId/${decision}`, validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.approve'), requireWritable, async (req, res) => {
       const { teamId, swapId } = req.validated!.params as { teamId: string; swapId: string };
       res.json({ swap: await decideSwap(shards, { teamId, swapId, caller: caller(req), decision, maxWaitMs: config.transactionMaxWaitMs }) });
     });

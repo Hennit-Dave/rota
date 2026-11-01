@@ -36,6 +36,7 @@ export type ErrorCode =
   | 'selection_required'
   | 'selection_invalid'
   | 'reduction_already_scheduled'
+  | 'team_read_only'
   | 'email_in_use'
   | 'not_found'
   | 'rate_limited'
@@ -71,6 +72,7 @@ const STATUS: Record<ErrorCode, number> = {
   selection_required: 422,
   selection_invalid: 422,
   reduction_already_scheduled: 409,
+  team_read_only: 403,
   email_in_use: 409,
   not_found: 404,
   rate_limited: 429,
@@ -108,6 +110,7 @@ const MESSAGE: Record<ErrorCode, string> = {
   selection_required: 'Choose which members become inactive.',
   selection_invalid: 'The members chosen cannot be made inactive.',
   reduction_already_scheduled: 'A reduction is already scheduled for this team.',
+  team_read_only: 'This team is read-only because its payment is overdue. The Owner can fix this under Billing.',
   email_in_use: 'An account with this email already exists.',
   not_found: 'Not found.',
   rate_limited: 'Too many requests. Try again later.',

@@ -437,6 +437,7 @@ model BillingPeriod {
   paymentOperations PaymentOperation[]
   ledgerEntries     LedgerEntry[]
   scheduledChanges  ScheduledChange[]
+  renewals          Renewal[]
 
   @@unique([teamId, startsOn], map: "billing_periods_team_id_starts_on_key")
   @@map("billing_periods")
@@ -679,4 +680,48 @@ model TeamPaymentMethod {
 
   @@index([teamId, createdAt(sort: Desc)], map: "team_payment_methods_team_id_created_at_idx")
   @@map("team_payment_methods")
+}
+
+// ---- Renewals (ADR 0031; money.md "Renewals and failed renewals"). Same migration on both shards; the table lives on the team's shard. ----
+// One row per team per period: the durable record of the renewal and of its charge attempt. "Past due" and "read-only" are derived from it.
+// Also in the SQL, which Prisma cannot express: CHECKs on every status ("charging" is frozen, "past_due" has its cause and grace end, "paid" is complete).
+
+enum RenewalStatus {
+  scheduled
+  retry_requested
+  charging
+  past_due
+  paid
+  needs_review
+
+  @@map("renewal_status")
+}
+
+model Renewal {
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                String        @map("team_id") @db.Uuid
+  periodId              String        @map("period_id") @db.Uuid
+  status                RenewalStatus @default(scheduled)
+  dueAt                 DateTime      @map("due_at") @db.Timestamptz(3)
+  baseVersion           Int?          @map("base_version")
+  resultPlan            BillingPlan?  @map("result_plan")
+  resultSeats           Int?          @map("result_seats")
+  scheduledChangeId     String?       @map("scheduled_change_id") @db.Uuid
+  amountCents           Int?          @map("amount_cents")
+  attemptCount          Int           @default(0) @map("attempt_count")
+  attemptStartedAt      DateTime?     @map("attempt_started_at") @db.Timestamptz(3)
+  stripePaymentIntentId String?       @unique @map("stripe_payment_intent_id")
+  failureCode           String?       @map("failure_code")
+  failedAt              DateTime?     @map("failed_at") @db.Timestamptz(3)
+  graceEndsAt           DateTime?     @map("grace_ends_at") @db.Timestamptz(3)
+  paidAt                DateTime?     @map("paid_at") @db.Timestamptz(3)
+  nextPeriodId          String?       @map("next_period_id") @db.Uuid
+  reviewReason          String?       @map("review_reason")
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  period BillingPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+
+  @@unique([teamId, periodId], map: "renewals_team_id_period_id_key")
+  @@map("renewals")
 }

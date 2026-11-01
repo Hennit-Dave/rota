@@ -73,6 +73,7 @@ test('GET /teams/:teamId is read field by field: the team, the caller\'s role, a
     canCreateInviteLink: true,
     canEditShifts: true,
     canManageBilling: true,
+    billingNotice: null,
   });
   assert.equal(parseTeamDetail({ ...detailBody, role: 'staff', canManageBilling: false }).canManageBilling, false);
   assert.equal(parseTeamDetail({ ...detailBody, role: 'staff', canCreateInviteLink: false }).canCreateInviteLink, false);

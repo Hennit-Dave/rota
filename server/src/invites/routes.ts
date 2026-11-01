@@ -9,6 +9,7 @@ import { recordRouteBase, type Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
 import { clientIp, rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
+import { createRequireWritable } from '../teams/writeGuard.js';
 import { createInviteSchemas } from './schemas.js';
 import {
   acceptInvitation,
@@ -55,6 +56,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
   const schemas = createInviteSchemas(config);
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
+  const requireWritable = createRequireWritable({ shards });
   const now = invites.now ?? (() => new Date());
 
   const router = Router({ mergeParams: true });
@@ -85,6 +87,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
     requireAuth,
     userLinkLimit,
     requireTeamRole('invite.staff'), // Owner and Manager, from the permission table
+    requireWritable,
     teamLinkLimit,
     async (req, res) => {
       const { teamId } = req.validated!.params as { teamId: string };
@@ -102,6 +105,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
     requireAuth,
     userSendLimit,
     requireTeamRole((req) => ((req.validated!.body as { role: InvitableRole }).role === 'manager' ? 'invite.manager' : 'invite.staff')),
+    requireWritable,
     teamSendLimit,
     globalSendCap,
     async (req, res) => {
@@ -133,6 +137,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
     requireAuth,
     userSendLimit,
     requireTeamRole('invite.staff'), // the gate: Owner and Manager. The invitation's own role is checked in the service.
+    requireWritable,
     teamSendLimit,
     globalSendCap,
     async (req, res) => {
@@ -155,6 +160,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
     validateRequest({ params: schemas.invitationParams }),
     requireAuth,
     requireTeamRole('invite.staff'),
+    requireWritable,
     async (req, res) => {
       const { teamId, invitationId } = req.validated!.params as { teamId: string; invitationId: string };
       await revokeInvitation(shards, { teamId, invitationId, actor: { role: req.teamContext!.role } });

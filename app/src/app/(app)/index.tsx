@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { ApiError, OfflineError } from '../../api/errors';
 import { bannerCopy } from '../../auth/copy';
 import { ActivateBanner } from '../../billing/ActivateBanner';
+import { TeamBillingBanner } from '../../billing/TeamBillingBanner';
 import { ShiftCard } from '../../shifts/ShiftCard';
 import { scheduleCopy } from '../../shifts/shiftCopy';
 import { addDays, dayKeyOf, formatLongDate, greetingFor, shiftsOnDay, weekWindow } from '../../shifts/shiftTime';
@@ -143,6 +144,7 @@ function Schedule() {
     <Screen gap={space[12]}>
       <PageHeader eyebrowGap={16} teamName={teamName} title={title} subtitle={header} />
       {/* The Owner's reminder to activate (ADR 0026); shown only when the server says this person manages billing and the team has no subscription. */}
+      <TeamBillingBanner notice={detail.data?.billingNotice ?? null} canManageBilling={detail.data?.canManageBilling === true} />
       <ActivateBanner userId={userId} teamId={teamId} canManageBilling={detail.data?.canManageBilling === true} />
       {body}
       {shifts.data && canEdit ? <Button label={scheduleCopy.createShift} onPress={() => router.push('/shift/new')} testID="schedule-create" /> : null}

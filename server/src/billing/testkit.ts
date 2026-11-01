@@ -6,13 +6,20 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { ledgerRowsForActivation } from './ledger.js';
 import { CURRENCY, monthlyCents, type PlanId } from './plans.js';
 import { anchorDayOf, periodNumber, utcDateOf } from './periods.js';
+import { scheduleRenewal } from './renewal.js';
 
 export async function seedActiveSubscription(
   db: PrismaClient,
   teamId: string,
   entitlements: { plan: PlanId; seats: number },
-  options: { activationDate?: string; requestedByUserId?: string; period?: { startsOn: string; endsOn: string; periodDays: number } } = {},
-): Promise<{ operationId: string; periodId: string; paymentIntentId: string }> {
+  options: {
+    activationDate?: string;
+    requestedByUserId?: string;
+    period?: { startsOn: string; endsOn: string; periodDays: number };
+    /** Also schedule the renewal for this period (what a real activation does, ADR 0031). Off by default: most tests do not want a work row. */
+    renewal?: boolean;
+  } = {},
+): Promise<{ operationId: string; periodId: string; paymentIntentId: string; renewalId: string | null; renewalWork: { id: string; kind: string; generation: number; runAt: Date } | null }> {
   const operationId = randomUUID();
   const paymentIntentId = `pi_test_${randomUUID().replaceAll('-', '')}`;
   const activationDate = options.activationDate ?? utcDateOf(new Date());
@@ -40,6 +47,12 @@ export async function seedActiveSubscription(
     await tx.$executeRaw`
       INSERT INTO subscriptions (team_id, plan, seats, billing_anchor_day, paid_basis_cents, version, current_period_id, activated_at)
       VALUES (${teamId}::uuid, ${entitlements.plan}::billing_plan, ${entitlements.seats}, ${anchorDayOf(options.period?.startsOn ?? activationDate)}, ${monthly}, 1, ${periodId}::uuid, NOW())`;
-    return { operationId, periodId, paymentIntentId };
+    let renewalId: string | null = null;
+    let renewalWork = null as Awaited<ReturnType<typeof scheduleRenewal>>;
+    if (options.renewal) {
+      renewalWork = await scheduleRenewal(tx, { teamId, periodId, endsOn: period.endsOn });
+      renewalId = (await tx.$queryRaw<Array<{ id: string }>>`SELECT id::text AS id FROM renewals WHERE team_id = ${teamId}::uuid AND period_id = ${periodId}::uuid`)[0]?.id ?? null;
+    }
+    return { operationId, periodId, paymentIntentId, renewalId, renewalWork };
   });
 }

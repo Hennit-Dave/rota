@@ -1,5 +1,6 @@
-// What we accept from Stripe, and what the processing job is handed. Only the events a Checkout payment needs (ADR 0027); `payment_intent.*` is
-// deliberately not subscribed, so one payment does not arrive as two overlapping event families.
+// What we accept from Stripe, and what the processing job is handed. A Checkout payment needs only the Checkout events (ADR 0027), so one activation does not arrive
+// as two overlapping event families. The `payment_intent.*` events are accepted ONLY for a renewal charge (ADR 0031), which has no Checkout Session; the ones
+// Checkout's own PaymentIntents also produce carry no renewal id and are acknowledged and ignored.
 import { z } from 'zod';
 import { CANONICAL_UUID } from '../db/shard.js';
 
@@ -92,4 +93,51 @@ export function ourMetadata(meta: Record<string, string> | null | undefined): { 
   if (typeof teamId !== 'string' || typeof operationId !== 'string') return null;
   if (!CANONICAL_UUID.test(teamId) || !CANONICAL_UUID.test(operationId)) return null;
   return { teamId, operationId };
+}
+
+// ---- Renewals (ADR 0031): the charge of a saved card has no Checkout Session, so its outcome arrives as a PaymentIntent event. ----
+
+export const PAYMENT_INTENT_EVENT_TYPES = ['payment_intent.succeeded', 'payment_intent.payment_failed'] as const;
+export type PaymentIntentEventType = (typeof PAYMENT_INTENT_EVENT_TYPES)[number];
+
+/** A PaymentIntent event, after its signature was verified (rule 7). Unknown fields are dropped. */
+export const paymentIntentEvent = eventEnvelope.extend({
+  type: z.enum(PAYMENT_INTENT_EVENT_TYPES),
+  data: z.object({
+    object: z.object({
+      id: z.string().min(1).max(255),
+      status: z.string().max(64).nullable().optional(),
+      amount: z.number().int().nullable().optional(),
+      currency: z.string().max(16).nullable().optional(),
+      metadata,
+      last_payment_error: z.object({ code: z.string().max(100).nullable().optional() }).nullable().optional(),
+    }),
+  }),
+});
+
+/** The work row's payload for a renewal payment event: what the job must match against the renewal we froze. */
+export const renewalPaymentJobPayload = z.object({
+  purpose: z.literal('renewal_payment'),
+  eventId: z.string().min(1).max(255),
+  type: z.enum(PAYMENT_INTENT_EVENT_TYPES),
+  paymentIntentId: z.string().min(1).max(255),
+  status: z.string().max(64).nullable(),
+  amount: z.number().int().nullable(),
+  currency: z.string().max(16).nullable(),
+  teamId: z.string().regex(CANONICAL_UUID),
+  renewalId: z.string().regex(CANONICAL_UUID),
+  attempt: z.number().int().min(1).max(10_000),
+  /** Stripe's `last_payment_error.code` for a failed payment. Kept as text; the job narrows it before storing it. */
+  failureCode: z.string().max(100).nullable(),
+});
+export type RenewalPaymentJobPayload = z.infer<typeof renewalPaymentJobPayload>;
+
+/** The team, renewal and attempt ids Stripe echoes back from our metadata on a renewal's PaymentIntent, or null when it is not one of ours (or malformed). */
+export function ourRenewalMetadata(meta: Record<string, string> | null | undefined): { teamId: string; renewalId: string; attempt: number } | null {
+  const teamId = meta?.team_id;
+  const renewalId = meta?.renewal_id;
+  const attemptText = meta?.attempt;
+  if (typeof teamId !== 'string' || typeof renewalId !== 'string' || typeof attemptText !== 'string') return null;
+  if (!CANONICAL_UUID.test(teamId) || !CANONICAL_UUID.test(renewalId) || !/^[1-9][0-9]{0,4}$/.test(attemptText)) return null;
+  return { teamId, renewalId, attempt: Number(attemptText) };
 }
