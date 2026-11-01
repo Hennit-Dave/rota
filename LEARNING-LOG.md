@@ -221,3 +221,7 @@ I learned that logs help reveal what the system is actually doing. They exposed 
 ## 2026-10-30 — Plan changes and reductions (PR #58)
 
 I learned that a reduction is saved as a scheduled change because it should not remove something the customer has already paid for. The current plan stays active until the period ends, and the smaller plan takes effect at renewal. This also lets the customer cancel the reduction beforehand without needing a refund or payment reversal.
+
+## 2026-11-01 — Saved card and consent (PR #59)
+
+I learned that saving a card for future payments needs the customer's permission, and that permission must be recorded so we can show what they agreed to. A successful payment alone does not mean they agreed to let us save their card or charge it again later.
