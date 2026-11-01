@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBillingApi } from '../services';
 import { useEffect } from 'react';
-import { billingKey, historyKey, isSettled, operationKey, type PlanId } from './billingResponses';
+import { billingKey, historyKey, isCardSetupSettled, isSettled, operationKey, type PlanId } from './billingResponses';
+import { cardSetupQueryOptions } from './cardSetupQuery';
 import { operationQueryOptions, refreshAfterSettled } from './operationQuery';
 
 /** The Owner's billing overview. Only asked when the server said this person may manage billing. Never persisted: a subscription is not cached (money.md). */
@@ -115,6 +116,55 @@ export function useCancelReduction(userId: string | undefined, teamId: string | 
     mutationFn: () => getBillingApi().cancelReduction(teamId as string),
     onSettled: () => {
       if (userId !== undefined && teamId !== null) refreshAfterSettled(client, userId, teamId);
+    },
+  });
+}
+
+// ---- Saving a card (ADR 0030) ----
+
+/** Starts saving a card: one request the person watches. Never queued offline, never retried by the library (a retry sends the same idempotency key by hand). */
+export function useStartCardSetup(teamId: string | null) {
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: (v: { idempotencyKey: string }) => getBillingApi().startCardSetup(teamId as string, v.idempotencyKey),
+  });
+}
+
+/** One card-saving attempt, asked again every few seconds until the SERVER says it is settled. The app never decides that a card was saved. */
+export function useCardSetup(userId: string | undefined, teamId: string | null, setupId: string | null) {
+  const client = useQueryClient();
+  const query = useQuery(cardSetupQueryOptions({ api: getBillingApi, userId, teamId, setupId }));
+  const settled = query.data !== undefined && isCardSetupSettled(query.data.status);
+  useEffect(() => {
+    // Once, when the server has decided: ask for the overview again (it carries the saved card). `exact`, so this very query is left alone.
+    if (settled && userId !== undefined && teamId !== null) void client.invalidateQueries({ queryKey: billingKey(userId, teamId), exact: true });
+  }, [settled, client, userId, teamId]);
+  return query;
+}
+
+/** The buyer backs out: the server ends an open attempt so they can start again. */
+export function useCancelCardSetup(userId: string | undefined, teamId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: (setupId: string) => getBillingApi().cancelCardSetup(teamId as string, setupId),
+    onSettled: () => {
+      if (userId !== undefined && teamId !== null) void client.invalidateQueries({ queryKey: billingKey(userId, teamId), exact: true });
+    },
+  });
+}
+
+/** Withdraws the authorisation: the server marks the card removed and the overview is asked again. */
+export function useRemoveCard(userId: string | undefined, teamId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: () => getBillingApi().removeCard(teamId as string),
+    onSettled: () => {
+      if (userId !== undefined && teamId !== null) void client.invalidateQueries({ queryKey: billingKey(userId, teamId), exact: true });
     },
   });
 }

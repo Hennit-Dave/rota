@@ -11,7 +11,7 @@ completed in later slices; sections below are added by the slice that builds the
 | 4 | A stolen refresh token, and reuse | Written below (PR A) |
 | 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
 | 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
-| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged (a bad, missing or tampered signature is 400 and records nothing); live-mode events refused; the inbox is unique by Stripe's event ID, so a replay writes nothing; a valid signature is never treated as proof of payment: the job matches amount, currency, team, session and status against the frozen operation (ADR 0027). Tests: `server/src/billing/activation.integration.test.ts` |
+| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged (a bad, missing or tampered signature is 400 and records nothing); live-mode events refused; the inbox is unique by Stripe's event ID, so a replay writes nothing; a valid signature is never treated as proof of payment: the job matches amount, currency, team, session and status against the frozen operation (ADR 0027). Tests: `server/src/billing/activation.integration.test.ts`. **A saved card (ADR 0030)** is recorded by the same path: a setup event is matched to the setup we froze (team, session, still open, setup mode), the SetupIntent is READ from Stripe by the job and must have succeeded, for off-session use, as a `card`, with the session's Customer and our metadata, in test mode; anything else is recorded for review and saves nothing. Tests: `server/src/billing/cardSetup.integration.test.ts` |
 | 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens written below (Invites, slice 2a); reset and magic-link tokens in "Threat 8b" (slice 2b) |
 
 ## Permissions: the one table (threat 1)
@@ -268,6 +268,7 @@ variable would let a stranger issue refunds (brief, Requirement 4).
 - **One `EXPO_PUBLIC_` variable exists, and it is not a secret** (table below). A unit test (`app/src/publicEnv.test.ts`) fails if any
   other `EXPO_PUBLIC_` name appears anywhere in the app, or if an allowed name looks secret-shaped, or if one is missing from this
   file or `.env.example`. A new variable therefore cannot be added without writing its justification here first.
+- **What we store about a card (ADR 0030):** Stripe's Customer and PaymentMethod ids, the brand, the last four digits, the expiry, and the consent wording with its date. Never a card number or CVC (Stripe holds the card). The app sees only finished strings ("Visa ending 4242"), never a Stripe id. The worker holds the Stripe **test** key for reads and never the webhook signing secret; it refuses to start with a non-test key.
 - The app holds no key, no signing secret and no provider credential. The server holds every secret as an environment variable
   (`.env.example` lists names only). The app has no payment logic at all (`AGENTS.md` rule 2).
 - Tokens are stored only in `expo-secure-store`, never AsyncStorage, never the query cache, never a log. Android's cloud and

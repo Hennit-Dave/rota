@@ -1,5 +1,7 @@
 import type { createApiClient } from '../api/client';
 import {
+  parseCardSetupResponse,
+  parseCardSetupStart,
   parseChangeAnswer,
   parseChangeQuote,
   parseHistory,
@@ -9,6 +11,7 @@ import {
   parseQuote,
   parseStartResponse,
   type ActivationQuote,
+  type CardSetup,
   type BillingOverview,
   type ChangeAnswer,
   type ChangeQuote,
@@ -70,6 +73,24 @@ export function createBillingApi(client: Client) {
     /** DELETE …/reductions/current: take back the scheduled reduction (204, no body). The server says whether it can still be taken back. */
     async cancelReduction(teamId: string): Promise<void> {
       await client.request(`${base(teamId)}/reductions/current`, { method: 'DELETE' });
+    },
+    /**
+     * POST: ask the server to start saving a card (nothing is charged). No body: the server words the consent and names the amount and day from the team's own
+     * subscription. A repeat with the same `idempotencyKey` returns the stored answer instead of starting a second attempt.
+     */
+    async startCardSetup(teamId: string, idempotencyKey: string): Promise<{ setup: CardSetup; checkoutUrl: string }> {
+      return parseCardSetupStart(await client.post<unknown>(`${base(teamId)}/card/setup`, undefined, { headers: { 'Idempotency-Key': idempotencyKey } }));
+    },
+    /** The server says whether the card is waiting, being confirmed, saved, failed, expired or under review. The app never decides that. */
+    async cardSetup(teamId: string, setupId: string, signal?: AbortSignal): Promise<CardSetup> {
+      return parseCardSetupResponse(await client.get<unknown>(`${base(teamId)}/card/setups/${encodeURIComponent(setupId)}`, { signal }));
+    },
+    async cancelCardSetup(teamId: string, setupId: string): Promise<CardSetup> {
+      return parseCardSetupResponse(await client.post<unknown>(`${base(teamId)}/card/setups/${encodeURIComponent(setupId)}/cancel`));
+    },
+    /** DELETE …/card: withdraw the authorisation (204, no body). The saved card is never charged again. */
+    async removeCard(teamId: string): Promise<void> {
+      await client.request(`${base(teamId)}/card`, { method: 'DELETE' });
     },
     async cancel(teamId: string, operationId: string): Promise<Operation> {
       return parseOperationResponse(await client.post<unknown>(`${base(teamId)}/operations/${encodeURIComponent(operationId)}/cancel`));

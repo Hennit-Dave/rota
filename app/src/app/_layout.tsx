@@ -78,6 +78,8 @@ function RootContent() {
           {/* Stripe sends the buyer back here (App Links). Opening one consumes nothing: it opens the payment status screen, which asks the server. */}
           <Stack.Screen name="checkout/return" />
           <Stack.Screen name="checkout/cancel" />
+          <Stack.Screen name="checkout/card-return" />
+          <Stack.Screen name="checkout/card-cancel" />
           {/* Development-only check screens, reachable from either side. */}
           <Stack.Screen name="dev-api" />
           <Stack.Screen name="dev-check" />

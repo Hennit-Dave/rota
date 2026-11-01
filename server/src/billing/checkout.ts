@@ -8,6 +8,7 @@ import { identityDb } from '../db/identity.js';
 import { ApiError } from '../http/errors.js';
 import { formatUsd, PLAN_NAMES } from './display.js';
 import { StripeRejectedError, StripeUncertainError, type StripeGateway } from './gateway.js';
+import { customerIdOf } from './savedCard.js';
 import { entitlementsProblem, PLANS, type Entitlements, type PlanId } from './plans.js';
 
 /**
@@ -55,6 +56,8 @@ export interface OperationRow {
   expires_at: Date;
   activation_date: string | null;
   stripe_checkout_session_id: string | null;
+  /** The consent wording an activation's Checkout page shows (ADR 0030); null for a paid change, which saves no card. */
+  consent_wording: string | null;
 }
 
 export function statusView(row: Pick<OperationRow, 'status' | 'expires_at'>, confirming: boolean, now: Date): OperationStatusView {
@@ -90,7 +93,7 @@ export async function loadOperation(shards: Shards, teamId: string, operationId:
   // The team id is part of the lookup: another team's operation looks exactly like one that does not exist (404).
   const rows = await getShard(shards, teamId).primary.$queryRaw<OperationRow[]>`
     SELECT id, team_id, kind::text AS kind, status::text AS status, apply_plan::text AS apply_plan, apply_seats, quote_cents, expires_at,
-      activation_date::text AS activation_date, stripe_checkout_session_id
+      activation_date::text AS activation_date, stripe_checkout_session_id, consent_wording
     FROM payment_operations WHERE id = ${operationId}::uuid AND team_id = ${teamId}::uuid`;
   return rows[0] ?? null;
 }
@@ -184,6 +187,10 @@ export async function completeCheckout(deps: BillingDeps, input: { teamId: strin
       successUrl: `${deps.linkBaseUrl}/checkout/return?operation=${operation.id}`,
       cancelUrl: `${deps.linkBaseUrl}/checkout/cancel?operation=${operation.id}`,
       expiresAt: operation.expires_at,
+      // An activation also saves the card for renewals, with the consent wording frozen on the operation (ADR 0030). A paid change saves nothing.
+      ...(operation.kind === 'activation' && operation.consent_wording
+        ? { saveCard: { consentText: operation.consent_wording, customerId: await customerIdOf(prisma, teamId) } }
+        : {}),
     });
   } catch (err) {
     if (err instanceof StripeRejectedError) {

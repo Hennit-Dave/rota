@@ -333,6 +333,9 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
         // A scheduled reduction and its boundary work row (the work row has no foreign key to the team).
         await db.$executeRaw`DELETE FROM work_rows WHERE kind = 'reduction_boundary' AND payload->>'teamId' = ${teamId}`;
         await db.$executeRaw`DELETE FROM scheduled_changes WHERE team_id = ${teamId}::uuid`;
+        // Saved cards and card setups are state, not the ledger: they can be removed (ADR 0030).
+        await db.$executeRaw`DELETE FROM team_payment_methods WHERE team_id = ${teamId}::uuid`;
+        await db.$executeRaw`DELETE FROM card_setups WHERE team_id = ${teamId}::uuid`;
         await db.team.deleteMany({ where: { id: teamId } });
         // The webhook inbox (shard A) and the work rows it made. Ledger, period and operation rows are NOT removed: the ledger is append-only (ADR 0026).
         await raw.A.primary.$executeRaw`DELETE FROM stripe_events WHERE team_id = ${teamId}::uuid`;

@@ -36,6 +36,63 @@ export const hubCopy = {
   history: 'Billing history',
   paymentOpen: { title: 'A payment is in progress', body: 'Finish it, or wait for it to be confirmed, before changing your plan.', action: 'View payment' },
   seatsUsed: (members: number, limit: number) => `${members} of ${limit} seats in use`,
+  paymentMethod: 'Payment method',
+  noCard: 'No card saved',
+  manageCard: 'Manage payment method',
+} as const;
+
+/** The saved card (ADR 0030). The consent wording and every date arrive from the server as finished strings; nothing here names an amount. */
+export const cardCopy = {
+  title: 'Payment method',
+  subtitle: 'The card saved for your plan’s renewals.',
+  saved: 'Saved card',
+  none: { title: 'No card saved', body: 'Save a card to let Rota renew your plan without you.' },
+  agreedOn: (date: string) => `You agreed on ${date} (UTC).`,
+  consentTitle: 'What you agree to',
+  add: 'Add a payment method',
+  replace: 'Replace card',
+  continue: 'Continue to Stripe',
+  opening: 'Opening Stripe…',
+  remove: 'Remove this card',
+  removeConfirm: { title: 'Remove this card?', body: 'This withdraws your authorisation. Rota will not charge this card again.', yes: 'Yes, remove it', no: 'Keep the card' },
+  removing: 'Removing…',
+  removeFailed: 'Couldn’t remove the card. Try again.',
+  offline: 'You’re offline. Saving a card needs a connection.',
+  needsPlan: 'Activate a subscription first. You can save your card while you pay.',
+  back: 'Back to billing',
+  loading: 'Loading…',
+  unavailable: { title: 'The payment service didn’t answer', body: 'Nothing was saved. Try again.' },
+  failedToStart: { title: 'Couldn’t start saving the card', body: 'Please try again.' },
+  forbidden: 'Only the team’s Owner manages billing.',
+} as const;
+
+/** The outcome of saving a card. EVERY state comes from the server; this screen never decides that a card was saved. */
+export const cardStatusCopy = {
+  title: 'Saving your card',
+  waiting: {
+    title: 'Waiting for your card',
+    subtitle: 'Finish saving it in the browser.',
+    banner: { title: 'Nothing is charged', body: 'Saving a card never charges it. You can come back here at any time.' },
+    cancel: 'Cancel',
+  },
+  confirming: {
+    title: 'Confirming your card',
+    subtitle: 'This usually takes a few seconds.',
+    banner: { title: 'Waiting for the server to confirm', body: 'Your card is saved only after the server has confirmed it. You can safely go back.' },
+    back: 'Back to billing',
+  },
+  saved: { title: 'Card saved', subtitle: 'The server confirmed your card.', done: 'Back to billing' },
+  failed: { title: 'Your card wasn’t saved', subtitle: 'Nothing was changed.', banner: { title: 'Saving the card failed', body: 'You can try again with the same or another card.' }, retry: 'Try again' },
+  expired: { title: 'Cancelled', subtitle: 'Nothing was saved.', banner: { title: 'This was not completed', body: 'You can try again whenever you are ready.' }, retry: 'Try again' },
+  review: {
+    title: 'We’re checking your card',
+    subtitle: 'It needs a manual check.',
+    banner: { title: 'Your card is being reviewed', body: 'It has not been saved yet. Don’t add it again.' },
+    back: 'Back to billing',
+  },
+  loading: 'Checking your card…',
+  loadFailed: { title: 'Couldn’t check your card', body: 'Check your connection and try again.', retry: 'Check again' },
+  gone: { title: 'This isn’t available', body: 'It may belong to another team.' },
 } as const;
 
 /** Reductions at the end of the period (ADR 0029). The dates, counts, names and sentences come from the server; these are only the labels around them. */

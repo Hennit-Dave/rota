@@ -12,7 +12,9 @@ import { ledgerRowsForActivation, ledgerRowsForChange } from './ledger.js';
 import { CURRENCY, monthlyCents, type PlanId } from './plans.js';
 import { quoteChange } from './proration.js';
 import { anchorDayOf, periodNumber } from './periods.js';
-import { stripeEventJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
+import { cardSetupJobPayload, stripeEventJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
+import { handleCardSetupEvent, saveActivationCard } from './cardSaveJob.js';
+import type { StripeGateway } from './gateway.js';
 import { memberCountOf } from './seats.js';
 
 export type EventOutcome = 'applied' | 'duplicate' | 'review' | 'ignored';
@@ -192,34 +194,56 @@ async function applyPayment(team: PrismaClient, p: StripeEventJobPayload): Promi
   );
 }
 
-export function createStripeEventHandler(deps: { shards: Shards }): JobHandler {
+/**
+ * `stripe` is used for READS only (the card a payment or a setup saved; ADR 0030). The worker holds the Stripe test key for that (ADR 0030 supersedes "the worker
+ * holds no Stripe key" from ADR 0027); it never creates anything on Stripe from here.
+ */
+export function createStripeEventHandler(deps: { shards: Shards; stripe: StripeGateway }): JobHandler {
   return async (ctx) => {
     const { row, prisma } = ctx;
     const logBase = `[stripe_event] row_id=${row.id} generation=${row.generation} origin_request_id=${row.originRequestId ?? '-'}`;
 
-    const parsed = stripeEventJobPayload.safeParse(row.payload);
-    if (!parsed.success) throw new TerminalJobError('invalid_payload');
-    const p = parsed.data;
+    const isSetup = (row.payload as { purpose?: unknown } | null)?.purpose === 'card_setup';
+    const setupParsed = isSetup ? cardSetupJobPayload.safeParse(row.payload) : null;
+    const paymentParsed = isSetup ? null : stripeEventJobPayload.safeParse(row.payload);
+    if ((setupParsed && !setupParsed.success) || (paymentParsed && !paymentParsed.success)) throw new TerminalJobError('invalid_payload');
+    const eventId = (setupParsed?.data ?? paymentParsed!.data!).eventId;
 
-    const event = await prisma.stripeEvent.findUnique({ where: { eventId: p.eventId } });
+    const event = await prisma.stripeEvent.findUnique({ where: { eventId } });
     if (!event) throw new TerminalJobError('event_missing');
     if (event.processedAt) {
-      console.log(`${logBase} event_id=${p.eventId} outcome=already_processed`);
+      console.log(`${logBase} event_id=${eventId} outcome=already_processed`);
       return;
     }
     if (event.livemode) throw new TerminalJobError('live_mode_event');
 
-    const team = getShard(deps.shards, p.teamId).primary;
     let result: Result;
-    if (p.type === 'checkout.session.expired') result = await closeOperation(team, p, 'expired');
-    else if (p.type === 'checkout.session.async_payment_failed') result = await closeOperation(team, p, 'failed');
-    else result = await applyPayment(team, p);
+    let subject: string;
+    if (setupParsed) {
+      const p = setupParsed.data!;
+      subject = `card_setup_id=${p.cardSetupId} team_id=${p.teamId} type=${p.type}`;
+      result = await handleCardSetupEvent({ shards: deps.shards, stripe: deps.stripe }, p, event.stripeCreatedAt);
+    } else {
+      const p = paymentParsed!.data!;
+      subject = `operation_id=${p.operationId} team_id=${p.teamId} type=${p.type}`;
+      const team = getShard(deps.shards, p.teamId).primary;
+      if (p.type === 'checkout.session.expired') result = await closeOperation(team, p, 'expired');
+      else if (p.type === 'checkout.session.async_payment_failed') result = await closeOperation(team, p, 'failed');
+      else result = await applyPayment(team, p);
+
+      // An activation that applied (or replayed) may also have asked Checkout to save the card. A card problem never undoes the payment (ADR 0030).
+      if ((result.outcome === 'applied' || result.outcome === 'duplicate') && (p.type === 'checkout.session.completed' || p.type === 'checkout.session.async_payment_succeeded')) {
+        const card = await saveActivationCard({ shards: deps.shards, stripe: deps.stripe }, p, event.stripeCreatedAt);
+        result = { ...result, detail: `${result.detail} ${card.detail}` };
+        if (card.detail.startsWith('card_not_saved')) console.error(`${logBase} event_id=${eventId} ${subject} CARD_NOT_SAVED ${card.detail}`);
+      }
+    }
 
     // Only now, after the team-shard transaction committed, is the inbox row marked processed (money.md). A crash before this line re-runs the job,
-    // which finds the operation complete and ends up here again.
-    await prisma.$executeRaw`UPDATE stripe_events SET processed_at = NOW(), outcome = ${result.outcome} WHERE event_id = ${p.eventId} AND processed_at IS NULL`;
+    // which finds the work done and ends up here again.
+    await prisma.$executeRaw`UPDATE stripe_events SET processed_at = NOW(), outcome = ${result.outcome} WHERE event_id = ${eventId} AND processed_at IS NULL`;
 
-    const line = `${logBase} event_id=${p.eventId} operation_id=${p.operationId} team_id=${p.teamId} type=${p.type} outcome=${result.outcome} detail=${result.detail}`;
+    const line = `${logBase} event_id=${eventId} ${subject} outcome=${result.outcome} detail=${result.detail}`;
     if (result.outcome === 'review') console.error(`${line} NEEDS_HUMAN_REVIEW`);
     else console.log(line);
   };

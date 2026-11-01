@@ -26,13 +26,15 @@ const overviewBody = (over: Record<string, unknown> = {}) => ({
   members: 2,
   seatLimit: 5,
   openOperation: null,
+  savedCard: null,
+  cardConsentWording: null,
   ...over,
 });
 const operationBody = (over: Record<string, unknown> = {}) => ({
   id: OP, kind: 'activation', status: 'awaiting_payment', plan: 'team', planName: 'Team', seats: 9, amountDisplay: '$50.00', expiresAt: '2031-06-01T12:31:00.000Z', ...over,
 });
 const quoteBody = {
-  quote: { plan: 'team', planName: 'Team', seats: 9, chargeTodayDisplay: '$50.00', periodStartsOn: '2031-06-01', periodEndsOn: '2031-07-01', note: 'Charged in full.', testModeNotice: 'Test mode.' },
+  quote: { plan: 'team', planName: 'Team', seats: 9, chargeTodayDisplay: '$50.00', periodStartsOn: '2031-06-01', periodEndsOn: '2031-07-01', note: 'Charged in full.', testModeNotice: 'Test mode.', consentWording: 'By paying, you authorise Rota to charge this card.' },
 };
 
 test('the overview is read field by field; finished strings pass through untouched and nothing is computed', () => {
