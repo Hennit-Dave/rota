@@ -73,6 +73,8 @@ test('an operation knows whether it is the first payment or a change, and the ov
     testModeNotice: 'Test mode.', activated: true, plans: [], members: 3, seatLimit: 15,
     subscription: { plan: 'team', planName: 'Team', seats: 15, monthlyDisplay: '$50.00', periodStartsOn: '2031-06-01', periodEndsOn: '2031-07-01' },
     openOperation: operation,
+    savedCard: null,
+    cardConsentWording: null,
   });
   assert.equal(overview.openOperation?.id, operation.id);
   assert.equal(parseOverview({ ...overview, subscription: overview.subscription, openOperation: null }).openOperation, null);

@@ -1,4 +1,6 @@
 import { createReductionBoundaryHandler, REDUCTION_BOUNDARY_KIND } from '../billing/reductions.js';
+import { createStripeGateway } from '../billing/gateway.js';
+import { loadStripeApiConfig } from '../billing/stripeConfig.js';
 import { createStripeEventHandler } from '../billing/stripeEventJob.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
 import {
@@ -45,13 +47,24 @@ try {
   process.exit(1);
 }
 
+// The worker READS from Stripe to learn which card a payment or a setup saved (ADR 0030): it holds the Stripe TEST key, and never the webhook signing secret.
+// Same rule as the API: anything but an sk_test_ key stops it before it takes any work.
+let stripeApiConfig: ReturnType<typeof loadStripeApiConfig>;
+try {
+  stripeApiConfig = loadStripeApiConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+const stripe = createStripeGateway(stripeApiConfig);
+
 const handlers = {
   test: async (ctx: any) => {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
-  // Stripe webhook events recorded by the API (ADR 0027). The worker holds no Stripe key: it only reads the recorded event and writes our own tables.
-  stripe_event: createStripeEventHandler({ shards }),
+  // Stripe webhook events recorded by the API (ADR 0027). The worker only READS from Stripe (the saved card, ADR 0030) and writes our own tables.
+  stripe_event: createStripeEventHandler({ shards, stripe }),
   // The check at the end of a period for a scheduled reduction (ADR 0029). It records ready, blocked or continuing and applies nothing (P6 does).
   [REDUCTION_BOUNDARY_KIND]: createReductionBoundaryHandler({ shards }),
 };

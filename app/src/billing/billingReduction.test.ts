@@ -53,7 +53,7 @@ test('a reduction quote carries the date, how many people to choose and the fall
 });
 
 test('the overview carries the scheduled reduction as the server describes it, or null', () => {
-  const base = { testModeNotice: 'n', activated: false, plans: [], subscription: null, members: 1, seatLimit: 5, openOperation: null };
+  const base = { testModeNotice: 'n', activated: false, plans: [], subscription: null, members: 1, seatLimit: 5, openOperation: null, savedCard: null, cardConsentWording: null };
   assert.equal(parseOverview(base).scheduledChange, null);
   const withChange = parseOverview({ ...base, activated: true, subscription: { plan: 'team', planName: 'Team', seats: 18, monthlyDisplay: '$59.00', periodStartsOn: '2031-06-01', periodEndsOn: '2031-07-01' }, scheduledChange: scheduled() });
   assert.equal(withChange.scheduledChange?.status, 'scheduled');

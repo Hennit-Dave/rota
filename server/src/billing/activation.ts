@@ -23,7 +23,9 @@ import {
 import { getScheduledChange, type ScheduledChangeView } from './reductions.js';
 import { formatUsd, FIRST_PERIOD_NOTE, PLAN_NAMES, planOptions, TEST_MODE_NOTICE, type PlanOption } from './display.js';
 import { monthlyCents, type Entitlements, type PlanId } from './plans.js';
-import { periodNumber, utcDateOf } from './periods.js';
+import { consentWording } from './consent.js';
+import { anchorDayOf, periodNumber, utcDateOf } from './periods.js';
+import { getSavedCard, type SavedCardView } from './savedCard.js';
 import { MIN_CHARGE_CENTS } from './proration.js';
 import { memberCountOf, seatLimitOf } from './seats.js';
 
@@ -42,6 +44,10 @@ export interface BillingOverview {
   openOperation: OperationView | null;
   /** The reduction the Owner scheduled for the end of the period, or null. */
   scheduledChange: ScheduledChangeView | null;
+  /** The card saved for renewals, as finished strings, or null (ADR 0030). */
+  savedCard: SavedCardView | null;
+  /** What the Owner agrees to by saving a card now, worded by the server; null until the team has activated. Shown before Stripe's page opens. */
+  cardConsentWording: string | null;
 }
 
 /** The team's open payment, if any (at most one exists: the partial unique index). An open one past its expiry is reported as expired, not as open. */
@@ -58,8 +64,8 @@ async function openOperationOf(deps: BillingDeps, teamId: string): Promise<Opera
 /** The Owner's billing screen: what the team has, what it could buy, every price already formatted. */
 export async function getOverview(deps: BillingDeps, teamId: string): Promise<BillingOverview> {
   const prisma = getShard(deps.shards, teamId).primary;
-  const sub = await prisma.$queryRaw<Array<{ plan: PlanId; seats: number; starts_on: string; ends_on: string }>>`
-    SELECT s.plan::text AS plan, s.seats, p.starts_on::text AS starts_on, p.ends_on::text AS ends_on
+  const sub = await prisma.$queryRaw<Array<{ plan: PlanId; seats: number; starts_on: string; ends_on: string; billing_anchor_day: number }>>`
+    SELECT s.plan::text AS plan, s.seats, s.billing_anchor_day, p.starts_on::text AS starts_on, p.ends_on::text AS ends_on
     FROM subscriptions s JOIN billing_periods p ON p.id = s.current_period_id
     WHERE s.team_id = ${teamId}::uuid`;
   const members = await memberCountOf(prisma, teamId);
@@ -83,6 +89,10 @@ export async function getOverview(deps: BillingDeps, teamId: string): Promise<Bi
     seatLimit,
     openOperation: await openOperationOf(deps, teamId),
     scheduledChange: await getScheduledChange(deps.shards, teamId),
+    savedCard: await getSavedCard(deps.shards, teamId),
+    cardConsentWording: row
+      ? consentWording({ kind: 'card_setup', amountCents: monthlyCents({ plan: row.plan, seats: row.seats }), anchorDay: row.billing_anchor_day })
+      : null,
   };
 }
 
@@ -96,6 +106,8 @@ export interface ActivationQuote {
   periodEndsOn: string;
   note: string;
   testModeNotice: string;
+  /** What the Owner agrees to by paying: the same wording Stripe's page shows beside the pay button, and the one stored with the saved card. */
+  consentWording: string;
 }
 
 /** Quotes the first period. Read-only: freezes nothing and calls nobody. */
@@ -117,6 +129,7 @@ export async function quoteActivation(deps: BillingDeps, input: { teamId: string
     periodEndsOn: period.endsOn,
     note: FIRST_PERIOD_NOTE,
     testModeNotice: TEST_MODE_NOTICE,
+    consentWording: consentWording({ kind: 'activation', amountCents: monthlyCents(target), anchorDay: anchorDayOf(utcDateOf(nowOf(deps))) }),
   };
 }
 
@@ -147,6 +160,8 @@ export async function startActivation(
   const now = nowOf(deps);
   const expiresAt = new Date(now.getTime() + OPERATION_LIFETIME_MS);
   const newOperationId = randomUUID();
+  // The wording is frozen on the operation: the Checkout page shows it, a retry sends it again unchanged, and the saved card stores it (ADR 0030).
+  const consent = consentWording({ kind: 'activation', amountCents, anchorDay: anchorDayOf(utcDateOf(now)) });
 
   let step: PriorRequest;
   try {
@@ -164,9 +179,9 @@ export async function startActivation(
         // The first period is charged in full (money.md): remaining = period_days, nothing already paid, so nothing credited.
         await tx.$executeRaw`
           INSERT INTO payment_operations (id, team_id, kind, requested_by_user_id, base_version, activation_date, apply_plan, apply_seats,
-            period_days, remaining_days, paid_basis_before_cents, gross_charge_cents, credit_cents, quote_cents, paid_basis_after_cents, expires_at)
+            period_days, remaining_days, paid_basis_before_cents, gross_charge_cents, credit_cents, quote_cents, paid_basis_after_cents, expires_at, consent_wording)
           VALUES (${newOperationId}::uuid, ${teamId}::uuid, 'activation'::payment_operation_kind, ${input.actorUserId}::uuid, 0, ${utcDateOf(now)}::date,
-            ${input.plan}::billing_plan, ${input.seats}, ${period.periodDays}, ${period.periodDays}, 0, ${amountCents}, 0, ${amountCents}, ${amountCents}, ${expiresAt})`;
+            ${input.plan}::billing_plan, ${input.seats}, ${period.periodDays}, ${period.periodDays}, 0, ${amountCents}, 0, ${amountCents}, ${amountCents}, ${expiresAt}, ${consent})`;
         await tx.$executeRaw`
           INSERT INTO payment_requests (team_id, user_id, idempotency_key, request_fingerprint, operation_id, response_status, response)
           VALUES (${teamId}::uuid, ${input.actorUserId}::uuid, ${input.idempotencyKey}, ${fingerprint}, ${newOperationId}::uuid, 0, '{}'::jsonb)`;

@@ -23,6 +23,7 @@ const ALLOWED = [
   // Payment tracing (observability.md): identifiers, never amounts or card data.
   'eventId',
   'operationId',
+  'cardSetupId',
   'teamId',
 ] as const;
 export type LogField = (typeof ALLOWED)[number];

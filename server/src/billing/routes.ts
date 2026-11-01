@@ -13,7 +13,9 @@ import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { idempotencyKey } from '../swaps/schemas.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
 import { cancelOperation, getOperation, getOverview, quoteActivation, startActivation, type BillingDeps } from './activation.js';
+import { cancelCardSetup, getCardSetup, startCardSetup } from './cardSetup.js';
 import { getChangeQuote, getHistory, startChange } from './changes.js';
+import { removeSavedCard } from './savedCard.js';
 import { cancelReduction, scheduleReduction } from './reductions.js';
 import { PLAN_IDS, type PlanId } from './plans.js';
 
@@ -37,6 +39,7 @@ const seats = z.number().int().min(1).max(MAX_SEATS_PER_REQUEST);
 const schemas = {
   teamParams: z.strictObject({ teamId: uuid }),
   operationParams: z.strictObject({ teamId: uuid, operationId: uuid }),
+  setupParams: z.strictObject({ teamId: uuid, setupId: uuid }),
   activation: z.strictObject({ plan: z.enum(PLAN_IDS), seats }),
   // The people chosen to become inactive. 100 is a request-size bound, not a product limit; the server checks the exact number needed against the members.
   reduction: z.strictObject({ plan: z.enum(PLAN_IDS), seats, selectedMemberIds: z.array(uuid).max(100), acceptFallback: z.boolean() }),
@@ -185,6 +188,40 @@ export function createBillingRouter(deps: BillingRouteDeps): Router {
   router.post('/operations/:operationId/cancel', validateRequest({ params: schemas.operationParams }), requireAuth, writeLimit, requireTeamRole('billing.manage'), async (req, res) => {
     const { teamId, operationId } = req.validated!.params as { teamId: string; operationId: string };
     res.json({ operation: await cancelOperation(billing, { teamId, operationId }) });
+  });
+
+  // POST /teams/:teamId/billing/card/setup   (Idempotency-Key header, no body): freezes the consent and returns Stripe's Checkout URL for saving a card. Nothing is charged.
+  router.post(
+    '/card/setup',
+    validateRequest({ params: schemas.teamParams }),
+    requireIdempotencyKey,
+    requireAuth,
+    writeLimit,
+    requireTeamRole('billing.manage'),
+    async (req, res) => {
+      const { teamId } = req.validated!.params as { teamId: string };
+      const answer = await startCardSetup(billing, { teamId, actorUserId: req.auth!.userId, idempotencyKey: String(res.locals.idempotencyKey) });
+      res.status(answer.status).json(answer.body);
+    },
+  );
+
+  // GET /teams/:teamId/billing/card/setups/:setupId: the server says awaiting_card, confirming, saved, failed, expired or under_review.
+  router.get('/card/setups/:setupId', validateRequest({ params: schemas.setupParams }), requireAuth, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId, setupId } = req.validated!.params as { teamId: string; setupId: string };
+    res.json({ setup: await getCardSetup(billing, { teamId, setupId }) });
+  });
+
+  // POST /teams/:teamId/billing/card/setups/:setupId/cancel: the buyer backed out of Stripe's page.
+  router.post('/card/setups/:setupId/cancel', validateRequest({ params: schemas.setupParams }), requireAuth, writeLimit, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId, setupId } = req.validated!.params as { teamId: string; setupId: string };
+    res.json({ setup: await cancelCardSetup(billing, { teamId, setupId }) });
+  });
+
+  // DELETE /teams/:teamId/billing/card: withdraws the authorisation ("until you remove this card"). The saved card is never charged again.
+  router.delete('/card', validateRequest({ params: schemas.teamParams }), requireAuth, writeLimit, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    await removeSavedCard(billing.shards, teamId);
+    res.status(204).end();
   });
 
   return router;

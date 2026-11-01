@@ -10,7 +10,7 @@ import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
 import { ApiError } from '../http/errors.js';
 import type { Logger } from '../http/logger.js';
 import type { StripeGateway } from './gateway.js';
-import { checkoutSessionEvent, eventEnvelope, HANDLED_EVENT_TYPES, ourMetadata, type StripeEventJobPayload } from './stripeEvent.js';
+import { checkoutSessionEvent, eventEnvelope, HANDLED_EVENT_TYPES, ourMetadata, ourSetupMetadata, type CardSetupJobPayload, type StripeEventJobPayload } from './stripeEvent.js';
 
 export const STRIPE_WEBHOOK_PATH = '/webhooks/stripe';
 /** A Checkout event is a few kilobytes. 256 kb is a request-size bound, not a product number. */
@@ -70,25 +70,48 @@ export function createStripeWebhook(deps: WebhookDeps): RequestHandler[] {
     const parsed = checkoutSessionEvent.safeParse(verified);
     if (!parsed.success) throw new ApiError('validation_failed', { reason: 'webhook_event_malformed' });
     const session = parsed.data.data.object;
-    const ours = ourMetadata(session.metadata);
-    if (!ours) {
+    // A setup-mode session (a card saved, nothing charged) carries card_setup_id; a payment session carries operation_id (ADR 0030).
+    const setupOurs = ourSetupMetadata(session.metadata);
+    const paymentOurs = setupOurs ? null : ourMetadata(session.metadata);
+    if (!setupOurs && !paymentOurs) {
       // A Checkout Session this app did not make (the sandbox account may be used for other things).
       logger.info('stripe_event_ignored', { requestId, eventId, outcome: 'ignored_not_ours' });
       res.status(200).json({ received: true });
       return;
     }
+    const teamId = (setupOurs ?? paymentOurs)!.teamId;
+    const operationId = paymentOurs?.operationId ?? null;
+    // A setup session never carries a payment: its events are only "completed" and "expired".
+    if (setupOurs && parsed.data.type !== 'checkout.session.completed' && parsed.data.type !== 'checkout.session.expired') {
+      logger.info('stripe_event_ignored', { requestId, eventId, outcome: 'ignored_type_for_setup' });
+      res.status(200).json({ received: true });
+      return;
+    }
 
-    const jobPayload: StripeEventJobPayload = {
-      eventId,
-      type: parsed.data.type,
-      sessionId: session.id,
-      paymentIntentId: session.payment_intent ?? null,
-      paymentStatus: session.payment_status ?? null,
-      amountTotal: session.amount_total ?? null,
-      currency: session.currency ?? null,
-      teamId: ours.teamId,
-      operationId: ours.operationId,
-    };
+    const jobPayload: StripeEventJobPayload | CardSetupJobPayload = setupOurs
+      ? {
+          purpose: 'card_setup',
+          eventId,
+          type: parsed.data.type,
+          sessionId: session.id,
+          mode: session.mode ?? null,
+          setupIntentId: session.setup_intent ?? null,
+          customerId: session.customer ?? null,
+          teamId,
+          cardSetupId: setupOurs.cardSetupId,
+        }
+      : {
+          eventId,
+          type: parsed.data.type,
+          sessionId: session.id,
+          paymentIntentId: session.payment_intent ?? null,
+          paymentStatus: session.payment_status ?? null,
+          amountTotal: session.amount_total ?? null,
+          currency: session.currency ?? null,
+          teamId,
+          operationId: paymentOurs!.operationId,
+          customerId: session.customer ?? null,
+        };
     const now = (deps.now ?? (() => new Date()))();
 
     // Record first (rule 9): the event row and its work row commit together. A repeated event id inserts nothing and rolls the work row back.
@@ -115,9 +138,9 @@ export function createStripeWebhook(deps: WebhookDeps): RequestHandler[] {
               livemode: false,
               stripeCreatedAt: new Date(created * 1000),
               checkoutSessionId: session.id,
-              paymentIntentId: jobPayload.paymentIntentId,
-              teamId: ours.teamId,
-              operationId: ours.operationId,
+              paymentIntentId: 'paymentIntentId' in jobPayload ? jobPayload.paymentIntentId : null,
+              teamId,
+              operationId,
               workRowId: row.id,
             },
           ],
@@ -132,7 +155,7 @@ export function createStripeWebhook(deps: WebhookDeps): RequestHandler[] {
 
     if (work) {
       await deps.enqueue(prisma, work, 'A');
-      logger.info('stripe_event_recorded', { requestId, eventId, operationId: ours.operationId, teamId: ours.teamId, outcome: 'recorded' });
+      logger.info('stripe_event_recorded', { requestId, eventId, operationId: operationId ?? undefined, ...(setupOurs ? { cardSetupId: setupOurs.cardSetupId } : {}), teamId, outcome: 'recorded' });
     } else {
       // Stripe sent this event id before. Processed: nothing to do. Recorded but not processed: put its job back (jobs.md, Stripe redelivery).
       const existing = await prisma.stripeEvent.findUnique({ where: { eventId }, include: { workRow: true } });

@@ -489,6 +489,8 @@ model PaymentOperation {
   expiresAt               DateTime               @map("expires_at") @db.Timestamptz(3)
   completedAt             DateTime?              @map("completed_at") @db.Timestamptz(3)
   reviewReason            String?                @map("review_reason")
+  // The consent wording an activation's Checkout page showed (ADR 0030): frozen so a retry sends identical parameters and the stored consent is what was displayed.
+  consentWording          String?                @map("consent_wording")
   createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt               DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -600,4 +602,81 @@ model ScheduledChange {
 
   @@index([teamId, createdAt(sort: Desc)], map: "scheduled_changes_team_id_created_at_idx")
   @@map("scheduled_changes")
+}
+
+// ---- Saved card and consent (ADR 0030; money.md "Renewals"). Same migration on both shards; the tables live on the team's shard. ----
+// We never see a card number: Stripe holds the card. We keep Stripe's ids, the display fields it returns, and the consent the Owner gave.
+// Also in the SQL, which Prisma cannot express: CHECKs on every table, the partial unique index "card_setups_one_open_per_team" on (team_id) WHERE status = 'open',
+// and "team_payment_methods_one_active_per_team" on (team_id) WHERE status = 'active'. No foreign key to "teams" (a team's money history outlives it).
+
+enum CardSetupStatus {
+  open
+  completed
+  expired
+  failed
+  needs_review
+
+  @@map("card_setup_status")
+}
+
+enum SavedCardStatus {
+  active
+  replaced
+  removed
+
+  @@map("saved_card_status")
+}
+
+enum SavedCardSource {
+  activation
+  card_setup
+
+  @@map("saved_card_source")
+}
+
+// A "save a card" attempt: Stripe Checkout in setup mode, nothing charged. Frozen before Stripe is called; closed only by a verified webhook.
+model CardSetup {
+  id                      String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                  String          @map("team_id") @db.Uuid
+  requestedByUserId       String          @map("requested_by_user_id") @db.Uuid
+  consentWording          String          @map("consent_wording")
+  consentAmountCents      Int             @map("consent_amount_cents")
+  consentAnchorDay        Int             @map("consent_anchor_day")
+  status                  CardSetupStatus @default(open)
+  stripeCheckoutSessionId String?         @unique @map("stripe_checkout_session_id")
+  stripeSetupIntentId     String?         @unique @map("stripe_setup_intent_id")
+  expiresAt               DateTime        @map("expires_at") @db.Timestamptz(3)
+  completedAt             DateTime?       @map("completed_at") @db.Timestamptz(3)
+  reviewReason            String?         @map("review_reason")
+  createdAt               DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([teamId, createdAt(sort: Desc)], map: "card_setups_team_id_created_at_idx")
+  @@map("card_setups")
+}
+
+// The team's saved cards: at most one active. Never deleted; status is the only column that changes after the insert.
+model TeamPaymentMethod {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                String          @map("team_id") @db.Uuid
+  stripeCustomerId      String          @map("stripe_customer_id")
+  stripePaymentMethodId String          @unique @map("stripe_payment_method_id")
+  cardBrand             String          @map("card_brand")
+  cardLast4             String          @map("card_last4")
+  cardExpMonth          Int             @map("card_exp_month")
+  cardExpYear           Int             @map("card_exp_year")
+  source                SavedCardSource
+  sourceId              String          @map("source_id") @db.Uuid
+  consentWording        String          @map("consent_wording")
+  consentAmountCents    Int             @map("consent_amount_cents")
+  consentAnchorDay      Int             @map("consent_anchor_day")
+  consentedAt           DateTime        @map("consented_at") @db.Timestamptz(3)
+  status                SavedCardStatus @default(active)
+  replacedAt            DateTime?       @map("replaced_at") @db.Timestamptz(3)
+  removedAt             DateTime?       @map("removed_at") @db.Timestamptz(3)
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([teamId, createdAt(sort: Desc)], map: "team_payment_methods_team_id_created_at_idx")
+  @@map("team_payment_methods")
 }

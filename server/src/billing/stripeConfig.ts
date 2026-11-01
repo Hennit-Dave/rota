@@ -15,6 +15,28 @@ const WEBHOOK_SECRET_PREFIX = 'whsec_';
 /** 10 seconds (Dave, 2026-10-28): CHOSEN, NOT MEASURED. */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+/** What the worker needs (ADR 0030): the test key and the timeout for the READS its processing job makes. It never holds the webhook signing secret. */
+export type StripeApiConfig = Pick<StripeConfig, 'secretKey' | 'timeoutMs'>;
+
+/**
+ * Reads the key and the timeout only. Same rules as `loadStripeConfig`: a missing value, or any key that is not `sk_test_...`, throws, and no message holds a value.
+ */
+export function loadStripeApiConfig(env: NodeJS.ProcessEnv = process.env): StripeApiConfig {
+  const secretKey = env.STRIPE_SECRET_KEY?.trim();
+  if (!secretKey) throw new Error('STRIPE_SECRET_KEY is not set (a Stripe test key, sk_test_...)');
+  if (!secretKey.startsWith(TEST_KEY_PREFIX)) {
+    throw new Error('STRIPE_SECRET_KEY must be a Stripe TEST key (it must start with sk_test_). Live keys are never accepted.');
+  }
+  let timeoutMs = DEFAULT_TIMEOUT_MS;
+  const rawTimeout = env.STRIPE_TIMEOUT_MS?.trim();
+  if (rawTimeout) {
+    const parsed = Number(rawTimeout);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error('STRIPE_TIMEOUT_MS must be a positive whole number of milliseconds');
+    timeoutMs = parsed;
+  }
+  return { secretKey, timeoutMs };
+}
+
 /**
  * Reads the Stripe settings. Every error message names the variable and the rule, never the value: a secret must not reach a log.
  * Throws on a missing value, on any key that is not `sk_test_...` (including `sk_live_` and restricted live keys), and on a webhook secret that

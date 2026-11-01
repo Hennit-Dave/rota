@@ -27,7 +27,11 @@ export const checkoutSessionEvent = eventEnvelope.extend({
   data: z.object({
     object: z.object({
       id: z.string().min(1).max(255),
+      mode: z.string().max(32).nullable().optional(),
       payment_intent: z.string().min(1).max(255).nullable().optional(),
+      setup_intent: z.string().min(1).max(255).nullable().optional(),
+      /** The Stripe Customer: set when Checkout saved a card (it made one, or used the one we passed). */
+      customer: z.string().min(1).max(255).nullable().optional(),
       payment_status: z.string().max(64).nullable().optional(),
       amount_total: z.number().int().nullable().optional(),
       currency: z.string().max(16).nullable().optional(),
@@ -50,8 +54,36 @@ export const stripeEventJobPayload = z.object({
   currency: z.string().max(16).nullable(),
   teamId: z.string().regex(CANONICAL_UUID),
   operationId: z.string().regex(CANONICAL_UUID),
+  /** The Customer Checkout saved the card on (ADR 0030). Optional so a work row recorded before P6a still parses. */
+  customerId: z.string().min(1).max(255).nullable().optional(),
 });
 export type StripeEventJobPayload = z.infer<typeof stripeEventJobPayload>;
+
+/**
+ * The job payload for a setup-mode Checkout Session (a card saved, nothing charged; ADR 0030). `purpose` tells the job which payload it holds; the payload of a
+ * payment event has none, so every row recorded before P6a is still read as a payment.
+ */
+export const cardSetupJobPayload = z.object({
+  purpose: z.literal('card_setup'),
+  eventId: z.string().min(1).max(255),
+  type: z.enum(HANDLED_EVENT_TYPES),
+  sessionId: z.string().min(1).max(255),
+  mode: z.string().max(32).nullable(),
+  setupIntentId: z.string().min(1).max(255).nullable(),
+  customerId: z.string().min(1).max(255).nullable(),
+  teamId: z.string().regex(CANONICAL_UUID),
+  cardSetupId: z.string().regex(CANONICAL_UUID),
+});
+export type CardSetupJobPayload = z.infer<typeof cardSetupJobPayload>;
+
+/** The team and card-setup ids Stripe echoes back from our metadata on a setup-mode session, or null when the event is not one of ours (or malformed). */
+export function ourSetupMetadata(meta: Record<string, string> | null | undefined): { teamId: string; cardSetupId: string } | null {
+  const teamId = meta?.team_id;
+  const cardSetupId = meta?.card_setup_id;
+  if (typeof teamId !== 'string' || typeof cardSetupId !== 'string') return null;
+  if (!CANONICAL_UUID.test(teamId) || !CANONICAL_UUID.test(cardSetupId)) return null;
+  return { teamId, cardSetupId };
+}
 
 /** The team and operation ids Stripe echoes back from our metadata, or null when the event is not one of ours (or malformed). */
 export function ourMetadata(meta: Record<string, string> | null | undefined): { teamId: string; operationId: string } | null {

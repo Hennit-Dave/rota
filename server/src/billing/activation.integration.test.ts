@@ -63,7 +63,7 @@ async function deliver(t: T, operationId: string, sessionId: string, over: Parti
   const payload = checkoutEventBody({ sessionId, teamId: t.teamId, operationId, amountTotal: 5000, ...over });
   const res = await sendWebhook(app.base, payload);
   const queued = app.enqueued().slice(before);
-  await runStripeJobs(app.raw, queued);
+  await runStripeJobs(app.raw, queued, stripe);
   return { res, payload, eventId: JSON.parse(payload).id as string, queued };
 }
 const sessionOf = async (t: T, operationId: string) => (await operationRow(t.teamId, operationId)).stripe_checkout_session_id as string;

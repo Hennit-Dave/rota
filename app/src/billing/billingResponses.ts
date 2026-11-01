@@ -27,6 +27,21 @@ export interface BillingOverview {
   openOperation: Operation | null;
   /** The reduction the Owner scheduled for the end of the period, or null (ADR 0029). */
   scheduledChange: ScheduledChange | null;
+  /** The card saved for renewals, as finished strings, or null (ADR 0030). The app never holds a Stripe id. */
+  savedCard: SavedCard | null;
+  /** What the Owner agrees to by saving a card now: the server's wording, shown before Stripe's page opens. Null until the team has a subscription. */
+  cardConsentWording: string | null;
+}
+
+export interface SavedCard {
+  /** "Visa ending 4242". */
+  summary: string;
+  /** "Expires 08/2027". */
+  expiresDisplay: string;
+  /** The wording the Owner agreed to, as shown on Stripe's page. */
+  consentWording: string;
+  /** The UTC day the agreement was recorded, `YYYY-MM-DD`. */
+  consentedOn: string;
 }
 
 export type ScheduledStatus = 'scheduled' | 'ready' | 'blocked' | 'continuing';
@@ -85,6 +100,8 @@ export interface ActivationQuote {
   periodEndsOn: string;
   note: string;
   testModeNotice: string;
+  /** What the Owner agrees to by paying (it also saves the card for renewals): the server's wording, the same text Stripe's page shows. */
+  consentWording: string;
 }
 
 export type OperationStatus = 'awaiting_payment' | 'confirming' | 'paid' | 'failed' | 'expired' | 'under_review';
@@ -126,14 +143,22 @@ export function parseOverview(body: unknown): BillingOverview {
   if (body.activated !== (subscription !== null)) throw unreadable();
   const openOperation = body.openOperation === null || body.openOperation === undefined ? null : parseOperation(body.openOperation);
   const scheduledChange = body.scheduledChange === null || body.scheduledChange === undefined ? null : parseScheduledChange(body.scheduledChange);
-  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation, scheduledChange };
+  if (body.cardConsentWording !== null && typeof body.cardConsentWording !== 'string') throw unreadable();
+  const savedCard = parseSavedCard(body.savedCard);
+  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation, scheduledChange, savedCard, cardConsentWording: body.cardConsentWording };
+}
+
+function parseSavedCard(v: unknown): SavedCard | null {
+  if (v === null) return null;
+  if (!isRecord(v) || typeof v.summary !== 'string' || typeof v.expiresDisplay !== 'string' || typeof v.consentWording !== 'string' || !isDate(v.consentedOn)) throw unreadable();
+  return { summary: v.summary, expiresDisplay: v.expiresDisplay, consentWording: v.consentWording, consentedOn: v.consentedOn };
 }
 
 export function parseQuote(body: unknown): ActivationQuote {
   const q = isRecord(body) ? body.quote : null;
   if (!isRecord(q) || !isPlan(q.plan) || typeof q.planName !== 'string' || !isCount(q.seats) || typeof q.chargeTodayDisplay !== 'string') throw unreadable();
-  if (!isDate(q.periodStartsOn) || !isDate(q.periodEndsOn) || typeof q.note !== 'string' || typeof q.testModeNotice !== 'string') throw unreadable();
-  return { plan: q.plan, planName: q.planName, seats: q.seats, chargeTodayDisplay: q.chargeTodayDisplay, periodStartsOn: q.periodStartsOn, periodEndsOn: q.periodEndsOn, note: q.note, testModeNotice: q.testModeNotice };
+  if (!isDate(q.periodStartsOn) || !isDate(q.periodEndsOn) || typeof q.note !== 'string' || typeof q.testModeNotice !== 'string' || typeof q.consentWording !== 'string') throw unreadable();
+  return { plan: q.plan, planName: q.planName, seats: q.seats, chargeTodayDisplay: q.chargeTodayDisplay, periodStartsOn: q.periodStartsOn, periodEndsOn: q.periodEndsOn, note: q.note, testModeNotice: q.testModeNotice, consentWording: q.consentWording };
 }
 
 export function parseOperation(v: unknown): Operation {
@@ -285,3 +310,39 @@ export function parseHistory(body: unknown): { history: HistoryEntry[]; hasMore:
 }
 
 export const historyKey = (userId: string, teamId: string) => ['billing', userId, teamId, 'history'] as const;
+
+// ---- Saving a card (ADR 0030) ----
+
+export type CardSetupStatus = 'awaiting_card' | 'confirming' | 'saved' | 'failed' | 'expired' | 'under_review';
+const CARD_SETUP_STATUSES: readonly string[] = ['awaiting_card', 'confirming', 'saved', 'failed', 'expired', 'under_review'];
+
+/** One attempt to save a card. The status is the server's decision; the app only picks the screen. */
+export interface CardSetup {
+  id: string;
+  status: CardSetupStatus;
+  expiresAt: string;
+}
+
+export function parseCardSetup(v: unknown): CardSetup {
+  if (!isRecord(v) || typeof v.id !== 'string' || typeof v.status !== 'string' || !CARD_SETUP_STATUSES.includes(v.status) || typeof v.expiresAt !== 'string') throw unreadable();
+  return { id: v.id, status: v.status as CardSetupStatus, expiresAt: v.expiresAt };
+}
+
+/** `{ setup }` as GET and cancel answer. */
+export function parseCardSetupResponse(body: unknown): CardSetup {
+  if (!isRecord(body)) throw unreadable();
+  return parseCardSetup(body.setup);
+}
+
+/** `{ status: 'card_setup_required', setup, checkoutUrl }` as POST /card/setup answers. */
+export function parseCardSetupStart(body: unknown): { setup: CardSetup; checkoutUrl: string } {
+  if (!isRecord(body) || body.status !== 'card_setup_required' || !isStripeCheckoutUrl(body.checkoutUrl)) throw unreadable();
+  return { setup: parseCardSetup(body.setup), checkoutUrl: body.checkoutUrl };
+}
+
+/** True once the server has decided: the screen stops asking. */
+export function isCardSetupSettled(status: CardSetupStatus): boolean {
+  return status === 'saved' || status === 'failed' || status === 'expired' || status === 'under_review';
+}
+
+export const cardSetupKey = (userId: string, teamId: string, setupId: string) => ['billing', userId, teamId, 'card-setup', setupId] as const;

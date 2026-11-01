@@ -137,6 +137,10 @@ function Billing() {
         ) : (
           <Button label={hubCopy.change} onPress={() => router.push('/billing/change')} testID="billing-change" />
         )}
+        <InfoCard title={hubCopy.paymentMethod} body={data.savedCard ? data.savedCard.summary : hubCopy.noCard} testID="billing-card">
+          {data.savedCard ? <Text variant="caption" tone="muted">{data.savedCard.expiresDisplay}</Text> : null}
+        </InfoCard>
+        <Button label={hubCopy.manageCard} variant="outline" onPress={() => router.push('/billing/card')} testID="billing-manage-card" />
         <Button label={hubCopy.history} variant="outline" onPress={() => router.push('/billing/history')} testID="billing-history" />
         <Spacer />
         {back}
@@ -182,6 +186,7 @@ function Billing() {
           <Text variant="caption" tone="muted">{quote.data.note}</Text>
           <Text variant="caption" tone="muted">{`${quote.data.periodStartsOn} to ${quote.data.periodEndsOn}`}</Text>
           <Text variant="caption" tone="muted">{quote.data.testModeNotice}</Text>
+          <Text variant="caption" tone="muted" testID="billing-consent">{quote.data.consentWording}</Text>
         </InfoCard>
       ) : quote.isError && seatsSettled ? (
         <StatusBanner tone="warning" title={describeQuoteProblem(quote.error)} testID="billing-quote-error" />
