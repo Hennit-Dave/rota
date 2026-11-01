@@ -54,7 +54,7 @@ test('a team that already has a Stripe Customer passes it instead of making anot
   assert.equal('customer_creation' in seen, false);
 });
 
-test('CARDS ONLY: both Checkout modes ask for allowed_payment_method_types ["card"], so Link, Cash App Pay, Amazon Pay and bank are never offered (a renewal needs a saved card)', async () => {
+test('CARDS ONLY: both Checkout modes ask for allowed_payment_method_types ["card"], which removes Cash App Pay and Amazon Pay (the Stripe page still shows the Link button and a Bank row: ADR 0030, choice 9)', async () => {
   const seen: any[] = [];
   const gateway = createStripeGateway(config, clientWith(async (params) => (seen.push(params), liveFalse('cs_test_1'))));
   await gateway.createCheckoutSession({ ...payment, saveCard: { consentText, customerId: null } }); // activation

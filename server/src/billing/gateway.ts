@@ -114,6 +114,7 @@ function classify(err: unknown): never {
 
 /**
  * Rota takes cards only, in both Checkout modes: a renewal needs a saved card, and only a card is ever recorded (ADR 0030).
+ * Only partly effective: Stripe's page still shows the Link button and a Bank row (ADR 0030, choice 9).
  * Stripe SDK 23 removed `payment_method_types` from Checkout; `allowed_payment_method_types` is its filter on the methods Checkout would offer.
  */
 const CARD_ONLY: ['card'] = ['card'];
