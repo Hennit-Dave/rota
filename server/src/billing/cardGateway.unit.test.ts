@@ -54,7 +54,17 @@ test('a team that already has a Stripe Customer passes it instead of making anot
   assert.equal('customer_creation' in seen, false);
 });
 
-test('a PAID CHANGE saves nothing: no setup_future_usage, no custom text, no customer parameters (the payment path of P4 is unchanged)', async () => {
+test('CARDS ONLY: both Checkout modes ask for allowed_payment_method_types ["card"], so Link, Cash App Pay, Amazon Pay and bank are never offered (a renewal needs a saved card)', async () => {
+  const seen: any[] = [];
+  const gateway = createStripeGateway(config, clientWith(async (params) => (seen.push(params), liveFalse('cs_test_1'))));
+  await gateway.createCheckoutSession({ ...payment, saveCard: { consentText, customerId: null } }); // activation
+  await gateway.createCheckoutSession(payment); // a paid change
+  await gateway.createSetupSession(setup); // add or replace a card
+  assert.deepEqual(seen.map((p) => p.mode), ['payment', 'payment', 'setup']);
+  for (const p of seen) assert.deepEqual(p.allowed_payment_method_types, ['card'], p.mode);
+});
+
+test('a PAID CHANGE saves nothing: no setup_future_usage, no custom text, no customer parameters (apart from cards only, the payment path of P4 is unchanged)', async () => {
   let seen: any;
   const gateway = createStripeGateway(config, clientWith(async (params) => ((seen = params), liveFalse('cs_test_1'))));
   await gateway.createCheckoutSession(payment);

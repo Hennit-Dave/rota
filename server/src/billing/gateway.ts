@@ -112,6 +112,12 @@ function classify(err: unknown): never {
   throw new StripeUncertainError(typeof type === 'string' ? type : 'unknown_error');
 }
 
+/**
+ * Rota takes cards only, in both Checkout modes: a renewal needs a saved card, and only a card is ever recorded (ADR 0030).
+ * Stripe SDK 23 removed `payment_method_types` from Checkout; `allowed_payment_method_types` is its filter on the methods Checkout would offer.
+ */
+const CARD_ONLY: ['card'] = ['card'];
+
 /** The Checkout parameters that make Stripe save the card and show the consent wording (the same in payment mode and setup mode). */
 function saveCardParams(save: SaveCardRequest) {
   return {
@@ -147,6 +153,7 @@ export function createStripeGateway(config: StripeApiConfig & { webhookSecret?: 
         session = await stripe.checkout.sessions.create(
           {
             mode: 'payment',
+            allowed_payment_method_types: CARD_ONLY,
             client_reference_id: request.operationId,
             line_items: [
               { quantity: 1, price_data: { currency: 'usd', unit_amount: request.amountCents, product_data: { name: request.productName } } },
@@ -177,6 +184,7 @@ export function createStripeGateway(config: StripeApiConfig & { webhookSecret?: 
         session = await stripe.checkout.sessions.create(
           {
             mode: 'setup',
+            allowed_payment_method_types: CARD_ONLY,
             currency: 'usd',
             client_reference_id: request.setupId,
             metadata,
