@@ -46,11 +46,15 @@ Renewals (P6b) charge a card with nobody present. Checkout as built in P3 takes 
 
 Verified from Stripe's docs on 2026-11-01 (the fetch tool summarised some long pages; those items are marked): `setup_future_usage: 'off_session'` on the PaymentIntent saves the card, and Checkout attaches it only to a passed or created Customer; in setup mode the PaymentMethod is on the SetupIntent, not on the Session; a setup-mode Session has `payment_status: 'no_payment_required'` (so the payment job's "only `paid`" rule can never apply to it, and setup needs its own branch); `custom_text.submit.message` allows 1200 characters; idempotency keys may be removed once they are at least 24 hours old; card 4000 0000 0000 0341 attaches and then declines when charged (P6b's failure card). **Not stated, so proved in the sandbox** (below): (1) whether `custom_text` is shown in setup mode, (2) whether the Session's `customer` is filled in the completed event when `customer_creation` is `always`, (3) whether the SetupIntent's `payment_method` can be expanded on retrieve and its `usage` reads `off_session`. Session metadata is **not documented as copied** to the SetupIntent, so it is set on both.
 
-### Sandbox answers (to be recorded from the P6a proof run)
+### Sandbox answers (recorded from the P6a proof run, 2026-11-01, Stripe sandbox, test shards)
 
-1. `custom_text` in setup mode: _pending the proof run_
-2. `customer` on the completed event with `customer_creation: 'always'`: _pending the proof run_
-3. `payment_method` expansion and `usage` on a setup-mode SetupIntent: _pending the proof run_
+Read back from Stripe's sandbox with the Stripe CLI after the proofs; the output is in `Rota-evidence/p6a/evidence-proof8-stripe-answers.txt` (ids shown as prefixes only).
+
+1. **`custom_text` in setup mode: yes.** A `mode: 'setup'` Session accepts `custom_text.submit.message`, Stripe stores it on the Session and renders it above the Save button (screenshot `12-p2-stripe-setup-page.png`). In payment mode it renders above Pay (`04-before-pay.png`). Both show the exact server-made wording.
+2. **`customer` on the Session with `customer_creation: 'always'`: yes, in both modes.** The completed Session carries a `cus_…` id, in payment mode (activation) and in setup mode, and the id matches the PaymentIntent's / SetupIntent's `customer`. So the job needs no second synchronous Stripe call to learn the customer.
+3. **`payment_method` expansion and `usage` on a SetupIntent: yes.** `retrieve(setupIntent, expand: ['payment_method'])` returns the card (type, brand, last4, expiry) and `usage` reads `off_session`. The metadata we set (`team_id`, `card_setup_id`) comes back on it. For activation, the PaymentIntent reads `setup_future_usage: 'off_session'` with the same `customer`.
+
+One more observation from the same run: on both pages Stripe also offers Link, Cash App Pay, Amazon Pay and Bank next to Card. Only a `card` PaymentMethod is recorded (`problemWith` returns `not_a_card` for anything else): a setup that ends that way goes to review ("under review" in the app) and an activation payment made that way saves no card. That path is covered by integration tests against a fake Stripe (a `us_bank_account` setup and a `link` activation), **not** exercised against the sandbox. Whether to restrict Checkout to `payment_method_types: ['card']` is a payment-path change and is left to Dave.
 
 ## Consequences and limits
 
