@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { PUSH_CHANNEL_ID, type PermissionStatus, type PushPlatform } from './registration';
+import type { PermissionStatus, PushPlatform } from './registration';
 
 /** The real Expo side of push (ADR 0032): the calls to the phone, behind the `PushPlatform` interface that `registration.ts` is tested against. */
 
@@ -15,10 +15,13 @@ function projectId(): string {
 }
 
 export const expoPlatform: PushPlatform = {
-  async ensureChannel() {
+  async ensureChannels(channels) {
     if (Platform.OS !== 'android') return;
-    // The server names this channel in every push; a channel the phone does not have drops the message silently.
-    await Notifications.setNotificationChannelAsync(PUSH_CHANNEL_ID, { name: 'Rota notifications', importance: Notifications.AndroidImportance.DEFAULT });
+    // The server names one of these in every push; a channel the phone does not have drops the message silently. Setting an existing channel again changes nothing
+    // the person set (their own mute or sound choices are theirs).
+    for (const channel of channels) {
+      await Notifications.setNotificationChannelAsync(channel.id, { name: channel.name, importance: Notifications.AndroidImportance.DEFAULT });
+    }
   },
   async permission() {
     return asStatus(await Notifications.getPermissionsAsync());

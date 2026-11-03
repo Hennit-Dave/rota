@@ -12,17 +12,41 @@ export const PUSH_TYPES = ['shift_changes', 'swap_updates', 'billing'] as const;
 export type PushType = (typeof PUSH_TYPES)[number];
 
 /**
- * The moments a push can be about. Part 1 has the two billing ones; the shift and swap moments arrive with part 2.
+ * The moments a push can be about. Part 1: the two billing ones. Part 2: the shift and swap ones, one per activity kind (ADR 0033).
  * `renewal_failed` and `renewal_read_only` are ESSENTIAL: they warn the Owner about losing access, so they skip the `notifyBilling` toggle (Dave, 2026-11-03,
- * ADR 0031). Quiet hours still apply to them (Dave, 2026-11-03).
+ * ADR 0031). Quiet hours still apply to them (Dave, 2026-11-03). The shift and swap moments are NOT essential: the person's switch for that type applies.
  */
-export const PUSH_MOMENTS = ['renewal_failed', 'renewal_read_only'] as const;
+export const PUSH_MOMENTS = [
+  'renewal_failed',
+  'renewal_read_only',
+  'shift_created',
+  'shift_updated',
+  'shift_deleted',
+  'swap_requested',
+  'swap_approved',
+  'swap_rejected',
+] as const;
 export type PushMoment = (typeof PUSH_MOMENTS)[number];
 
 export const MOMENT_TYPE: Record<PushMoment, PushType> = {
   renewal_failed: 'billing',
   renewal_read_only: 'billing',
+  shift_created: 'shift_changes',
+  shift_updated: 'shift_changes',
+  shift_deleted: 'shift_changes',
+  swap_requested: 'swap_updates',
+  swap_approved: 'swap_updates',
+  swap_rejected: 'swap_updates',
 };
+
+/**
+ * One Android notification channel per type (Dave, 2026-11-03, ADR 0033), so a person can mute one type in the phone's own settings. The ids are what the server
+ * names in each push and what the app creates at every registration. A push that names a channel the installed app has not created is DROPPED SILENTLY (found in
+ * step 0): `default` is kept only because part 1 sent everything on it.
+ */
+export const PUSH_CHANNELS = { shift_changes: 'shift_changes', swap_updates: 'swap_updates', billing: 'billing' } as const satisfies Record<PushType, string>;
+export type PushChannelId = (typeof PUSH_CHANNELS)[PushType];
+export const channelFor = (type: PushType): PushChannelId => PUSH_CHANNELS[type];
 
 /** Moments that ignore the per-type toggle. */
 export const ESSENTIAL_MOMENTS: ReadonlySet<PushMoment> = new Set<PushMoment>(['renewal_failed', 'renewal_read_only']);
@@ -39,6 +63,9 @@ export const pushEventPayload = z.strictObject({
   body: z.string().min(1).max(300),
   /** The renewal this is about, for the check "is it still unpaid". */
   renewalId: uuid.optional(),
+  /** Where a tap goes: a shift event opens that shift, a swap event opens that swap (the app maps these ids to a screen; the server never sends a path). */
+  shiftId: uuid.optional(),
+  swapId: uuid.optional(),
   /** The "read-only" notice is made at the failure but runs at the end of the grace period; if the renewal was paid by then it is wrong, so nothing is sent. */
   skipIfRenewalPaid: z.boolean().optional(),
 });
@@ -56,6 +83,8 @@ export const pushPayload = z.strictObject({
   title: z.string().min(1).max(120),
   body: z.string().min(1).max(300),
   renewalId: uuid.optional(),
+  shiftId: uuid.optional(),
+  swapId: uuid.optional(),
   skipIfRenewalPaid: z.boolean().optional(),
 });
 export type PushPayload = z.infer<typeof pushPayload>;
@@ -66,10 +95,19 @@ export interface PushData {
   type: PushType;
   moment: PushMoment;
   teamId: string;
+  shiftId?: string;
+  swapId?: string;
 }
 
-export function pushDataFor(payload: Pick<PushPayload, 'moment' | 'teamId'>): PushData {
-  return { v: 1, type: MOMENT_TYPE[payload.moment], moment: payload.moment, teamId: payload.teamId };
+export function pushDataFor(payload: Pick<PushPayload, 'moment' | 'teamId' | 'shiftId' | 'swapId'>): PushData {
+  return {
+    v: 1,
+    type: MOMENT_TYPE[payload.moment],
+    moment: payload.moment,
+    teamId: payload.teamId,
+    ...(payload.shiftId ? { shiftId: payload.shiftId } : {}),
+    ...(payload.swapId ? { swapId: payload.swapId } : {}),
+  };
 }
 
 /** The `receipts` work row on shard A: tickets to look up about 15 minutes after the send (Expo's advice). */

@@ -1,16 +1,29 @@
 /**
  * Registering this phone for push (ADR 0032). Plain functions over a small platform interface, so the order of the steps is unit-tested without a phone.
  *
- * The order matters on Android 13 and later: the notification CHANNEL must exist before the permission is asked for, and a push that names a channel the phone
+ * The order matters on Android 13 and later: the notification CHANNELS must exist before the permission is asked for, and a push that names a channel the phone
  * does not have is dropped silently (found in step 0). The token is only fetched once the person has allowed notifications. The token and the permission
  * prompt's outcome are never logged.
  */
-export const PUSH_CHANNEL_ID = 'default';
+
+/**
+ * The channels this app creates at EVERY registration (ADR 0033): one per notification type, so the person can mute one type in the phone's own settings, on top of
+ * the per-type switches in Rota's settings. The ids are exactly what the server names in each push (`PUSH_CHANNELS` in `server/src/push/message.ts`; a server test
+ * checks the two lists agree, because a mismatch drops the push silently). `default` is what part 1 sent everything on; it is kept so a push sent by an older server
+ * is still shown. Older installs that predate this list are the known risk in ADR 0033.
+ */
+export const PUSH_CHANNELS = [
+  { id: 'shift_changes', name: 'Shift changes' },
+  { id: 'swap_updates', name: 'Swap updates' },
+  { id: 'billing', name: 'Billing' },
+  { id: 'default', name: 'Rota notifications' },
+] as const;
+export type PushChannelDef = { readonly id: string; readonly name: string };
 
 export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
 
 export interface PushPlatform {
-  ensureChannel(): Promise<void>;
+  ensureChannels(channels: ReadonlyArray<PushChannelDef>): Promise<void>;
   permission(): Promise<PermissionStatus>;
   requestPermission(): Promise<PermissionStatus>;
   /** The Expo push token of this install. Throws if Expo or Google cannot issue one (no Play services, no project id, offline). */
@@ -27,7 +40,7 @@ export type RegisterResult = { status: 'registered' } | { status: 'no_permission
 export async function registerThisDevice(deps: { platform: PushPlatform; api: DevicesApi; warn?: (event: string) => void }): Promise<RegisterResult> {
   const { platform, api } = deps;
   try {
-    await platform.ensureChannel();
+    await platform.ensureChannels(PUSH_CHANNELS);
     let status = await platform.permission();
     if (status === 'undetermined') status = await platform.requestPermission();
     if (status !== 'granted') return { status: 'no_permission' };

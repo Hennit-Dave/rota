@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { registerThisDevice, unregisterThisDevice, type PermissionStatus, type PushPlatform } from './registration';
+import { PUSH_CHANNELS, registerThisDevice, unregisterThisDevice, type PermissionStatus, type PushPlatform } from './registration';
 
 function fake(opts: { permission?: PermissionStatus; afterRequest?: PermissionStatus; tokenFails?: boolean; channelFails?: boolean } = {}) {
   const calls: string[] = [];
   const registered: string[] = [];
   const unregistered: string[] = [];
+  const channelIds: string[] = [];
   const platform: PushPlatform = {
-    async ensureChannel() {
+    async ensureChannels(channels) {
       calls.push('channel');
+      channelIds.push(...channels.map((c) => c.id));
       if (opts.channelFails) throw new Error('channel');
     },
     async permission() {
@@ -36,7 +38,7 @@ function fake(opts: { permission?: PermissionStatus; afterRequest?: PermissionSt
     },
   };
   const warnings: string[] = [];
-  return { platform, api, calls, registered, unregistered, warnings, warn: (e: string) => void warnings.push(e) };
+  return { platform, api, calls, registered, unregistered, warnings, channelIds, warn: (e: string) => void warnings.push(e) };
 }
 
 test('already allowed: the channel is made first, then the token is registered; the person is not asked again', async () => {
@@ -79,4 +81,14 @@ test('sign-out: the phone is unregistered if notifications were allowed; never i
   const broken = fake({ tokenFails: true });
   await assert.doesNotReject(() => unregisterThisDevice(broken));
   assert.deepEqual(broken.warnings, ['push_unregister_failed']);
+});
+
+test('every registration creates one channel per type, plus the part 1 channel, before anything else (ADR 0033)', async () => {
+  const f = fake();
+  await registerThisDevice(f);
+  assert.deepEqual(f.channelIds, ['shift_changes', 'swap_updates', 'billing', 'default']);
+  assert.deepEqual(f.channelIds, PUSH_CHANNELS.map((c) => c.id));
+  assert.equal(f.calls[0], 'channel', 'the channels exist before the permission prompt');
+  const names = PUSH_CHANNELS.map((c) => c.name);
+  assert.equal(new Set(names).size, names.length, 'each channel has its own name in the phone settings');
 });

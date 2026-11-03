@@ -1,4 +1,6 @@
 import { getShard, type Shards } from '../db/clients.js';
+import type { EnqueueRow } from '../billing/renewal.js';
+import { enqueueEvents, queueShiftEvent } from '../push/events.js';
 import { identityDb } from '../db/identity.js';
 import type { PrismaClient, Shift } from '../generated/prisma/client.js';
 import { ApiError } from '../http/errors.js';
@@ -116,7 +118,8 @@ export interface NewShift {
   assignedUserId?: string | null;
 }
 
-export async function createShift(shards: Shards, input: { teamId: string; actorUserId: string; shift: NewShift }): Promise<ShiftView> {
+/** `enqueue`: puts the push event the change wrote onto the queue AFTER the commit (ADR 0033); without it the row waits for the sweep. */
+export async function createShift(shards: Shards, input: { teamId: string; actorUserId: string; shift: NewShift; enqueue?: EnqueueRow }): Promise<ShiftView> {
   const { teamId, actorUserId, shift } = input;
   const prisma = getShard(shards, teamId).primary;
   const assignee = shift.assignedUserId ?? null;
@@ -140,9 +143,12 @@ export async function createShift(shards: Shards, input: { teamId: string; actor
       },
     });
     await tx.activity.create({ data: { teamId, actorUserId, kind: 'shift_created', shiftId: row.id, data: snapshot(row) } });
-    return row;
+    // The push event commits or rolls back with the shift and its activity row (ADR 0033).
+    const work = await queueShiftEvent(tx, { teamId, moment: 'shift_created', shiftId: row.id, actorUserId, assignedUserId: row.assignedUserId });
+    return { row, work };
   });
-  return view(created, await namesFor(shards, [created.assignedUserId]));
+  await enqueueEvents(prisma, teamId, created.work, input.enqueue);
+  return view(created.row, await namesFor(shards, [created.row.assignedUserId]));
 }
 
 export interface ShiftPatch {
@@ -155,7 +161,7 @@ export interface ShiftPatch {
   assignedUserId?: string | null;
 }
 
-export async function updateShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; patch: ShiftPatch }): Promise<ShiftView> {
+export async function updateShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; patch: ShiftPatch; enqueue?: EnqueueRow }): Promise<ShiftView> {
   const { teamId, shiftId, actorUserId, patch } = input;
   const prisma = getShard(shards, teamId).primary;
 
@@ -185,19 +191,25 @@ export async function updateShift(shards: Shards, input: { teamId: string; shift
     const row = await tx.shift.update({ where: { id: shiftId }, data: next });
     const changed = (Object.keys(patch) as Array<keyof ShiftPatch>).filter((k) => patch[k] !== undefined);
     await tx.activity.create({ data: { teamId, actorUserId, kind: 'shift_updated', shiftId, data: { ...snapshot(row), changed } } });
-    return row;
+    // Told: the person it is assigned to now, and the one it was taken from if the assignee changed.
+    const work = await queueShiftEvent(tx, { teamId, moment: 'shift_updated', shiftId, actorUserId, assignedUserId: row.assignedUserId, previousAssignedUserId: current.assignedUserId });
+    return { row, work };
   });
-  return view(updated, await namesFor(shards, [updated.assignedUserId]));
+  await enqueueEvents(prisma, teamId, updated.work, input.enqueue);
+  return view(updated.row, await namesFor(shards, [updated.row.assignedUserId]));
 }
 
-export async function deleteShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string }): Promise<void> {
+export async function deleteShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; enqueue?: EnqueueRow }): Promise<void> {
   const { teamId, shiftId, actorUserId } = input;
-  await getShard(shards, teamId).primary.$transaction(async (tx) => {
+  const prisma = getShard(shards, teamId).primary;
+  const work = await prisma.$transaction(async (tx) => {
     const gone = await tx.shift.findFirst({ where: { id: shiftId, teamId } });
     if (!gone) throw new ApiError('not_found', { reason: 'shift_not_found' });
     // Scoped by team_id again on the delete itself, so the filter is in the statement that matters, not only in the check before it.
     const removed = await tx.shift.deleteMany({ where: { id: shiftId, teamId } });
     if (removed.count === 0) throw new ApiError('not_found', { reason: 'shift_not_found' });
     await tx.activity.create({ data: { teamId, actorUserId, kind: 'shift_deleted', shiftId, data: snapshot(gone) } });
+    return queueShiftEvent(tx, { teamId, moment: 'shift_deleted', shiftId, actorUserId, assignedUserId: gone.assignedUserId });
   });
+  await enqueueEvents(prisma, teamId, work, input.enqueue);
 }
