@@ -225,3 +225,7 @@ I learned that a reduction is saved as a scheduled change because it should not 
 ## 2026-11-01 — Saved card and consent (PR #59)
 
 I learned that saving a card for future payments needs the customer's permission, and that permission must be recorded so we can show what they agreed to. A successful payment alone does not mean they agreed to let us save their card or charge it again later.
+
+## 2026-11-03 — Renewals and failed renewals (PR #61)
+
+Hiding a button only stops someone from tapping it; they can still send the same request directly with Postman. Once the seven-day grace period ends, one shared check on the server blocks changes to shifts, swaps and invites while still letting the team view its data. Using the same check everywhere makes it less likely that one action will slip through or follow a different rule.
