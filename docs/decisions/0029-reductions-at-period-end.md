@@ -25,7 +25,7 @@ An Owner can add seats today (ADR 0028). They must also be able to go down: fewe
 
 **While it is scheduled,** every new invitation and every accept must fit the FUTURE limit as well: members who stay (not the chosen ones) plus pending invitations may not exceed the target seats (409 `seat_limit_reached`). The accept stays the authority, as in ADR 0027.
 
-**Cancel (`DELETE .../reductions/current`)** only while `scheduled`. After the boundary check the Owner can no longer take it back.
+**Cancel (`DELETE .../reductions/current`)** while `scheduled`, **or while `blocked`** (amended by ADR 0031, approved by Dave on PR #61, 2026-11-03: a blocked reduction pauses collection and the Owner cannot remove members, so without this exit the team would end up read-only for good). A `ready` or `continuing` reduction can no longer be taken back.
 
 **Boundary check (the `reduction_boundary` job).** At the period end it locks the team, re-counts active members who are not chosen, and records `ready` (they fit), `continuing` (they do not, and the Owner accepted the fallback) or `blocked` (they do not and nothing was accepted), with the time and the detail. It logs `NOTIFY_OWNER_PENDING` when the Owner needs to know. **It applies nothing:** no deactivation, no ledger row, no entitlement change. A change that is no longer `scheduled` is left alone, so a replay is harmless.
 
