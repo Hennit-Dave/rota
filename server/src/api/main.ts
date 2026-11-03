@@ -138,7 +138,8 @@ const app = createApp({
   logger,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
   recovery,
-  teams: { shards, tokens, limiter, config, invites, billing },
+  // A shift or swap change writes its push event in its own transaction; the event is enqueued here after the commit (ADR 0033). It never throws.
+  teams: { shards, tokens, limiter, config, invites, billing, enqueue: billing.enqueue },
   // Verified, recorded on shard A, then the job is enqueued (it never throws): the request does no business processing (AGENTS.md rules 7 and 9).
   stripeWebhook: {
     shards,

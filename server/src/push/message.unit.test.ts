@@ -12,10 +12,13 @@ test('the phone receives a version, a type, a moment and a team id: no path, no 
   assert.deepEqual(Object.keys(data).sort(), ['moment', 'teamId', 'type', 'v']);
 });
 
-test('both billing moments are billing pushes and both are essential (skip the notifyBilling toggle only)', () => {
-  for (const m of PUSH_MOMENTS) {
+test('both failed-renewal moments are billing pushes and both are essential (skip the notifyBilling toggle only); no shift or swap moment is essential', () => {
+  for (const m of ['renewal_failed', 'renewal_read_only'] as const) {
     assert.equal(MOMENT_TYPE[m], 'billing');
     assert.equal(ESSENTIAL_MOMENTS.has(m), true);
+  }
+  for (const m of PUSH_MOMENTS.filter((x) => !x.startsWith('renewal_'))) {
+    assert.equal(ESSENTIAL_MOMENTS.has(m), false, `${m}: the person's switch for that type applies`);
   }
 });
 
@@ -24,7 +27,7 @@ test('payload schemas are strict: an unknown key or a missing recipient is refus
   assert.equal(pushEventPayload.safeParse(base).success, true);
   assert.equal(pushEventPayload.safeParse({ ...base, path: '/billing' }).success, false, 'no path field exists');
   assert.equal(pushEventPayload.safeParse({ ...base, recipients: [] }).success, false);
-  assert.equal(pushEventPayload.safeParse({ ...base, moment: 'swap_requested' }).success, false);
+  assert.equal(pushEventPayload.safeParse({ ...base, moment: 'shift_moved' }).success, false, 'an unknown moment is refused');
   const push = { dedupeKey: 'k', eventRowId: randomUUID(), userId: randomUUID(), teamId: randomUUID(), teamTimeZone: 'UTC', moment: 'renewal_failed', title: 'a', body: 'b' };
   assert.equal(pushPayload.safeParse(push).success, true);
   assert.equal(pushPayload.safeParse({ ...push, extra: 1 }).success, false);

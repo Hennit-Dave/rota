@@ -4,6 +4,8 @@ import { Prisma, type SwapRequest } from '../generated/prisma/client.js';
 import { ApiError } from '../http/errors.js';
 import { can, type Role } from '../teams/permissions.js';
 import { assertNoOverlap, type Tx } from '../shifts/service.js';
+import type { EnqueueRow } from '../billing/renewal.js';
+import { enqueueEvents, queueSwapDecided, queueSwapRequested } from '../push/events.js';
 import { approverMayDecide } from './rules.js';
 
 /**
@@ -158,7 +160,7 @@ const invalid = (details: Array<{ path: string; code: string }>) => new ApiError
  */
 export async function createSwap(
   shards: Shards,
-  input: { teamId: string; caller: Caller; idempotencyKey: string; offeredShiftId: string; requestedShiftId: string; maxPending: number; now?: Date; maxWaitMs?: number },
+  input: { teamId: string; caller: Caller; idempotencyKey: string; offeredShiftId: string; requestedShiftId: string; maxPending: number; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow },
 ): Promise<{ swap: SwapView; created: boolean }> {
   const { teamId, caller, idempotencyKey, offeredShiftId, requestedShiftId, maxPending } = input;
   const now = input.now ?? new Date();
@@ -192,7 +194,7 @@ export async function createSwap(
       // Looked at AGAIN now that this person's requests are queued: a retry that raced the original waits here, and must get the original back, not run
       // into "this shift is already in a swap" (which the original just made true).
       const already = await stored(tx);
-      if (already) return { row: already, created: false };
+      if (already) return { row: already, created: false, work: [] };
 
       const shifts = await tx.shift.findMany({ where: { teamId, id: { in: [offeredShiftId, requestedShiftId] } } });
       const offered = shifts.find((s) => s.id === offeredShiftId);
@@ -249,8 +251,12 @@ export async function createSwap(
           data: { swapId: created.id, title: offered.title, startsAt: snapshot.offered.startsAt, endsAt: snapshot.offered.endsAt, requestedTitle: requested.title },
         },
       });
-      return { row: created, created: true };
+      // The push event commits or rolls back with the swap and its activity row (ADR 0033): the people who can decide it, and the other party, are told. A repeat of
+      // the same Idempotency-Key (above) returns early and tells nobody twice.
+      const work = await queueSwapRequested(tx, { teamId, swapId: created.id, actorUserId: caller.userId, counterpartyUserId: counterpartyId, approverIds: await approverIdsOf(tx, teamId) });
+      return { row: created, created: true, work };
     }, { maxWait: input.maxWaitMs ?? DEFAULT_MAX_WAIT_MS });
+    await enqueueEvents(prisma, teamId, made.work, input.enqueue);
     return { swap: await viewOne(shards, made.row, caller), created: made.created };
   } catch (error) {
     // Two simultaneous requests with the same key: the database let one insert; the other gets that one back.
@@ -294,13 +300,13 @@ export async function cancelSwap(shards: Shards, input: { teamId: string; swapId
  */
 export async function decideSwap(
   shards: Shards,
-  input: { teamId: string; swapId: string; caller: Caller; decision: 'approve' | 'reject'; now?: Date; maxWaitMs?: number },
+  input: { teamId: string; swapId: string; caller: Caller; decision: 'approve' | 'reject'; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow },
 ): Promise<SwapView> {
   const { teamId, swapId, caller, decision } = input;
   const now = input.now ?? new Date();
   const prisma = getShard(shards, teamId).primary;
 
-  const row = await prisma.$transaction(async (tx) => {
+  const decided = await prisma.$transaction(async (tx) => {
     // Locked and read in ONE statement (each round trip to the database costs time, and this transaction is the longest).
     const found = await tx.$queryRaw<LockedSwap[]>`
       SELECT id, team_id, requester_user_id, counterparty_user_id, offered_shift_id, requested_shift_id, status::text AS status, snapshot
@@ -328,7 +334,8 @@ export async function decideSwap(
     if (decision === 'reject') {
       const updated = await tx.swapRequest.update({ where: { id: swapId }, data: { status: 'rejected', decidedAt: now, decidedByUserId: caller.userId } });
       await writeActivity(tx, 'swap_rejected', swap, caller.userId, snap);
-      return updated;
+      const work = await queueSwapDecided(tx, { teamId, swapId, moment: 'swap_rejected', actorUserId: caller.userId, requesterUserId: swap.requesterUserId, counterpartyUserId: swap.counterpartyUserId });
+      return { updated, work };
     }
 
     // Both people's membership rows, in a fixed order so two approvals cannot deadlock, then both shifts.
@@ -360,9 +367,11 @@ export async function decideSwap(
     await tx.shift.update({ where: { id: requested.id }, data: { assignedUserId: swap.requesterUserId } });
     const updated = await tx.swapRequest.update({ where: { id: swapId }, data: { status: 'approved', decidedAt: now, decidedByUserId: caller.userId } });
     await writeActivity(tx, 'swap_approved', swap, caller.userId, snap);
-    return updated;
+    const work = await queueSwapDecided(tx, { teamId, swapId, moment: 'swap_approved', actorUserId: caller.userId, requesterUserId: swap.requesterUserId, counterpartyUserId: swap.counterpartyUserId });
+    return { updated, work };
   }, { maxWait: input.maxWaitMs ?? DEFAULT_MAX_WAIT_MS });
-  return viewOne(shards, row, caller);
+  await enqueueEvents(prisma, teamId, decided.work, input.enqueue);
+  return viewOne(shards, decided.updated, caller);
 }
 
 async function writeActivity(tx: Tx, kind: 'swap_approved' | 'swap_rejected', swap: Pick<LockedSwapView, 'id' | 'teamId' | 'offeredShiftId'>, actorUserId: string, snap: Snapshot): Promise<void> {

@@ -12,6 +12,7 @@ import { createTeamInvitationsRouter } from '../invites/routes.js';
 import { createActivityRouter } from '../activity/routes.js';
 import { createSwapsRouter } from '../swaps/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
+import type { EnqueueRow } from '../billing/renewal.js';
 import type { InviteDeps } from '../invites/service.js';
 import { createBillingRouter } from '../billing/routes.js';
 import { getRenewalView, noticeFor } from '../billing/renewalState.js';
@@ -30,6 +31,8 @@ export interface TeamsDeps {
   invites: InviteDeps;
   /** When given, mounts /:teamId/billing (payments, ADR 0027). */
   billing?: BillingDeps;
+  /** Puts a push event onto the queue after a shift or swap change committed (ADR 0033). It never throws. */
+  enqueue?: EnqueueRow;
 }
 
 const noStore: RequestHandler = (_req, res, next) => {
@@ -40,7 +43,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 /** The team routes (mounted at /teams). The pipelines are the ones in security.md: user routes and team routes. */
 export function createTeamsRouter(deps: TeamsDeps): Router {
-  const { shards, tokens, limiter, logger, config, invites, billing } = deps;
+  const { shards, tokens, limiter, logger, config, invites, billing, enqueue } = deps;
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
 
@@ -111,9 +114,9 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
 
   router.use('/:teamId/invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   // Shifts (ADR 0021). They carry the router's body parser, log base and no-store through `router.use` above.
-  router.use('/:teamId/shifts', createShiftsRouter({ shards, tokens }));
+  router.use('/:teamId/shifts', createShiftsRouter({ shards, tokens, enqueue }));
   router.use('/:teamId/activity', createActivityRouter({ shards, tokens, limiter, logger, config }));
-  router.use('/:teamId/swaps', createSwapsRouter({ shards, tokens, limiter, logger, config }));
+  router.use('/:teamId/swaps', createSwapsRouter({ shards, tokens, limiter, logger, config, enqueue }));
   if (billing) router.use('/:teamId/billing', createBillingRouter({ shards, tokens, limiter, logger, config, billing }));
 
   return router;

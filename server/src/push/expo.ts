@@ -1,4 +1,4 @@
-import type { PushData } from './message.js';
+import type { PushChannelId, PushData } from './message.js';
 
 /**
  * The Expo push client (ADR 0032). Request and answer shapes are from Expo's "Send notifications" page (read 2026-11-03): POST
@@ -17,8 +17,8 @@ export interface ExpoMessage {
   title: string;
   body: string;
   data: PushData;
-  /** The Android channel the app creates (`default`). A channel the device does not have drops the message silently, so the app creates it before it registers. */
-  channelId: 'default';
+  /** The Android channel of this push's type (ADR 0033). A channel the device does not have drops the message silently, so the app creates them all before it registers. */
+  channelId: PushChannelId | 'default';
 }
 
 export type Ticket = { status: 'ok'; id: string } | { status: 'error'; message: string; error?: string };

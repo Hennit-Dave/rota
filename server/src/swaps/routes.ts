@@ -10,6 +10,7 @@ import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
 import { createRequireWritable } from '../teams/writeGuard.js';
+import type { EnqueueRow } from '../billing/renewal.js';
 import { loadSwapsConfig, type SwapsConfig } from './config.js';
 import { createSwapSchemas, idempotencyKey } from './schemas.js';
 import { cancelSwap, createSwap, decideSwap, getSwap, listSwaps } from './service.js';
@@ -21,6 +22,8 @@ export interface SwapsRouteDeps {
   logger: Logger;
   config: AuthConfig;
   swaps?: SwapsConfig;
+  /** Puts a push event onto the queue after the swap change committed (ADR 0033). It never throws. */
+  enqueue?: EnqueueRow;
 }
 
 // Swaps are the team's private business: never cacheable between the server and the app.
@@ -88,6 +91,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
         requestedShiftId: body.requestedShiftId,
         maxPending: swapsConfig.maxPending,
         maxWaitMs: config.transactionMaxWaitMs,
+        enqueue: deps.enqueue,
       });
       // 201 when this call made the request, 200 when it is the stored answer to a repeat of the same key.
       res.status(result.created ? 201 : 200).json({ swap: result.swap });
@@ -104,7 +108,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
   for (const decision of ['approve', 'reject'] as const) {
     router.post(`/:swapId/${decision}`, validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.approve'), requireWritable, async (req, res) => {
       const { teamId, swapId } = req.validated!.params as { teamId: string; swapId: string };
-      res.json({ swap: await decideSwap(shards, { teamId, swapId, caller: caller(req), decision, maxWaitMs: config.transactionMaxWaitMs }) });
+      res.json({ swap: await decideSwap(shards, { teamId, swapId, caller: caller(req), decision, maxWaitMs: config.transactionMaxWaitMs, enqueue: deps.enqueue }) });
     });
   }
 

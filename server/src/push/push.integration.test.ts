@@ -124,7 +124,7 @@ async function quiet(lines: () => Promise<void>): Promise<string[]> {
 }
 
 const SWEEP = 2 * 60_000;
-async function makePushRow(opts: { userId: string; teamId: string; moment?: PushPayload['moment']; runAt?: Date; status?: 'pending' | 'claimed'; teamTimeZone?: string }): Promise<WorkRow> {
+async function makePushRow(opts: { userId: string; teamId: string; moment?: PushPayload['moment']; runAt?: Date; status?: 'pending' | 'claimed'; teamTimeZone?: string; shiftId?: string; swapId?: string }): Promise<WorkRow> {
   const payload: PushPayload = {
     dedupeKey: `test:${randomUUID()}`,
     eventRowId: randomUUID(),
@@ -134,6 +134,8 @@ async function makePushRow(opts: { userId: string; teamId: string; moment?: Push
     moment: opts.moment ?? 'renewal_failed',
     title: 'Renewal payment failed',
     body: 'We could not collect the renewal for The Olive Room. Open Rota to fix it.',
+    ...(opts.shiftId ? { shiftId: opts.shiftId } : {}),
+    ...(opts.swapId ? { swapId: opts.swapId } : {}),
   };
   const runAt = opts.runAt ?? new Date(Date.now() - 1000);
   return A().workRow.create({
@@ -237,7 +239,7 @@ test('send: the Owner gets one push per device; the phone is told a type, a mome
   assert.equal(expo.calls, 1, 'one batched call');
   for (const m of expo.sent) {
     assert.deepEqual(m.data, { v: 1, type: 'billing', moment: 'renewal_failed', teamId: team });
-    assert.equal(m.channelId, 'default');
+    assert.equal(m.channelId, 'billing', 'billing has its own channel (ADR 0033)');
     assert.doesNotMatch(JSON.stringify(m), /\$|cent|amount|price|\/billing/i, 'no money and no path in what the phone receives');
   }
   const d = await deliveriesOf(row.id);
@@ -485,4 +487,74 @@ test('deleting a device token also deletes its delivery records, so a removed ph
   const [device] = await devicesOf(A(), owner);
   await deleteDeviceById(A(), device!.id);
   assert.equal((await deliveriesOf(row.id)).length, 0);
+});
+
+// ---- shift and swap pushes (ADR 0033) -----------------------------------------------------------------------------------------------------------------
+
+test('a shift push goes on the shift_changes channel with the shift id in the data, to any ACTIVE member (a Staff member, not only an Owner)', async () => {
+  const owner = await makeUser();
+  const staff = await makeUser();
+  const team = await makeTeam('A', owner, [{ userId: staff, role: 'staff' }]);
+  await registerDevice(A(), staff, token());
+  const shiftId = randomUUID();
+  const row = await makePushRow({ userId: staff, teamId: team, moment: 'shift_updated', shiftId });
+  const { processor, expo } = harness();
+  await quiet(() => processor(job(row, 'A')));
+  assert.equal(expo.sent.length, 1);
+  assert.equal(expo.sent[0]!.channelId, 'shift_changes');
+  assert.deepEqual(expo.sent[0]!.data, { v: 1, type: 'shift_changes', moment: 'shift_updated', teamId: team, shiftId });
+});
+
+test('a swap push goes on the swap_updates channel with the swap id in the data', async () => {
+  const owner = await makeUser();
+  const staff = await makeUser();
+  const team = await makeTeam('B', owner, [{ userId: staff, role: 'staff' }]);
+  await registerDevice(A(), staff, token());
+  const swapId = randomUUID();
+  const row = await makePushRow({ userId: staff, teamId: team, moment: 'swap_approved', swapId });
+  const { processor, expo } = harness();
+  await quiet(() => processor(job(row, 'A')));
+  assert.equal(expo.sent[0]!.channelId, 'swap_updates');
+  assert.deepEqual(expo.sent[0]!.data, { v: 1, type: 'swap_updates', moment: 'swap_approved', teamId: team, swapId });
+});
+
+test('the per-type switches apply to shift and swap pushes (they are not essential), each only to its own type', async () => {
+  const owner = await makeUser();
+  const staff = await makeUser();
+  const team = await makeTeam('A', owner, [{ userId: staff, role: 'staff' }]);
+  await registerDevice(A(), staff, token());
+  await changeSetting(A(), staff, { notifyShiftChanges: false });
+
+  const shiftRow = await makePushRow({ userId: staff, teamId: team, moment: 'shift_created', shiftId: randomUUID() });
+  const h1 = harness();
+  const lines = await quiet(() => h1.processor(job(shiftRow, 'A')));
+  assert.equal(h1.expo.calls, 0, 'shift changes are switched off');
+  assert.match(lines.join('\n'), /outcome=skipped reason=type_off type=shift_changes/);
+
+  const swapRow = await makePushRow({ userId: staff, teamId: team, moment: 'swap_rejected', swapId: randomUUID() });
+  const h2 = harness();
+  await quiet(() => h2.processor(job(swapRow, 'A')));
+  assert.equal(h2.expo.sent.length, 1, 'swap updates are still on: the shift switch does not touch them');
+
+  await changeSetting(A(), staff, { notifySwapUpdates: false });
+  const swapRow2 = await makePushRow({ userId: staff, teamId: team, moment: 'swap_requested', swapId: randomUUID() });
+  const h3 = harness();
+  await quiet(() => h3.processor(job(swapRow2, 'A')));
+  assert.equal(h3.expo.calls, 0, 'swap updates are now switched off too');
+});
+
+test('someone who is not an active member any more gets nothing: a person who left, and a person deactivated at a reduction', async () => {
+  const owner = await makeUser();
+  const left = await makeUser();
+  const deactivated = await makeUser();
+  const team = await makeTeam('A', owner, [{ userId: deactivated, role: 'staff' }]);
+  for (const u of [left, deactivated]) await registerDevice(A(), u, token());
+  await shards[shardFor(team)].primary.membership.updateMany({ where: { teamId: team, userId: deactivated }, data: { deactivatedAt: new Date() } });
+  for (const u of [left, deactivated]) {
+    const row = await makePushRow({ userId: u, teamId: team, moment: 'shift_deleted', shiftId: randomUUID() });
+    const { processor, expo } = harness();
+    const lines = await quiet(() => processor(job(row, 'A')));
+    assert.equal(expo.calls, 0);
+    assert.match(lines.join('\n'), /reason=not_a_member/);
+  }
 });

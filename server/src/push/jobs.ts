@@ -8,6 +8,7 @@ import { deleteDeviceById, devicesOf } from './devices.js';
 import { ExpoPushError, MAX_MESSAGES_PER_REQUEST, MAX_RECEIPTS_PER_REQUEST, type ExpoMessage, type ExpoPushClient } from './expo.js';
 import type { PushConfig } from './config.js';
 import {
+  channelFor,
   ESSENTIAL_MOMENTS,
   MOMENT_TYPE,
   pushDataFor,
@@ -112,6 +113,8 @@ export function createPushEventHandler(deps: Deps): JobHandler {
         title: event.title,
         body: event.body,
         ...(event.renewalId ? { renewalId: event.renewalId } : {}),
+        ...(event.shiftId ? { shiftId: event.shiftId } : {}),
+        ...(event.swapId ? { swapId: event.swapId } : {}),
         ...(event.skipIfRenewalPaid ? { skipIfRenewalPaid: true } : {}),
       };
       // ON CONFLICT DO NOTHING: a replay of this fan-out finds the row already there. If the first run crashed before enqueueing, the sweep picks the pending row up.
@@ -148,6 +151,12 @@ async function stillWanted(deps: Deps, payload: PushPayload): Promise<{ ok: true
       SELECT 1 AS ok FROM memberships
       WHERE team_id = ${payload.teamId}::uuid AND user_id = ${payload.userId}::uuid AND role = 'owner'::team_role AND deactivated_at IS NULL`;
     if (owner.length === 0) return { ok: false, reason: 'not_owner' };
+  } else {
+    // Shift and swap pushes go to whoever the event named, if they are still an active member of the team (any role): someone who left, or was deactivated at a
+    // reduction (ADR 0029), since the event happened gets nothing (ADR 0033).
+    const member = await team.$queryRaw<Array<{ ok: number }>>`
+      SELECT 1 AS ok FROM memberships WHERE team_id = ${payload.teamId}::uuid AND user_id = ${payload.userId}::uuid AND deactivated_at IS NULL`;
+    if (member.length === 0) return { ok: false, reason: 'not_a_member' };
   }
   if (payload.renewalId && (await renewalIsPaid(team, payload.renewalId))) return { ok: false, reason: 'renewal_paid' };
   return { ok: true };
@@ -223,7 +232,7 @@ export function createPushHandler(deps: PushSendDeps): JobHandler {
     for (let i = 0; i < todo.length; i += MAX_MESSAGES_PER_REQUEST) {
       const batch = todo.slice(i, i + MAX_MESSAGES_PER_REQUEST);
       if (!(await ctx.renewLease())) throw new OwnershipLostError('before the send');
-      const messages: ExpoMessage[] = batch.map((d) => ({ to: d.expo_token, title: payload.title, body: payload.body, data: pushDataFor(payload), channelId: 'default' }));
+      const messages: ExpoMessage[] = batch.map((d) => ({ to: d.expo_token, title: payload.title, body: payload.body, data: pushDataFor(payload), channelId: channelFor(type) }));
       let tickets;
       try {
         tickets = await deps.expo.send(messages);
