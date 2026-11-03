@@ -148,7 +148,17 @@ const app = createApp({
     },
   },
   invitations: { shards, tokens, limiter, config, invites },
-  settings: { shards, tokens, limiter, config },
+  // A quiet-hours or time-zone change moves the user's waiting pushes in its own transaction; the moved rows are enqueued after it commits (ADR 0032).
+  settings: {
+    shards,
+    tokens,
+    limiter,
+    config,
+    enqueue: async (prisma, row, shard) => {
+      await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
+    },
+  },
+  devices: { shards, tokens, limiter, config },
 });
 
 const server = app.listen(port, (error) => {

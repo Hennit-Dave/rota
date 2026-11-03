@@ -66,6 +66,7 @@ export type RateRuleConfigOverrides = Partial<
     | 'inviteLinkTeam'
     | 'settingsReadUser'
     | 'settingsWriteUser'
+    | 'devicesWriteUser'
     | 'inviteSendUser'
     | 'inviteSendTeam'
     | 'invitePreviewIp'

@@ -143,7 +143,7 @@ async function ownerContact(shards: Shards, teamId: string): Promise<OwnerContac
   const userId = owner[0]?.user_id;
   if (!userId) return null;
   const user = await identityDb(shards).user.findUnique({ where: { id: userId }, select: { email: true, name: true } });
-  return user ? { email: user.email, name: user.name } : null;
+  return user ? { userId, email: user.email, name: user.name } : null;
 }
 
 interface FailureInput {
@@ -178,6 +178,7 @@ async function recordFailure(tx: Tx, input: FailureInput): Promise<NewWork[]> {
   return queueOwnerNotices(
     tx,
     {
+      teamId: input.teamId,
       teamName: team[0]?.name ?? 'Your team',
       timeZone: team[0]?.time_zone ?? 'UTC',
       owner: input.owner,

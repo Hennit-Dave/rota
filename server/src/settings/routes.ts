@@ -9,6 +9,9 @@ import { recordRouteBase, type Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { updateBody } from './schemas.js';
+import type { PrismaClient, WorkRow } from '../generated/prisma/client.js';
+import type { ShardId } from '../db/shard.js';
+import { reschedulePushRows } from '../push/reschedule.js';
 import { changeSetting, getSettings } from './service.js';
 
 export interface SettingsRouteDeps {
@@ -17,6 +20,8 @@ export interface SettingsRouteDeps {
   limiter: RateLimiter;
   logger: Logger;
   config: AuthConfig;
+  /** Enqueues a work row after its transaction committed; it never throws (jobs.md). Used for the pushes a quiet-hours or time-zone change moves. */
+  enqueue?: (prisma: PrismaClient, row: Pick<WorkRow, 'id' | 'kind' | 'generation' | 'runAt'>, shard: ShardId) => Promise<void>;
 }
 
 // A user's settings are private to them: never cacheable between the server and the app.
@@ -50,7 +55,23 @@ export function createSettingsRouter(deps: SettingsRouteDeps): Router {
 
   // PATCH /settings   { <one field>: value }
   router.patch('/', validateRequest({ body: updateBody }), requireAuth, writeLimit, async (req, res) => {
-    res.json({ settings: await changeSetting(db, req.auth!.userId, req.validated!.body as Parameters<typeof changeSetting>[2]) });
+    const userId = req.auth!.userId;
+    const change = req.validated!.body as Parameters<typeof changeSetting>[2];
+    if (!('quietHours' in change || 'timeZone' in change)) {
+      res.json({ settings: await changeSetting(db, userId, change) });
+      return;
+    }
+    // Quiet hours and the time zone decide WHEN waiting pushes may be sent, so the new value and the new schedule commit together (jobs.md, ADR 0032).
+    const { settings, moved } = await db.$transaction(
+      async (tx) => {
+        const next = await changeSetting(tx as PrismaClient, userId, change);
+        return { settings: next, moved: await reschedulePushRows(tx, userId, next, new Date()) };
+      },
+      { maxWait: config.transactionMaxWaitMs, timeout: 15_000 },
+    );
+    // After the commit; never throws: a Valkey failure leaves the row for the sweep.
+    if (deps.enqueue) for (const row of moved) await deps.enqueue(db, row, 'A');
+    res.json({ settings });
   });
 
   return router;

@@ -215,9 +215,10 @@ test('the Owner sees the full words; everyone else is told only once the team is
 // ---- the Owner's emails
 
 const notice: NoticeInput = {
+  teamId: randomUUID(),
   teamName: 'The Olive Room',
   timeZone: 'Africa/Lagos',
-  owner: { email: 'owner@example.test', name: 'Olive Owner' },
+  owner: { userId: randomUUID(), email: 'owner@example.test', name: 'Olive Owner' },
   sender: { from: 'Rota <notification@rota.example>', replyTo: 'rota@example.test' },
   renewalId: randomUUID(),
   amountCents: 5000,

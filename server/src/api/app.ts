@@ -5,6 +5,7 @@ import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../b
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { createInvitationsRouter, type InvitesRouteDeps } from '../invites/routes.js';
+import { createDeviceRouter, type DeviceRouteDeps } from '../push/routes.js';
 import { createSettingsRouter, type SettingsRouteDeps } from '../settings/routes.js';
 import { createTeamsRouter, type TeamsDeps } from '../teams/routes.js';
 
@@ -20,6 +21,8 @@ export interface AppDeps {
   invitations?: Omit<InvitesRouteDeps, 'logger'>;
   /** When given, mounts /settings (ADR 0024). */
   settings?: Omit<SettingsRouteDeps, 'logger'>;
+  /** When given, mounts /devices (push device registration, ADR 0032). */
+  devices?: Omit<DeviceRouteDeps, 'logger'>;
   /** When given, mounts POST /webhooks/stripe with its raw-body parser, before any router that parses JSON (AGENTS.md rule 7). */
   stripeWebhook?: Omit<WebhookDeps, 'logger'>;
 }
@@ -54,6 +57,9 @@ export function createApp(deps: AppDeps = {}) {
   }
   if (deps.settings) {
     app.use('/settings', createSettingsRouter({ ...deps.settings, logger }));
+  }
+  if (deps.devices) {
+    app.use('/devices', createDeviceRouter({ ...deps.devices, logger }));
   }
 
   installPostRoutes(app, logger);
