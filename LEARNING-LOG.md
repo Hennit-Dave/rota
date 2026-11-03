@@ -233,3 +233,7 @@ Hiding a button only stops someone from tapping it; they can still send the same
 ## 2026-11-03 — Push notifications part 1 (PR #63)
 
 The row ID tells me which push job I'm tracing, and the device ID tells me which device it was meant for. Those IDs let me follow a retry or investigate a failure without putting the private push token in the logs.
+
+## 2026-11-03 — Shift and swap pushes (PR #65)
+
+I learned why Rota saves the activity row and the request to send a push in one transaction: either both are saved or neither is. If the server crashes just after saving a shift change, the worker still has a record telling it to send the notification.
