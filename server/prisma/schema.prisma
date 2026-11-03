@@ -80,6 +80,7 @@ model User {
   userTeams  UserTeam[]
   authTokens AuthToken[]
   settings   UserSettings?
+  devices    DeviceToken[]
 
   @@map("users")
 }
@@ -724,4 +725,51 @@ model Renewal {
 
   @@unique([teamId, periodId], map: "renewals_team_id_period_id_key")
   @@map("renewals")
+}
+
+// ---- Push notifications (identity data: shard A only; the same migrations run on both shards; ADR 0032, issue #53) ----
+
+// One row per device that can receive push: its Expo push token, owned by the signed-in user. The token is unique across the table, so registering it again
+// as another user MOVES it (a device never gets two people's notifications). Also in the SQL, which Prisma cannot express: CHECK "device_tokens_expo_token_shape".
+model DeviceToken {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  expoToken  String   @unique @map("expo_token")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+enum PushDeliveryStatus {
+  sending
+  sent
+  failed
+
+  @@map("push_delivery_status")
+}
+
+// One row per (notification, device): the duplicate guard for the push job (jobs.md "Push"). `sending` is written before the call to Expo. Also in the SQL:
+// CHECK "push_deliveries_sent_has_ticket", and on work_rows the partial unique index "work_rows_push_dedupe_key" (one push row per event and recipient).
+model PushDelivery {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workRowId        String             @map("work_row_id") @db.Uuid
+  deviceTokenId    String             @map("device_token_id") @db.Uuid
+  status           PushDeliveryStatus @default(sending)
+  sendingStartedAt DateTime           @default(now()) @map("sending_started_at") @db.Timestamptz(3)
+  ticketId         String?            @map("ticket_id")
+  sentAt           DateTime?          @map("sent_at") @db.Timestamptz(3)
+  error            String?
+  receiptCheckedAt DateTime?          @map("receipt_checked_at") @db.Timestamptz(3)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  deviceToken DeviceToken @relation(fields: [deviceTokenId], references: [id], onDelete: Cascade)
+
+  @@unique([workRowId, deviceTokenId])
+  @@index([ticketId])
+  @@map("push_deliveries")
 }

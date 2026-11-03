@@ -22,6 +22,9 @@ import { createEmailHandler } from '../jobs/email.js';
 import { loadResendConfig, loadSenderConfig } from '../jobs/mail.js';
 import { createResendClient } from '../jobs/resend.js';
 import { createWorkWorker } from '../jobs/worker.js';
+import { loadPushConfig } from '../push/config.js';
+import { createExpoPushClient } from '../push/expo.js';
+import { createPushEventHandler, createPushHandler, createPushReceiptsHandler, PUSH_EVENT_KIND, PUSH_KIND, PUSH_RECEIPTS_KIND } from '../push/jobs.js';
 import type { Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 
@@ -79,6 +82,17 @@ const enqueue: EnqueueRow = async (prisma, row, shard) => {
   await enqueueCommittedRow(prisma, row, shard, () => reconcileQueue);
 };
 
+// Push (ADR 0032): the Expo push client and its two settings. A bad value stops the worker before it takes any work. The worker holds no Expo or Firebase secret:
+// the FCM key lives at Expo (EAS credentials), and enhanced push security is not used (a known gap, ADR 0032).
+let pushConfig: ReturnType<typeof loadPushConfig>;
+try {
+  pushConfig = loadPushConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+const expo = createExpoPushClient({ timeoutMs: pushConfig.sendTimeoutMs });
+
 const handlers = {
   test: async (ctx: any) => {
     console.log(`[job:test] processing row ${ctx.row.id}`);
@@ -88,6 +102,10 @@ const handlers = {
   stripe_event: createStripeEventHandler({ shards, stripe, renewal: { graceDays: renewalConfig.graceDays, sender, enqueue } }),
   // The renewal at the end of a period, and the Owner's retry (ADR 0031). It charges the saved card; only the verified webhook decides the outcome.
   [RENEWAL_KIND]: createRenewalHandler({ shards, stripe, graceDays: renewalConfig.graceDays, sender, enqueue }),
+  // Push notifications (ADR 0032): fan out an event to its recipients, send to their devices, then read Expo's receipts.
+  [PUSH_EVENT_KIND]: createPushEventHandler({ shards, enqueue }),
+  [PUSH_KIND]: createPushHandler({ shards, enqueue, expo, config: pushConfig }),
+  [PUSH_RECEIPTS_KIND]: createPushReceiptsHandler({ expo, config: pushConfig, enqueue }),
   // The check at the end of a period for a scheduled reduction (ADR 0029). It records ready, blocked or continuing and applies nothing (P6 does).
   [REDUCTION_BOUNDARY_KIND]: createReductionBoundaryHandler({ shards }),
 };

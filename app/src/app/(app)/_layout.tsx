@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import { useMe } from '../../auth/useMe';
+import { usePushTaps, useRegisterPush } from '../../notifications/usePush';
 import { useSettings } from '../../settings/useSettings';
 import { useColors } from '../../theme';
 
@@ -12,5 +13,8 @@ export default function AppLayout() {
   const colors = useColors();
   const me = useMe();
   useSettings(me.data?.id);
+  // Push (ADR 0032): this phone registers once a person is signed in, and a tap on a notification opens the right screen.
+  useRegisterPush(me.data?.id);
+  usePushTaps();
   return <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} />;
 }

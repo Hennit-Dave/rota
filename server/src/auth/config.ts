@@ -43,6 +43,7 @@ export interface AuthConfig {
     inviteLinkTeam: RateRuleConfig;
     settingsReadUser: RateRuleConfig;
     settingsWriteUser: RateRuleConfig;
+    devicesWriteUser: RateRuleConfig;
     inviteSendUser: RateRuleConfig;
     inviteSendTeam: RateRuleConfig;
     invitePreviewIp: RateRuleConfig;
@@ -133,6 +134,8 @@ export function loadAuthConfig(env: Env = process.env): AuthConfig {
       inviteLinkTeam: rule(env, 'RATE_LIMIT_INVITE_LINK_TEAM', { max: 20, windowSeconds: 86_400 }),
       settingsReadUser: rule(env, 'RATE_LIMIT_SETTINGS_READ_USER', { max: 120, windowSeconds: 60 }),
       settingsWriteUser: rule(env, 'RATE_LIMIT_SETTINGS_WRITE_USER', { max: 30, windowSeconds: 60 }),
+      // Push device registration and removal (ADR 0032). PROPOSED, CHOSEN, NOT MEASURED: it reuses the settings write limit; the app registers once per sign-in.
+      devicesWriteUser: rule(env, 'RATE_LIMIT_DEVICES_WRITE_USER', { max: 30, windowSeconds: 60 }),
       // Approved by Dave 2026-10-23 (Invites plan). Unauthenticated preview and accept reuse the login-IP baseline (30 per 15 minutes);
       // the token's entropy is the security, these only bound abuse.
       inviteSendUser: rule(env, 'RATE_LIMIT_INVITE_SEND_USER', { max: 10, windowSeconds: 3600 }),

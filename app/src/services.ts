@@ -11,6 +11,9 @@ import { createSessionActions } from './auth/session';
 import { AccountEpoch } from './auth/epoch';
 import { secureTokenStore } from './auth/secureTokenStore';
 import { createSignOutLocal } from './auth/signOut';
+import { createDevicesApi } from './notifications/devicesApi';
+import { unregisterThisDevice } from './notifications/registration';
+import { expoPlatform } from './notifications/expoPlatform';
 import { useSessionStore } from './state/sessionStore';
 import { createInviteApi } from './invites/inviteApi';
 import { createRecoveryApi } from './recovery/recoveryApi';
@@ -91,6 +94,11 @@ export function getBillingApi() {
   return createBillingApi(getApi());
 }
 
+/** The push device routes (ADR 0032) over the one API client. */
+export function getDevicesApi() {
+  return createDevicesApi(getApi());
+}
+
 /** The settings routes (docs/ARCHITECTURE.md, ADR 0024) over the one API client. Built on first use, like the client. */
 export function getSettingsApi() {
   return createSettingsApi(getApi());
@@ -139,6 +147,8 @@ export function getSessionActions() {
     client: getApi(),
     isOnline: () => onlineManager.isOnline(),
     signOutLocal,
+    // Before the session is revoked (the call needs it): stop this phone getting the signed-out person's notifications. Best effort; never throws.
+    beforeLogout: () => unregisterThisDevice({ platform: expoPlatform, api: getDevicesApi() }),
   });
 }
 

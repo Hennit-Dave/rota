@@ -4,8 +4,8 @@
 //   1. "we could not collect your renewal": sent at once, with the day the grace period ends.
 //   2. "your team is now read-only": runs at the END of the grace period, and is skipped (the email job checks) if the renewal was paid in the meantime.
 //
-// PUSH HOOK: when the push slice lands (issue #53), add the push rows for the same two moments HERE, in `queueOwnerNotices`, Owner only. Nothing else changes: the
-// moments are already decided by this module and each one already has its work row in the same transaction as the failure.
+// PUSH (ADR 0032, issue #53): the same two moments also get a `push_event` work row, in the same transaction, for the Owner alone. The push job re-checks that
+// they are still the Owner, and that the renewal is still unpaid, when it runs. These two skip the Owner's `notifyBilling` toggle (essential; Dave, 2026-11-03).
 import { escapeHtml, formatExpiry, singleLine } from '../invites/emailTemplate.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { formatUsd } from './display.js';
@@ -15,6 +15,8 @@ import { failureSentence } from './renewalState.js';
 type Tx = Pick<PrismaClient, '$queryRaw' | '$executeRaw'>;
 
 export interface OwnerContact {
+  /** The Owner's user id: the push recipient (ADR 0032). The role is checked again when the push is sent. */
+  userId: string;
   email: string;
   name: string;
 }
@@ -46,6 +48,7 @@ export async function insertWorkRow(tx: Tx, kind: string, payload: unknown, runA
 }
 
 export interface NoticeInput {
+  teamId: string;
   teamName: string;
   timeZone: string;
   owner: OwnerContact;
@@ -102,9 +105,14 @@ export async function queueOwnerNotices(tx: Tx, input: NoticeInput, now: Date): 
   const base = { from: input.sender.from, replyTo: input.sender.replyTo, to: [input.owner.email], renewalId: input.renewalId };
   const failed = renderRenewalFailedEmail(input);
   const readOnly = renderTeamReadOnlyEmail(input);
+  const team = singleLine(input.teamName).slice(0, 60);
+  const push = { teamId: input.teamId, recipients: [input.owner.userId], renewalId: input.renewalId };
   return [
     await insertWorkRow(tx, 'email', { ...base, ...failed }, now),
     // `skipIfRenewalPaid`: by the time the grace period ends the Owner may have paid, and then this email would be wrong.
     await insertWorkRow(tx, 'email', { ...base, ...readOnly, skipIfRenewalPaid: true }, input.graceEndsAt),
+    // The pushes say less than the emails and carry no amount: the figure is on the Billing screen, from the server.
+    await insertWorkRow(tx, 'push_event', { ...push, moment: 'renewal_failed', title: 'Renewal payment failed', body: `We could not collect the renewal for ${team}. Open Rota to fix it.` }, now),
+    await insertWorkRow(tx, 'push_event', { ...push, moment: 'renewal_read_only', title: `${team} is now read-only`, body: 'Open Billing to pay and make changes again.', skipIfRenewalPaid: true }, input.graceEndsAt),
   ];
 }

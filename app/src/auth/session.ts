@@ -6,9 +6,11 @@ export interface SessionActionsDeps {
   client: Pick<ApiClient, 'post'>;
   isOnline(): boolean;
   signOutLocal: SignOutLocal;
+  /** Runs before the server is asked to revoke the session, while the access token still works (push device removal). Best effort: it must never throw. */
+  beforeLogout?: () => Promise<void>;
 }
 
-export function createSessionActions({ client, isOnline, signOutLocal }: SessionActionsDeps) {
+export function createSessionActions({ client, isOnline, signOutLocal, beforeLogout }: SessionActionsDeps) {
   return {
     /**
      * Explicit logout (app-state.md). Online: ask the server to revoke this device's session first, so a copied
@@ -19,6 +21,7 @@ export function createSessionActions({ client, isOnline, signOutLocal }: Session
       let serverConfirmed = false;
       if (isOnline()) {
         try {
+          await beforeLogout?.().catch(() => undefined);
           await client.post('/auth/logout');
           serverConfirmed = true;
         } catch (error) {
