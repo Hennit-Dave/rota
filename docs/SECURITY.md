@@ -209,6 +209,7 @@ Held in Valkey, never in memory (ADR 0007). Fixed windows, keyed by a hash of th
 | `feed_user` | 120 | 1 minute | `RATE_LIMIT_FEED_USER_MAX` / `_WINDOW_SECONDS` (per user ID; approved 2026-10-26; **chosen, not measured**: the load test, with 200 distinct users, checks it; ADR 0022) |
 | `settings_read_user` | 120 | 1 minute | `RATE_LIMIT_SETTINGS_READ_USER_MAX` / `_WINDOW_SECONDS` (per user ID; **proposed in the settings PR, awaiting approval; chosen, not measured**: it mirrors the feed, every foreground refetch is one read; ADR 0024) |
 | `settings_write_user` | 30 | 1 minute | `RATE_LIMIT_SETTINGS_WRITE_USER_MAX` / `_WINDOW_SECONDS` (per user ID; **proposed, awaiting approval; chosen, not measured**; ADR 0024) |
+| `devices_write_user` | 30 | 1 minute | `RATE_LIMIT_DEVICES_WRITE_USER_MAX` / `_WINDOW_SECONDS` (per user ID, registering or removing a push device; **approved by Dave 2026-11-03; chosen, not measured**; ADR 0032) |
 
 The app-wide invite cap exists because Resend's free plan sends 100 emails per UTC day in total, shared with password reset and magic link (slice 2b) and any proof sends (ADR 0015). A limit keyed by the team or the whole app runs **after** the membership and role check, so a stranger cannot spend another team's budget (`security.md`).
 
@@ -217,6 +218,16 @@ The app-wide invite cap exists because Resend's free plan sends 100 emails per U
 - **They work again on their own when Valkey is back, with no restart.** A connection that went silently dead (a laptop sleep, a NAT that forgot the mapping) is replaced after the first command timeout, so the limited routes answer 503 only while Valkey is really unreachable (ADR 0018, issue #39). An error reply such as `OOM` under `noeviction` is not a timeout and changes nothing: it still fails closed, and `noeviction` is never altered.
 - The IP is the TCP peer address. `X-Forwarded-For` is not trusted until the host's proxy setup is verified.
 - A set-but-invalid override (not a positive integer) stops the server from starting.
+
+## Push notifications (ADR 0032)
+
+- **A device belongs to the signed-in user.** `PUT /devices` and `POST /devices/unregister` are user routes: Zod, access token and session check, a per-user rate limit, then the handler. The user comes from the session, never the request. Unregister removes only the caller's own token; someone else's token, or an unknown one, changes nothing. A token that was another user's **moves** to whoever registers it, so a phone handed over stops notifying the first person. The database refuses anything that is not an Expo token.
+- **Every decision is the server's** (AGENTS.md rule 3). Who is told, in which role, with which switches and quiet hours, is read **when the job runs** from the primary: billing pushes go to the Owner of the team and nobody else, and an Owner who was replaced or deactivated gets nothing. Nothing the phone sends decides any of it.
+- **What the phone receives:** a version, a type, a moment and a team id. No path, no amount, no free text from a user, no secret. The app maps a known shape to a screen and ignores everything else, and the screen loads its data through the normal authorised API, so a forged notification can point the app somewhere but never show anything the person could not already see. No push carries a money figure (AGENTS.md rule 2).
+- **No secret in the app or the worker.** The Firebase service-account key is uploaded to Expo (EAS credentials), never committed and never in the repo; `google-services.json` is gitignored (ADR 0011). The worker holds no Expo or Firebase secret. Device tokens are never logged, never in an error text, and never in PR text or evidence; logs carry row ids and device ids.
+- **Known gap: enhanced push security is not enabled (Dave, 2026-11-03).** Expo's send endpoint requires no authentication, so anyone who learns a device's push token can make that phone show a notification (it cannot make the app do anything: a tap only opens a screen from a fixed list). Tokens are held only in the database and never leave the server. Turn it on before submission if time allows (ADR 0032).
+- **Known gap: lock-screen text.** A notification's title and body can be read on a locked phone. They carry the team's name and the fact that a renewal failed, no amount and nothing about people. A phone that was signed out involuntarily stays registered until another person signs in on it or Expo reports it unregistered (ADR 0032).
+- A push is a notification, not a guarantee: at-least-once processing, an accepted ticket does not prove delivery, and Expo has no SLA.
 
 ## Request IDs and logging
 

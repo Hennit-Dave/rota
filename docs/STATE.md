@@ -142,8 +142,13 @@ the revoke.
 - The time zone is chosen from a searchable list (a plain React Native modal, no new native module); the phone's own zone is the starting choice only
   if it is on the list.
 
+## Push notifications (`app/src/notifications/`, ADR 0032)
+
+The app holds **no push state**: the server owns every decision (who is told, when, whether). The app does three things. **Registers** this phone once a person is signed in (`useRegisterPush` in the signed-in layout): it makes the Android channel `default` first (a push naming a channel the phone does not have is dropped silently), asks for notification permission if the person was never asked, gets the Expo push token and sends it with `PUT /devices`. A refusal or a failure is not an error screen: nothing is registered and the settings still work. **Unregisters** before the server is asked to revoke the session at sign-out (best effort; it never blocks the sign-out). **Opens the right screen on a tap** (`usePushTaps`): it reads the response that launched the app and listens for taps while it runs, accepts only `{v:1, type:'billing', moment, teamId}` (`pushTarget.ts`), selects that team in the session store and opens the billing hub. Anything else opens nothing. No amount ever travels in a push; the billing screen shows the server's figures.
+
 ## Known weaknesses (written down on purpose)
 
+- **Tapping a notification with the app closed cannot be verified in a development build** (ADR 0032, like the cold-start invite link, ADR 0017): the dev launcher opens first, so with no app process at tap time the tap lands on the launcher's own screen and the app's JavaScript never starts. Once the project is opened from the launcher the app routes correctly; with the app open or backgrounded it works directly. **To verify in the preview build.**
 - **Create team has no idempotency key.** A network retry after a lost answer could create a second team. The button is disabled while the request is
   out, the app never retries it, and the server limits a user to 5 new teams an hour (ADR 0014).
 - **Auth screens are light-only, on purpose** (issues #24 and #19, ADR 0024): the theme is a per-user server setting, so it does not exist before sign-in.
