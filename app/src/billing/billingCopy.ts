@@ -198,3 +198,16 @@ export const statusCopy = {
   loadFailed: { title: 'Couldn’t check your payment', body: 'Check your connection and try again.', retry: 'Check again' },
   gone: { title: 'This payment isn’t available', body: 'It may belong to another team.' },
 } as const;
+
+/** The renewal banner and its Retry button (ADR 0031). The headline, the reason, the amount and the dates arrive from the server as finished strings; nothing here names a figure. */
+export const renewalCopy = {
+  retry: 'Retry payment',
+  retrying: 'Asking for payment…',
+  fixCard: 'Replace or add a card',
+  openBilling: 'Open billing',
+  retryFailed: 'Couldn’t ask for the payment. Please try again.',
+  amount: (display: string) => `Renewal amount: ${display}`,
+} as const;
+
+/** What a refused write says when the team is read-only because its payment is overdue (the server's `team_read_only`). One sentence, used by every screen that writes. */
+export const readOnlyMessage = 'This team is read-only because its payment is overdue. The Owner can fix this under Billing.';

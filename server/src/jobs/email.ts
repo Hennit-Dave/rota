@@ -26,6 +26,10 @@ const payloadSchema = z.object({
   // Magic-link and password-reset emails (ADR 0020): the auth token this email was made for.
   authTokenId: z.string().regex(/^[0-9a-f-]{36}$/).optional(),
   tokenHashHex: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  // A renewal notice to the Owner (ADR 0031). `skipIfRenewalPaid` marks the "now read-only" email, which is made at the failure but runs at the end of the grace
+  // period: if the renewal was paid in between, it would be wrong, so nothing is sent.
+  renewalId: z.string().regex(/^[0-9a-f-]{36}$/).optional(),
+  skipIfRenewalPaid: z.boolean().optional(),
 });
 
 export function emailIdempotencyKey(rowId: string): string {
@@ -71,6 +75,17 @@ export function createEmailHandler(deps: { resend: ResendClient }): JobHandler {
       if (live.length === 0) {
         await scrubPayload(ctx);
         console.log(`${logBase} outcome=skipped reason=invitation_not_pending`);
+        return; // the processor marks the row done; sent_at stays null
+      }
+    }
+
+    // A renewal notice is worth sending only while the renewal is still unpaid (ADR 0031).
+    if (payload.renewalId && payload.skipIfRenewalPaid) {
+      const unpaid = await prisma.$queryRaw<Array<{ ok: number }>>`
+        SELECT 1 AS ok FROM renewals WHERE id = ${payload.renewalId}::uuid AND status <> 'paid'::renewal_status`;
+      if (unpaid.length === 0) {
+        await scrubPayload(ctx);
+        console.log(`${logBase} outcome=skipped reason=renewal_paid`);
         return; // the processor marks the row done; sent_at stays null
       }
     }

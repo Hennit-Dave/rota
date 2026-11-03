@@ -1,3 +1,4 @@
+import { readOnlyMessage } from '../billing/billingCopy';
 import { ApiError, NotSignedInError, OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import { bannerCopy } from '../auth/copy';
 import { formatRetryWait } from '../auth/retryWait';
@@ -43,6 +44,8 @@ export function describeSendInviteFailure(error: unknown): SendInviteFailure | n
     // No free seat (the plan's seats are all taken or held by waiting invitations): shown like the link limit, as a banner. The server decided.
     case 'seat_limit_reached':
       return { kind: 'link_limit', message: inviteFormCopy.seatLimit };
+    case 'team_read_only':
+      return { kind: 'not_allowed', message: readOnlyMessage };
     case 'forbidden':
     case 'not_found':
       return { kind: 'not_allowed', message: inviteFormCopy.notAllowed };

@@ -9,6 +9,7 @@ import {
   parseOverview,
   parseScheduleAnswer,
   parseQuote,
+  parseRetryAnswer,
   parseStartResponse,
   type ActivationQuote,
   type CardSetup,
@@ -18,6 +19,7 @@ import {
   type HistoryEntry,
   type Operation,
   type PlanId,
+  type Renewal,
   type ScheduledChange,
 } from './billingResponses';
 
@@ -91,6 +93,13 @@ export function createBillingApi(client: Client) {
     /** DELETE …/card: withdraw the authorisation (204, no body). The saved card is never charged again. */
     async removeCard(teamId: string): Promise<void> {
       await client.request(`${base(teamId)}/card`, { method: 'DELETE' });
+    },
+    /**
+     * POST …/renewal/retry (no body): after fixing the card, ask the server to charge the overdue renewal again (ADR 0031). The server queues a job and answers "confirming";
+     * it decides whether the payment worked. A second tap is refused by the server (409), so this needs no key.
+     */
+    async retryRenewal(teamId: string): Promise<Renewal> {
+      return parseRetryAnswer(await client.post<unknown>(`${base(teamId)}/renewal/retry`));
     },
     async cancel(teamId: string, operationId: string): Promise<Operation> {
       return parseOperationResponse(await client.post<unknown>(`${base(teamId)}/operations/${encodeURIComponent(operationId)}/cancel`));

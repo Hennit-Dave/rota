@@ -26,6 +26,7 @@ import { monthlyCents, type Entitlements, type PlanId } from './plans.js';
 import { consentWording } from './consent.js';
 import { anchorDayOf, periodNumber, utcDateOf } from './periods.js';
 import { getSavedCard, type SavedCardView } from './savedCard.js';
+import { getRenewalView, type RenewalView } from './renewalState.js';
 import { MIN_CHARGE_CENTS } from './proration.js';
 import { memberCountOf, seatLimitOf } from './seats.js';
 
@@ -48,6 +49,8 @@ export interface BillingOverview {
   savedCard: SavedCardView | null;
   /** What the Owner agrees to by saving a card now, worded by the server; null until the team has activated. Shown before Stripe's page opens. */
   cardConsentWording: string | null;
+  /** The renewal when something is wrong with it (past due, read-only, being confirmed, under review), else null (ADR 0031). Finished strings only. */
+  renewal: RenewalView | null;
 }
 
 /** The team's open payment, if any (at most one exists: the partial unique index). An open one past its expiry is reported as expired, not as open. */
@@ -90,6 +93,7 @@ export async function getOverview(deps: BillingDeps, teamId: string): Promise<Bi
     openOperation: await openOperationOf(deps, teamId),
     scheduledChange: await getScheduledChange(deps.shards, teamId),
     savedCard: await getSavedCard(deps.shards, teamId),
+    renewal: await getRenewalView(deps.shards, teamId, nowOf(deps)),
     cardConsentWording: row
       ? consentWording({ kind: 'card_setup', amountCents: monthlyCents({ plan: row.plan, seats: row.seats }), anchorDay: row.billing_anchor_day })
       : null,

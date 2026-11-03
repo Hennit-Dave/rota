@@ -135,7 +135,8 @@ test('every membership read is a team-shard PRIMARY read made by the permission 
   app.clearQueryLog();
   const res = await app.get(`/teams/${teamId}`, bearer(token));
   assert.equal(res.status, 200);
-  assert.deepEqual(app.queryLog(), ['A:$queryRaw', 'A:Membership.findUnique'], 'session check, then ONE membership+team read');
+  // Session check, then ONE membership+team read, then ONE primary read of the team's renewal (the read-only notice the screens show, ADR 0031).
+  assert.deepEqual(app.queryLog(), ['A:$queryRaw', 'A:Membership.findUnique', 'A:$queryRaw']);
   const line = app.logLines().map((l) => JSON.parse(l)).find((l) => l.route?.includes(':teamId') && l.status === 200);
   assert.equal(line?.dbRoute, 'primary-required');
 });

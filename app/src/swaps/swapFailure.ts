@@ -1,3 +1,4 @@
+import { readOnlyMessage } from '../billing/billingCopy';
 import { ApiError, NotSignedInError, OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import { bannerCopy } from '../auth/copy';
 import { formatRetryWait } from '../auth/retryWait';
@@ -36,6 +37,8 @@ export function describeSwapFailure(error: unknown): SwapFailure | null {
       return { kind: 'gone' };
     case 'forbidden':
       return { kind: 'banner', message: swapFailureCopy.forbidden };
+    case 'team_read_only':
+      return { kind: 'banner', message: readOnlyMessage };
     case 'swap_limit_reached':
       return { kind: 'banner', message: swapFailureCopy.limit };
     case 'swap_not_pending':

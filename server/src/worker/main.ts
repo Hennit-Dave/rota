@@ -2,6 +2,8 @@ import { createReductionBoundaryHandler, REDUCTION_BOUNDARY_KIND } from '../bill
 import { createStripeGateway } from '../billing/gateway.js';
 import { loadStripeApiConfig } from '../billing/stripeConfig.js';
 import { createStripeEventHandler } from '../billing/stripeEventJob.js';
+import { createRenewalHandler, ensureRenewals, RENEWAL_KIND, type EnqueueRow } from '../billing/renewal.js';
+import { loadRenewalConfig } from '../billing/renewalConfig.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
 import {
   createProducerConnection,
@@ -9,7 +11,7 @@ import {
   verifyNoEviction,
 } from '../jobs/connection.js';
 import { createConsumer, startConsumerWatchdog } from '../jobs/consumer.js';
-import { createWorkQueue, resolveQueueName } from '../jobs/queue.js';
+import { createWorkQueue, enqueueCommittedRow, resolveQueueName } from '../jobs/queue.js';
 import { startReconciler } from '../jobs/reconcile.js';
 import {
   formatJobFailedLog,
@@ -17,7 +19,7 @@ import {
   formatWorkerInitError,
 } from '../jobs/redact.js';
 import { createEmailHandler } from '../jobs/email.js';
-import { loadResendConfig } from '../jobs/mail.js';
+import { loadResendConfig, loadSenderConfig } from '../jobs/mail.js';
 import { createResendClient } from '../jobs/resend.js';
 import { createWorkWorker } from '../jobs/worker.js';
 import type { Worker } from 'bullmq';
@@ -58,13 +60,34 @@ try {
 }
 const stripe = createStripeGateway(stripeApiConfig);
 
+// Renewals (ADR 0031): the grace period (a config value, Dave chose 7) and the sender of the Owner's emails. A bad value stops the worker before it takes any work.
+let renewalConfig: ReturnType<typeof loadRenewalConfig>;
+let sender: ReturnType<typeof loadSenderConfig>;
+try {
+  renewalConfig = loadRenewalConfig();
+  sender = loadSenderConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+
+// The sweep's own bounded producer-style connection (see below) also enqueues the work the jobs write: the next renewal, and the Owner's notices. It is made first so
+// the handlers can use it. Enqueueing never throws; a Valkey failure leaves the row for the sweep (jobs.md).
+const reconcileConnection = createProducerConnection();
+const reconcileQueue = createWorkQueue(resolveQueueName(), reconcileConnection);
+const enqueue: EnqueueRow = async (prisma, row, shard) => {
+  await enqueueCommittedRow(prisma, row, shard, () => reconcileQueue);
+};
+
 const handlers = {
   test: async (ctx: any) => {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
   // Stripe webhook events recorded by the API (ADR 0027). The worker only READS from Stripe (the saved card, ADR 0030) and writes our own tables.
-  stripe_event: createStripeEventHandler({ shards, stripe }),
+  stripe_event: createStripeEventHandler({ shards, stripe, renewal: { graceDays: renewalConfig.graceDays, sender, enqueue } }),
+  // The renewal at the end of a period, and the Owner's retry (ADR 0031). It charges the saved card; only the verified webhook decides the outcome.
+  [RENEWAL_KIND]: createRenewalHandler({ shards, stripe, graceDays: renewalConfig.graceDays, sender, enqueue }),
   // The check at the end of a period for a scheduled reduction (ADR 0029). It records ready, blocked or continuing and applies nothing (P6 does).
   [REDUCTION_BOUNDARY_KIND]: createReductionBoundaryHandler({ shards }),
 };
@@ -101,8 +124,10 @@ const watchdog = startConsumerWatchdog({
 
 // Reconciliation sweep (jobs.md): its own bounded producer-style connection, so a hung Valkey cannot
 // hang the sweep. Runs at startup, every RECONCILE_INTERVAL_MS, and after a Valkey reconnect.
-const reconcileConnection = createProducerConnection();
-const reconcileQueue = createWorkQueue(resolveQueueName(), reconcileConnection);
+// A subscription that activated before renewals existed has none yet: give it one (idempotent; it only adds where none exists).
+void ensureRenewals(shards, enqueue)
+  .then((made) => console.log(`renewals: ${made} created for subscriptions that had none`))
+  .catch((err: any) => console.error(`renewals: could not check for missing renewals: ${err?.message ?? err}`));
 const reconciler = startReconciler(shards, reconcileQueue, { reconnectSource: reconcileConnection });
 
 async function shutdown(signal: NodeJS.Signals) {

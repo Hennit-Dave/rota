@@ -1,3 +1,4 @@
+import { readOnlyMessage } from '../billing/billingCopy';
 import { ApiError, NotSignedInError, OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import { bannerCopy } from '../auth/copy';
 import { formatRetryWait } from '../auth/retryWait';
@@ -25,6 +26,7 @@ export function describeInvitationActionFailure(error: unknown): InvitationActio
       const wait = formatRetryWait(error.retryAfterSeconds);
       return { kind: 'rate_limited', message: wait ? bannerCopy.rateLimited(wait) : bannerCopy.rateLimitedNoWait };
     }
+    if (error.code === 'team_read_only') return { kind: 'not_allowed', message: readOnlyMessage };
     if (error.code === 'forbidden') return { kind: 'not_allowed', message: invitationsCopy.notAllowed };
     if (error.code === 'not_found') return { kind: 'gone', message: invitationsCopy.gone };
   }

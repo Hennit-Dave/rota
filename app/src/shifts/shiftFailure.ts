@@ -1,3 +1,4 @@
+import { readOnlyMessage } from '../billing/billingCopy';
 import { ApiError, NotSignedInError, OfflineError, SessionEndedError, StaleAccountError } from '../api/errors';
 import { bannerCopy } from '../auth/copy';
 import { formatRetryWait } from '../auth/retryWait';
@@ -45,6 +46,8 @@ export function describeShiftFailure(error: unknown): ShiftFailure | null {
         return { kind: 'gone' };
       case 'forbidden':
         return { kind: 'banner', message: shiftFormCopy.errors.forbidden };
+      case 'team_read_only':
+        return { kind: 'banner', message: readOnlyMessage };
       case 'rate_limited': {
         const wait = formatRetryWait(error.retryAfterSeconds);
         return { kind: 'rate_limited', message: wait ? bannerCopy.rateLimited(wait) : bannerCopy.rateLimitedNoWait };

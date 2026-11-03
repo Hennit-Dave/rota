@@ -14,6 +14,7 @@ import { createSwapsRouter } from '../swaps/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
 import type { InviteDeps } from '../invites/service.js';
 import { createBillingRouter } from '../billing/routes.js';
+import { getRenewalView, noticeFor } from '../billing/renewalState.js';
 import type { BillingDeps } from '../billing/activation.js';
 import { createRequireTeamRole } from './middleware.js';
 import { can, invitableRoles } from './permissions.js';
@@ -73,8 +74,10 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
   });
 
   // GET /teams/:teamId: team route. Any member. Not a member, or no such team: the same 404.
-  router.get('/:teamId', validateRequest({ params: teamIdParams }), requireAuth, requireTeamRole('team.view'), (req, res) => {
+  router.get('/:teamId', validateRequest({ params: teamIdParams }), requireAuth, requireTeamRole('team.view'), async (req, res) => {
     const { team, role } = req.teamContext!;
+    // A team whose renewal failed and whose grace period has ended is read-only (ADR 0031). The server says so; the app shows it and computes nothing.
+    const renewal = await getRenewalView(shards, team.id);
     // What the caller may do here, decided from the permission table. The app shows what the server allows and computes nothing itself.
     res.json({
       team,
@@ -83,7 +86,9 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
       canManageInvitations: can(role, 'invitations.list'),
       // Whether to offer "Create an invite link" (ADR 0025): the server's answer from the permission table; the route checks again.
       canCreateInviteLink: can(role, 'invite.staff'),
-      canEditShifts: can(role, 'shifts.edit'),
+      canEditShifts: can(role, 'shifts.edit') && !renewal?.readOnly,
+      // The renewal problem, if any, in finished words: the Owner sees the full text, everyone else only that the team is read-only. Null when all is well.
+      billingNotice: noticeFor(renewal, role),
       // Whether to offer the billing screens (Owner alone, from the permission table). The app shows what the server allows.
       canManageBilling: can(role, 'billing.manage'),
     });

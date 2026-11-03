@@ -76,6 +76,23 @@ export interface TeamDetail {
   canEditShifts: boolean;
   /** Whether to offer the billing screens (the server's `billing.manage`: the Owner alone). The server checks again on every billing request. */
   canManageBilling: boolean;
+  /** A problem with the team's payment, in the server's finished words, or null (ADR 0031). The Owner sees the full text; everyone else only that the team is read-only. */
+  billingNotice: TeamBillingNotice | null;
+}
+
+export interface TeamBillingNotice {
+  state: 'confirming' | 'past_due' | 'read_only' | 'review';
+  readOnly: boolean;
+  headline: string;
+  detail: string;
+}
+
+const NOTICE_STATES: readonly string[] = ['confirming', 'past_due', 'read_only', 'review'];
+
+function parseNotice(v: unknown): TeamBillingNotice | null {
+  if (v === null || v === undefined) return null;
+  if (!isRecord(v) || typeof v.state !== 'string' || !NOTICE_STATES.includes(v.state) || typeof v.readOnly !== 'boolean' || typeof v.headline !== 'string' || typeof v.detail !== 'string') throw unreadable();
+  return { state: v.state as TeamBillingNotice['state'], readOnly: v.readOnly, headline: v.headline, detail: v.detail };
 }
 
 export function parseTeamDetail(body: unknown): TeamDetail {
@@ -84,7 +101,7 @@ export function parseTeamDetail(body: unknown): TeamDetail {
   const { role, invitableRoles, canManageInvitations, canCreateInviteLink, canEditShifts, canManageBilling } = body;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof timeZone !== 'string' || !isRole(role)) throw unreadable();
   if (!Array.isArray(invitableRoles) || !invitableRoles.every(isInvitableRole) || typeof canManageInvitations !== 'boolean' || typeof canCreateInviteLink !== 'boolean' || typeof canEditShifts !== 'boolean' || typeof canManageBilling !== 'boolean') throw unreadable();
-  return { team: { id, name, timeZone }, role, invitableRoles: [...invitableRoles], canManageInvitations, canCreateInviteLink, canEditShifts, canManageBilling };
+  return { team: { id, name, timeZone }, role, invitableRoles: [...invitableRoles], canManageInvitations, canCreateInviteLink, canEditShifts, canManageBilling, billingNotice: parseNotice(body.billingNotice) };
 }
 
 /** A member as GET /teams/:teamId/members lists them. */

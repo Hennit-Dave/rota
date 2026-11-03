@@ -296,8 +296,9 @@ test('THE BOUNDARY CHECK records BLOCKED when too many members remain and nothin
     assert.equal(row.check_detail, 'active_after_4_target_3');
     const overview = await app.get(billingUrl(t.teamId), t.ownerH);
     assert.equal(overview.body.scheduledChange.status, expected);
-    assert.equal(overview.body.scheduledChange.canCancel, false);
-    assert.match(overview.body.scheduledChange.message, accepted ? /current plan and price continue/ : /has not been applied and needs your attention/);
+    // After the check the Owner cannot take a reduction back, EXCEPT a blocked one: it pauses collection, and cancelling is the Owner's explicit way out (ADR 0031).
+    assert.equal(overview.body.scheduledChange.canCancel, !accepted);
+    assert.match(overview.body.scheduledChange.message, accepted ? /current plan and price continue/ : /has not been applied and your renewal is paused/);
     assert.equal((await subscriptionOf(t.teamId)).seats, 18, 'nothing was applied');
   }
 });

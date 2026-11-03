@@ -2,10 +2,13 @@
 // Stripe's sandbox on any day. It writes what a real activation writes (a completed operation, the period, the ledger rows, the subscription) through
 // `seedActiveSubscription`. Run from server/:
 //   npm run proof:seed-subscription -- <teamId> <plan> <seats> <daysLeft> [periodDays=30]
+// daysLeft 0 gives a period that ENDED at 00:00 UTC today, so its renewal is due now (ADR 0031): the proof worker charges it as soon as it sees the row. The seed also
+// queues that renewal on the proof queue (`work-proof`), so the worker that is already running picks it up.
 // Example: Team 15 seats with 12 days left in a 30-day period, then Team 15 to 18 is $3.60 (money.md, interview question 4).
 // TEST shards only (createTestShards refuses anything else). The period is a fixture, not a calendar-anniversary period.
 import { createTestShards } from '../db/clients.js';
 import { shardFor } from '../db/shard.js';
+import { closeProducerQueue, enqueueCommittedRow, getProducerQueue } from '../jobs/queue.js';
 import { isPlanId } from './plans.js';
 import { seedActiveSubscription } from './testkit.js';
 
@@ -20,7 +23,7 @@ async function main() {
   if (!teamId || !isPlanId(plan) || !Number.isInteger(seats) || !Number.isInteger(daysLeft) || !Number.isInteger(periodDays)) {
     throw new Error('usage: proof-seed <teamId> <starter|team|business> <seats> <daysLeft> [periodDays=30]');
   }
-  if (periodDays < 28 || periodDays > 31 || daysLeft < 1 || daysLeft > periodDays) throw new Error('periodDays is 28 to 31 and daysLeft is 1 to periodDays');
+  if (periodDays < 28 || periodDays > 31 || daysLeft < 0 || daysLeft > periodDays) throw new Error('periodDays is 28 to 31 and daysLeft is 0 (already ended) to periodDays');
 
   // remaining = period_days - d + 1, where d is today's day number in the period (money.md): d = periodDays - daysLeft + 1.
   const dayOfPeriod = periodDays - daysLeft + 1;
@@ -33,9 +36,14 @@ async function main() {
     const db = shards[shardFor(teamId)].primary;
     const member = await db.membership.findFirst({ where: { teamId, role: 'owner' }, select: { userId: true } });
     if (!member) throw new Error('no such team on the TEST shards (or it has no Owner)');
-    const seeded = await seedActiveSubscription(db, teamId, { plan, seats }, { activationDate: startsOn, requestedByUserId: member.userId, period: { startsOn, endsOn, periodDays } });
+    const seeded = await seedActiveSubscription(db, teamId, { plan, seats }, { activationDate: startsOn, requestedByUserId: member.userId, period: { startsOn, endsOn, periodDays }, renewal: true });
     console.log(`seeded: ${plan} with ${seats} seats, period ${startsOn} to ${endsOn} (${periodDays} days, ${daysLeft} left today), activation operation ${seeded.operationId}`);
+    if (seeded.renewalWork) {
+      await enqueueCommittedRow(db, seeded.renewalWork, shardFor(teamId), () => getProducerQueue());
+      console.log(`renewal ${seeded.renewalId} scheduled for ${endsOn} 00:00 UTC and queued`);
+    }
   } finally {
+    await closeProducerQueue();
     await shards.A.primary.$disconnect();
     await shards.B.primary.$disconnect();
   }

@@ -7,6 +7,7 @@ import { BillingHeader } from '../../../billing/BillingHeader';
 import { activateCopy, hubCopy } from '../../../billing/billingCopy';
 import { describeBillingFailure } from '../../../billing/billingFailure';
 import { PLAN_IDS, type PlanId } from '../../../billing/billingResponses';
+import { RenewalBanner } from '../../../billing/RenewalBanner';
 import { ScheduledReduction } from '../../../billing/ScheduledReduction';
 import { seatsFrom } from '../../../billing/seatsInput';
 import { useActivationQuote, useBillingOverview, useStartActivation } from '../../../billing/useBilling';
@@ -124,6 +125,7 @@ function Billing() {
     return (
       <Screen gap={space[16]}>
         <BillingHeader teamName={teamName} title={hubCopy.title} subtitle={data.testModeNotice} />
+        {data.renewal ? <RenewalBanner renewal={data.renewal} userId={userId} teamId={teamId} /> : null}
         <InfoCard title={activateCopy.planSummary(data.subscription.planName, data.subscription.seats)} body={data.subscription.monthlyDisplay} testID="billing-plan">
           <Text variant="caption" tone="muted">{hubCopy.seatsUsed(data.members, data.seatLimit)}</Text>
           <Text variant="caption" tone="muted">{activateCopy.currentPeriod(data.subscription.periodStartsOn, data.subscription.periodEndsOn)}</Text>

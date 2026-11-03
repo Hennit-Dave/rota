@@ -58,6 +58,27 @@ export interface CheckoutSession {
   url: string;
 }
 
+/**
+ * A renewal charge of the team's saved card, without the buyer present (ADR 0031). The amount is the one OUR engine calculated and froze on the renewal; Stripe only
+ * collects it. The Customer and PaymentMethod are the ones P6a recorded; they never reach the app.
+ */
+export interface RenewalChargeRequest {
+  renewalId: string;
+  teamId: string;
+  /** Attempt 1 is the automatic charge at the period end; a later one is the Owner's "Retry payment". Part of the idempotency key. */
+  attempt: number;
+  amountCents: number;
+  customerId: string;
+  paymentMethodId: string;
+}
+
+/** What Stripe answered when the charge was created. This is NOT the outcome: only the verified webhook for the PaymentIntent decides that (AGENTS.md rule 7). */
+export interface RenewalCharge {
+  paymentIntentId: string;
+  /** Stripe's own status word at creation. For the log only. */
+  status: string;
+}
+
 /** Stripe refused this request outright (a 4xx that a retry cannot fix). The operation is closed as failed. */
 export class StripeRejectedError extends Error {
   constructor(readonly reason: string) {
@@ -71,6 +92,17 @@ export class StripeUncertainError extends Error {
   constructor(readonly reason: string) {
     super(`stripe outcome unknown: ${reason}`);
     this.name = 'StripeUncertainError';
+  }
+}
+
+/**
+ * The card was declined (or the bank wanted the customer present) when Stripe tried the charge. Stripe has made the PaymentIntent and will send
+ * `payment_intent.payment_failed` for it: THAT event, verified, records the failure. This answer is only used to remember the PaymentIntent's id.
+ */
+export class StripeCardDeclinedError extends Error {
+  constructor(readonly paymentIntentId: string | null, readonly code: string) {
+    super(`stripe card declined: ${code}`);
+    this.name = 'StripeCardDeclinedError';
   }
 }
 
@@ -89,6 +121,12 @@ export interface StripeGateway {
   retrieveSetupIntentCard(setupIntentId: string): Promise<SavedCardFacts>;
   /** A READ, made by the processing job: the PaymentIntent an activation paid with, and the card it was saved from. */
   retrievePaymentIntentCard(paymentIntentId: string): Promise<SavedCardFacts>;
+  /**
+   * Charges the saved card off-session: the worker's call (never a request's, AGENTS.md rule 10), bounded by the gateway's timeout and idempotent per attempt.
+   * Throws `StripeCardDeclinedError` (declined: the webhook will say so), `StripeRejectedError` (no payment exists: the caller records the failure) or
+   * `StripeUncertainError` (unknown: the caller retries with the SAME key, so Stripe returns the payment it already made).
+   */
+  createRenewalPayment(request: RenewalChargeRequest): Promise<RenewalCharge>;
   /** Verifies the signature of the RAW body and returns the parsed event. Throws `WebhookSignatureError` (nothing about the body is exposed). */
   constructEvent(rawBody: Buffer, signatureHeader: string): unknown;
 }
@@ -101,6 +139,11 @@ export function checkoutIdempotencyKey(operationId: string): string {
 /** The idempotency key for a card-setup Checkout Session: stable per setup, never per attempt. */
 export function setupIdempotencyKey(setupId: string): string {
   return `setup-${setupId}`;
+}
+
+/** The idempotency key of one renewal charge attempt: stable per attempt, never per job generation or execution (jobs.md). A new attempt is a new key. */
+export function renewalIdempotencyKey(renewalId: string, attempt: number): string {
+  return `renewal-${renewalId}-${attempt}`;
 }
 
 const DEFINITE_REJECTIONS = new Set(['StripeInvalidRequestError', 'StripeAuthenticationError', 'StripePermissionError']);
@@ -221,6 +264,37 @@ export function createStripeGateway(config: StripeApiConfig & { webhookSecret?: 
       } catch (err) {
         return classify(err);
       }
+    },
+
+    async createRenewalPayment(request) {
+      let intent: Stripe.PaymentIntent;
+      try {
+        intent = await stripe.paymentIntents.create(
+          {
+            amount: request.amountCents,
+            currency: 'usd',
+            customer: request.customerId,
+            payment_method: request.paymentMethodId,
+            // The payment method is the saved CARD, so no list of allowed types is needed (SDK 23 removed it from PaymentIntents as well). The customer is not here: the card was saved for later use with their consent (ADR 0030). Stripe asks the bank; a bank that wants the customer present
+            // makes the charge fail with `authentication_required`, which the Owner fixes by replacing the card.
+            off_session: true,
+            confirm: true,
+            description: 'Rota renewal',
+            metadata: { team_id: request.teamId, renewal_id: request.renewalId, attempt: String(request.attempt) },
+          },
+          { idempotencyKey: renewalIdempotencyKey(request.renewalId, request.attempt) },
+        );
+      } catch (err) {
+        if ((err as { type?: unknown })?.type === 'StripeCardError') {
+          const e = err as { code?: unknown; payment_intent?: { id?: unknown } | null; raw?: { payment_intent?: { id?: unknown } | null } };
+          const id = e.payment_intent?.id ?? e.raw?.payment_intent?.id;
+          throw new StripeCardDeclinedError(typeof id === 'string' ? id : null, typeof e.code === 'string' ? e.code : 'card_declined');
+        }
+        return classify(err);
+      }
+      // Stop at once if Stripe ever answers from live mode: this integration is test mode only.
+      if (intent.livemode) throw new StripeRejectedError('live_mode_payment');
+      return { paymentIntentId: intent.id, status: intent.status };
     },
 
     constructEvent(rawBody, signatureHeader) {

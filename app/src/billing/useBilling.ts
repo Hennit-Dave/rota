@@ -12,6 +12,8 @@ export function useBillingOverview(userId: string | undefined, teamId: string | 
     enabled: enabled && userId !== undefined && teamId !== null,
     networkMode: 'always',
     queryFn: ({ signal }) => getBillingApi().overview(teamId as string, signal),
+    // While the server says a renewal payment is being confirmed, ask again every few seconds (a UI timing, not a business number). It stops when the server settles it.
+    refetchInterval: (query) => (query.state.data?.renewal?.state === 'confirming' ? 3000 : false),
   });
 }
 
@@ -165,6 +167,22 @@ export function useRemoveCard(userId: string | undefined, teamId: string | null)
     mutationFn: () => getBillingApi().removeCard(teamId as string),
     onSettled: () => {
       if (userId !== undefined && teamId !== null) void client.invalidateQueries({ queryKey: billingKey(userId, teamId), exact: true });
+    },
+  });
+}
+
+// ---- Renewals (ADR 0031) ----
+
+/** "Retry payment": one request the person watches. Never queued offline, never retried by the library. The server answers "confirming" and decides the outcome. */
+export function useRetryRenewal(userId: string | undefined, teamId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    networkMode: 'always',
+    retry: 0,
+    mutationFn: () => getBillingApi().retryRenewal(teamId as string),
+    onSettled: () => {
+      // Ask again for the overview (it carries the renewal) and the team (it carries the read-only notice and what may be edited).
+      if (userId !== undefined && teamId !== null) refreshAfterSettled(client, userId, teamId);
     },
   });
 }

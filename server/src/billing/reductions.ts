@@ -63,7 +63,7 @@ export interface ScheduledChangeView {
   fallbackWording: string | null;
   /** A sentence for the Owner, made here. */
   message: string;
-  /** True only while the status is `scheduled`: after the boundary check the Owner can no longer cancel (money.md). */
+  /** True while the status is `scheduled`, and when it is `blocked` (the Owner may then keep the current plan instead); after the boundary check nothing else can be cancelled. */
   canCancel: boolean;
 }
 
@@ -88,7 +88,7 @@ function messageFor(row: ScheduledRow): string {
     case 'ready':
       return `The check passed. Your plan will change to ${to} on ${row.effective_on}.`;
     case 'blocked':
-      return `On ${row.effective_on} your team had more active members than ${to} allows, and you did not accept continuing at your current price. The reduction has not been applied and needs your attention.`;
+      return `On ${row.effective_on} your team had more active members than ${to} allows, and you did not accept continuing at your current price. The reduction has not been applied and your renewal is paused. Cancel the reduction to keep your current plan, then retry the payment.`;
     case 'continuing':
       return `On ${row.effective_on} your team had more active members than ${to} allows. As you accepted when you scheduled this, your current plan and price continue until you fix it.`;
   }
@@ -116,7 +116,7 @@ export async function getScheduledChange(shards: Shards, teamId: string): Promis
     fallbackAccepted: row.fallback_accepted_at !== null,
     fallbackWording: row.fallback_wording,
     message: messageFor(row),
-    canCancel: row.status === 'scheduled',
+    canCancel: row.status === 'scheduled' || row.status === 'blocked',
   };
 }
 
@@ -209,7 +209,7 @@ export async function scheduleReduction(
   return { status: 201, body: { status: 'scheduled', scheduledChange }, replay: false };
 }
 
-/** Cancels the team's scheduled reduction. Only while it is `scheduled`: after the boundary check it is no longer the Owner's to take back (money.md). */
+/** Cancels the team's scheduled reduction. Only while it is `scheduled`, or `blocked` at the boundary: otherwise it is no longer the Owner's to take back (ADR 0029, ADR 0031). */
 export async function cancelReduction(deps: BillingDeps, input: { teamId: string }): Promise<void> {
   const { teamId } = input;
   const prisma = getShard(deps.shards, teamId).primary;
@@ -220,7 +220,9 @@ export async function cancelReduction(deps: BillingDeps, input: { teamId: string
         SELECT id::text AS id, status::text AS status FROM scheduled_changes WHERE team_id = ${teamId}::uuid AND status::text = ANY(${LIVE}::text[]) FOR UPDATE`;
       const row = live[0];
       if (!row) throw new ApiError('not_found', { reason: 'no_scheduled_reduction' });
-      if (row.status !== 'scheduled') throw new ApiError('scheduled_change_unavailable', { reason: `cannot_cancel_${row.status}` });
+      // A reduction that could not be applied (`blocked`) is the one case the Owner may still take back: collection is paused until it is resolved, and the Owner has
+      // no other way to make it fit. Cancelling is the Owner's explicit choice to keep the current plan at its current price (ADR 0031).
+      if (row.status !== 'scheduled' && row.status !== 'blocked') throw new ApiError('scheduled_change_unavailable', { reason: `cannot_cancel_${row.status}` });
       await tx.$executeRaw`UPDATE scheduled_changes SET status = 'cancelled'::scheduled_change_status, updated_at = NOW() WHERE id = ${row.id}::uuid`;
       // The boundary job finds a cancelled change and does nothing; its work row stays (it is an audit of the schedule) and completes as a no-op.
     },

@@ -31,6 +31,37 @@ export interface BillingOverview {
   savedCard: SavedCard | null;
   /** What the Owner agrees to by saving a card now: the server's wording, shown before Stripe's page opens. Null until the team has a subscription. */
   cardConsentWording: string | null;
+  /** Something is wrong with the renewal (past due, read-only, being confirmed, under review), or null when all is well (ADR 0031). */
+  renewal: Renewal | null;
+}
+
+export type RenewalState = 'confirming' | 'past_due' | 'read_only' | 'review';
+const RENEWAL_STATES: readonly string[] = ['confirming', 'past_due', 'read_only', 'review'];
+
+/** The renewal as the server words it. Every string is finished (the amount, the date, the reason); `canRetry` and `readOnly` are the server's decisions. */
+export interface Renewal {
+  state: RenewalState;
+  readOnly: boolean;
+  headline: string;
+  detail: string;
+  amountDisplay: string | null;
+  graceEndsOn: string | null;
+  canRetry: boolean;
+}
+
+export function parseRenewal(v: unknown): Renewal | null {
+  if (v === null || v === undefined) return null;
+  if (!isRecord(v) || typeof v.state !== 'string' || !RENEWAL_STATES.includes(v.state) || typeof v.readOnly !== 'boolean') throw unreadable();
+  if (typeof v.headline !== 'string' || typeof v.detail !== 'string' || typeof v.canRetry !== 'boolean') throw unreadable();
+  if ((v.amountDisplay !== null && typeof v.amountDisplay !== 'string') || (v.graceEndsOn !== null && !isDate(v.graceEndsOn))) throw unreadable();
+  return { state: v.state as RenewalState, readOnly: v.readOnly, headline: v.headline, detail: v.detail, amountDisplay: v.amountDisplay, graceEndsOn: v.graceEndsOn, canRetry: v.canRetry };
+}
+
+/** `{ renewal }` as POST /renewal/retry answers (202): the renewal now "confirming". */
+export function parseRetryAnswer(body: unknown): Renewal {
+  const renewal = isRecord(body) ? parseRenewal(body.renewal) : null;
+  if (renewal === null) throw unreadable();
+  return renewal;
 }
 
 export interface SavedCard {
@@ -145,7 +176,7 @@ export function parseOverview(body: unknown): BillingOverview {
   const scheduledChange = body.scheduledChange === null || body.scheduledChange === undefined ? null : parseScheduledChange(body.scheduledChange);
   if (body.cardConsentWording !== null && typeof body.cardConsentWording !== 'string') throw unreadable();
   const savedCard = parseSavedCard(body.savedCard);
-  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation, scheduledChange, savedCard, cardConsentWording: body.cardConsentWording };
+  return { testModeNotice: body.testModeNotice, activated: body.activated, plans: body.plans.map(parsePlan), subscription, members: body.members, seatLimit: body.seatLimit, openOperation, scheduledChange, savedCard, cardConsentWording: body.cardConsentWording, renewal: parseRenewal(body.renewal) };
 }
 
 function parseSavedCard(v: unknown): SavedCard | null {

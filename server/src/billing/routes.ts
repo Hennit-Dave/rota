@@ -17,6 +17,7 @@ import { cancelCardSetup, getCardSetup, startCardSetup } from './cardSetup.js';
 import { getChangeQuote, getHistory, startChange } from './changes.js';
 import { removeSavedCard } from './savedCard.js';
 import { cancelReduction, scheduleReduction } from './reductions.js';
+import { retryRenewal } from './renewal.js';
 import { PLAN_IDS, type PlanId } from './plans.js';
 
 export interface BillingRouteDeps {
@@ -222,6 +223,13 @@ export function createBillingRouter(deps: BillingRouteDeps): Router {
     const { teamId } = req.validated!.params as { teamId: string };
     await removeSavedCard(billing.shards, teamId);
     res.status(204).end();
+  });
+
+  // POST /teams/:teamId/billing/renewal/retry (no body): after fixing the card, asks for the overdue renewal to be charged again. There are no automatic retries (ADR 0031).
+  // The server only records the request and queues the job; the charge is the worker's, and only the verified webhook decides the outcome.
+  router.post('/renewal/retry', validateRequest({ params: schemas.teamParams }), requireAuth, writeLimit, requireTeamRole('billing.manage'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    res.status(202).json({ renewal: await retryRenewal(billing, { teamId }) });
   });
 
   return router;

@@ -6,6 +6,7 @@ import type { Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { validateRequest } from '../http/validate.js';
 import { createRequireTeamRole } from '../teams/middleware.js';
+import { createRequireWritable } from '../teams/writeGuard.js';
 import { createShiftSchemas } from './schemas.js';
 import { loadShiftsConfig, type ShiftsConfig } from './config.js';
 import { createShift, deleteShift, getShift, listShifts, updateShift, type NewShift, type ShiftPatch } from './service.js';
@@ -33,6 +34,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   const schemas = createShiftSchemas(config);
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
+  const requireWritable = createRequireWritable({ shards });
 
   const router = Router({ mergeParams: true });
   router.use(noStore);
@@ -52,7 +54,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   });
 
   // POST /teams/:teamId/shifts
-  router.post('/', validateRequest({ params: schemas.teamParams, body: schemas.create }), requireAuth, requireTeamRole('shifts.edit'), async (req, res) => {
+  router.post('/', validateRequest({ params: schemas.teamParams, body: schemas.create }), requireAuth, requireTeamRole('shifts.edit'), requireWritable, async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
     const shift = await createShift(shards, { teamId, actorUserId: req.auth!.userId, shift: req.validated!.body as NewShift });
     res.status(201).json({ shift });
@@ -64,6 +66,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
     validateRequest({ params: schemas.shiftParams, body: schemas.update }),
     requireAuth,
     requireTeamRole('shifts.edit'),
+    requireWritable,
     async (req, res) => {
       const { teamId, shiftId } = req.validated!.params as { teamId: string; shiftId: string };
       const shift = await updateShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId, patch: req.validated!.body as ShiftPatch });
@@ -72,7 +75,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   );
 
   // DELETE /teams/:teamId/shifts/:shiftId
-  router.delete('/:shiftId', validateRequest({ params: schemas.shiftParams }), requireAuth, requireTeamRole('shifts.edit'), async (req, res) => {
+  router.delete('/:shiftId', validateRequest({ params: schemas.shiftParams }), requireAuth, requireTeamRole('shifts.edit'), requireWritable, async (req, res) => {
     const { teamId, shiftId } = req.validated!.params as { teamId: string; shiftId: string };
     await deleteShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId });
     res.status(204).end();

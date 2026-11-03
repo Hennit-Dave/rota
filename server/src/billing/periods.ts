@@ -90,3 +90,18 @@ export function dayOfPeriod(period: Period, date: CalendarDate): number {
 export function remainingDays(period: Period, date: CalendarDate): number {
   return period.periodDays - dayOfPeriod(period, date) + 1;
 }
+
+/**
+ * The period that follows one ending on `endsOn`, for a subscription anchored on `anchorDay`: it starts on `endsOn` and ends on the anchor day of the next month,
+ * clamped to that month's last day (the anchor itself is never changed by clamping: Jan 31, Feb 28, Mar 31). Pure; reads no clock and no activation date, so a
+ * fixture period and a real one are treated alike.
+ */
+export function periodAfter(endsOn: CalendarDate, anchorDay: number): Period {
+  if (!Number.isInteger(anchorDay) || anchorDay < 1 || anchorDay > 31) throw new BillingInputError('the billing anchor day is 1 to 31');
+  const { y, m } = parse(endsOn);
+  const monthIndex = y * 12 + (m - 1) + 1;
+  const year = Math.floor(monthIndex / 12);
+  const month = (monthIndex % 12) + 1;
+  const next = format(year, month, Math.min(anchorDay, daysIn(year, month)));
+  return { startsOn: endsOn, endsOn: next, periodDays: daysBetween(endsOn, next) };
+}
