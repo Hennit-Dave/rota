@@ -70,6 +70,8 @@ Optional: `INVITE_EXPIRY_DAYS` (7), `INVITE_GLOBAL_DAILY_CAP` (50 invite emails 
 Email-and-password sign-up with short-lived access tokens, rotating refresh tokens and logout. The API refuses to start
 without a signing secret. Routes, error codes and limits: `docs/ARCHITECTURE.md` (section 5) and `docs/SECURITY.md`.
 
+Sign-in: email and password, plus magic link (the brief's alternative to Google sign-in).
+
 **Password reset and magic link** (slice 2b, ADR 0020): `POST /auth/password-reset/request` and `/submit`, `POST /auth/magic-link/request` and `/redeem`. A request is
 answered the same for every address and emails a single-use link (a reset lasts 1 hour, a magic link 10 minutes) through the same email job as invitations, so the
 **worker must be running** (`RESEND_API_KEY`) for the email to go out. The app opens the links at `/reset/<token>` and `/magic/<token>`. New table `auth_tokens`
