@@ -31,6 +31,7 @@ only in this file.
 - Migrations run through the direct URL on **both** shards.
 - New log fields pass through the shared redaction list.
 - The acceptance tests in each affected rules file are added or updated in the same PR.
+- Integration tests leave no work rows behind: the guard in `src/testing/workRowGuard.ts` wraps every file and fails it if pending or claimed rows remain, so a new test needs no cleanup code of its own for work rows. `npm run test:rows` prints the count (0 and 0 when clean).
 
 ## Layout
 
