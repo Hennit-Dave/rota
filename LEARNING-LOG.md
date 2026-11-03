@@ -229,3 +229,7 @@ I learned that saving a card for future payments needs the customer's permission
 ## 2026-11-03 — Renewals and failed renewals (PR #61)
 
 Hiding a button only stops someone from tapping it; they can still send the same request directly with Postman. Once the seven-day grace period ends, one shared check on the server blocks changes to shifts, swaps and invites while still letting the team view its data. Using the same check everywhere makes it less likely that one action will slip through or follow a different rule.
+
+## 2026-11-03 — Push notifications part 1 (PR #63)
+
+The row ID tells me which push job I'm tracing, and the device ID tells me which device it was meant for. Those IDs let me follow a retry or investigate a failure without putting the private push token in the logs.
