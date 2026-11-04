@@ -37,8 +37,8 @@ and a migration plan.
 ### One router (built: `getShard` in `server/src/db/clients.ts`)
 
 All team-scoped access goes through `getShard(shards, teamId)`, which returns that shard's clients. Nothing
-imports a shard's client directly. Replica clients and the read-routing function are **not built** yet
-(build-order step 5); today each shard has a primary client only.
+imports a shard's client directly. Each shard has a plain primary client; the API also holds a replica client per shard, reached only through the
+read-routing function (`server/src/db/readRouting.ts`, ADR 0037). A read goes to the replica only if its route handler opts in.
 
 ## What lives only on shard A, and why
 
@@ -105,7 +105,7 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 | `getShard` router, primary clients for both shards | Built |
 | Identity on shard A through the primary | Built |
 | Migration parity check across both shards | Built |
-| Read replicas and the read-routing function | Not built |
+| Read replicas and the read-routing function | Built; tested against the real replicas of the test projects (ADR 0037) |
 | Teams, memberships and the user-to-teams directory (create, get, list, members) | Built, tested on the test shards |
 | Invitations and their email work rows, written together on the team's shard | Built, tested on the test shards, including a lost invite email on shard B recovered by the sweep |
 | Shifts, swaps, activity feed | Not built |

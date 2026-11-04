@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getShard, type Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
+import type { ReadDb } from '../db/readRouting.js';
 import { shardFor, type ShardId } from '../db/shard.js';
 import type { Role } from './permissions.js';
 
@@ -89,8 +90,11 @@ export async function listMembers(
   shards: Shards,
   teamId: string,
   onMissingUser?: (userId: string) => void,
+  db?: ReadDb,
 ): Promise<MemberView[]> {
-  const memberships = await getShard(shards, teamId).primary.membership.findMany({
+  // A routed read (ADR 0037): `db` is the database the read-routing function chose; without one, the primary. The caller's own role was already
+  // checked on the primary by the route's permission middleware; this is only the roster to show.
+  const memberships = await (db ?? getShard(shards, teamId).primary).membership.findMany({
     where: { teamId, deactivatedAt: null },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { userId: true, role: true, createdAt: true },

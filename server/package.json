@@ -52,6 +52,7 @@
     "@node-rs/argon2": "2.2.2",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
+    "@prisma/extension-read-replicas": "0.5.0",
     "bullmq": "6.3.17",
     "express": "5.3.0",
     "ioredis": "5.11.1",

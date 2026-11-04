@@ -247,6 +247,16 @@ app/src/
 - **Native modules** are fixed at build time. Everything the whole app needs is installed up front so the limited EAS build quota is spent
   once (`expo-builds.md`, ADR 0011).
 
+### 5p. Read replicas and read routing (ADR 0037)
+
+- One Neon read replica per project (shard A, shard B), pooled, capped at 0.25 CU. `shards.X.primary` stays the plain client; the API alone also holds
+  `shards.X.reader` (the primary extended with `$replica()`), reached only through `reads.run(teamId, ctx, read)` in `server/src/db/readRouting.ts`.
+- `reads.run` picks the database: `primary-required` → `marker` (the user wrote less than 5 s ago) → `startup` (process younger than 5 s) → `none` (replica).
+  A replica that cannot answer falls back to the primary (`replica-failed`). The reason is the request log's `dbRoute`.
+- The marker is set by middleware just before the response headers of any non-safe request go out. In-process map, **one API process only**.
+- Opted in: the shift calendar, the activity feed (raw SQL, run on the client the router hands it) and the roster. Everything else reads the primary.
+- Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once).
+
 ---
 
 ## What changes in production
@@ -254,6 +264,6 @@ app/src/
 1. **Read-your-own-writes and API clustering:**
    The current 5-second read-your-own-writes mechanism uses an in-memory map valid for **exactly one API process** with stop-then-start deployments. In a multi-instance production environment, this must be replaced by a position-based design (comparing the replica's WAL replay position with the user's last write commit LSN stored in Postgres or session state).
 2. **Replication lag:**
-   If a provider does not provide separate read replicas on the free plan, a second read connection string is used for code-level read/write routing. In production with actual replicas, replication lag becomes physical; read-your-own-writes ensures users see their own immediate writes.
+   The replicas are real (Neon Free offers one per project), so lag already exists: measured below what a 130 ms round trip can resolve, not zero (ADR 0037). The user who wrote reads the primary for 5 s, so they never see it; another user can see a copy a fraction of a second old. In production the replica's lag needs monitoring and a bound beyond which the replica is not used, and the read-your-own-writes marker has to become position-based (item 1).
 3. **Queue clustering:**
    A single Aiven Valkey node periodic snapshot model means the queue is transient. Postgres remains the single source of truth for all work rows. In high-volume production, Valkey multi-node HA or Sentinel would provide queue persistence across node failures.

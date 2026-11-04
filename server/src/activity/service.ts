@@ -1,5 +1,6 @@
 import { getShard, type Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
+import type { ReadDb } from '../db/readRouting.js';
 import type { Cursor } from './cursor.js';
 import { encodeCursor } from './cursor.js';
 
@@ -49,9 +50,11 @@ function shiftFrom(data: unknown): ActivityItem['shift'] {
 const changedFrom = (data: unknown): string[] =>
   isRecord(data) && Array.isArray(data.changed) ? data.changed.filter((k): k is string => typeof k === 'string') : [];
 
-export async function listActivity(shards: Shards, input: { teamId: string; limit: number; cursor: Cursor | null }): Promise<ActivityPage> {
+export async function listActivity(shards: Shards, input: { teamId: string; limit: number; cursor: Cursor | null }, db?: ReadDb): Promise<ActivityPage> {
   const { teamId, limit, cursor } = input;
-  const prisma = getShard(shards, teamId).primary;
+  // The feed is a routed read (ADR 0037): the route handler passes the database the read-routing function chose (a replica, or the primary right after the
+  // caller's own write). Without one it reads the primary. It is raw SQL, so it runs on whichever client it is given: `$queryRaw` on the replica client is the replica.
+  const prisma = db ?? getShard(shards, teamId).primary;
   const take = limit + 1;
   const rows = cursor
     ? await prisma.$queryRaw<Row[]>`

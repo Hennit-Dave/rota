@@ -82,13 +82,17 @@ If a rule here conflicts with `AGENTS.md`, stop and ask. The tests at the end ar
 
 ## Prisma clients and pools
 
-- Prisma 7 with `@prisma/adapter-pg`. Each shard has a primary client, extended with
-  `@prisma/extension-read-replicas` over a replica client.
-- Documented routing: reads go to the replica; writes and `$transaction` go to the primary;
-  `$primary()` forces the primary. **Raw queries go through the routing function, which names
-  `$primary()` or `$replica()` explicitly** — the docs don't say where raw queries go by default.
-- Runtime uses the pooled `-pooler` URLs. Confirm the replica's pooled connection string in Neon before
-  relying on it; the docs checked didn't show it.
+- Prisma 7 with `@prisma/adapter-pg`. Each shard has a **plain primary client** (`shards.X.primary`, which always reads the primary) and, in the API
+  only, a `reader`: the primary extended with `@prisma/extension-read-replicas` over a replica client (ADR 0037). *Why the primary stays plain: an extended
+  client sends every plain model read to the replica, which would silently move every auth, billing and permission read.* The `reader` is reached only
+  through the routing function.
+- Routing (measured in the spike, ADR 0037): on the extended client, model reads go to the replica; writes, `$transaction` and `$queryRaw` go to the
+  primary; `$primary()` forces the primary. **Raw queries go through the routing function** too: it hands the opted-in read the replica client or the
+  primary client, and `$queryRaw` runs on whichever it was given. A read uses a replica only if its route handler opts in; the default is the primary.
+- A replica that cannot answer is not an error for the caller: the failure is logged and the read is repeated on the primary (`db_route`
+  `replica-failed`).
+- Runtime uses the pooled `-pooler` URLs, replicas included (confirmed 2026-11-04: one replica per Neon project, a pooled host of its own, the same role
+  and password as the primary; `SHARD_A_READ_URL`, `SHARD_B_READ_URL`, and the `TEST_` pair for the test databases).
 - **Not available through Neon's transaction-mode pooler:** `SET`/`RESET`, `LISTEN`/`NOTIFY`,
   session-level advisory locks, SQL-level `PREPARE`. Never design anything that needs them.
 
@@ -129,7 +133,7 @@ The brief requires reads right after a user's write to come from the primary. We
 - **One routing function decides every read**, for Prisma model queries and raw queries alike. Nothing
   outside it calls `$primary()` or `$replica()`. *Why: a raw query that picks its own client bypasses
   the 5-second rule.*
-- Every read logs `db_route` and its reason: `marker`, `startup`, `primary-required` or `none`.
+- Every read logs `db_route` and its reason: `marker`, `startup`, `primary-required`, `none`, or `replica-failed` (the replica could not answer and the primary did).
 - No Valkey marker. *Why: it added failure modes (lost on restart, deletion without disconnect) and gives
   a single process nothing.* This map is not a rate limiter, so the in-memory rule doesn't apply.
 

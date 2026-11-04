@@ -16,6 +16,7 @@ import { createSession } from '../auth/sessions.js';
 import type { Reply } from '../auth/testkit.js';
 import { createTokenService, type TokenService } from '../auth/tokens.js';
 import { createTestShards, type Shards } from '../db/clients.js';
+import { createReadRouting, type ReadRouting } from '../db/readRouting.js';
 import { identityDb } from '../db/identity.js';
 import { shardFor, type ShardId } from '../db/shard.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
@@ -44,6 +45,8 @@ export interface TeamsTestOptions {
   /** Point the limiter at a Valkey that is not there, to prove team creation fails closed. */
   deadValkey?: boolean;
   /** Mounts the billing routes and the Stripe webhook, with this gateway standing in for Stripe (payments, ADR 0027). */
+  /** Real read replicas (the test shards' replicas), so a test can prove which database a read used. Off by default: every read then goes to the primary. */
+  replicas?: boolean;
   billing?: { stripe: StripeGateway; /** Pins "now" for the billing code, so a test can sit on a chosen day of a period. */ now?: () => Date };
 }
 
@@ -58,6 +61,10 @@ export interface TeamsTestApp {
   productionBase: string;
   /** The test shards' clients, NOT instrumented: for seeding and for the SQL assertions. */
   raw: Shards;
+  /** The read-routing function the app was built with (marker state, the decision). */
+  reads: ReadRouting;
+  /** Every query a replica client was asked, in order. Empty unless the app was started with `replicas: true`. */
+  replicaQueries(): string[];
   config: AuthConfig;
   logLines(): string[];
   /** "A:User.findMany", "B:Membership.findUnique", "A:$queryRaw": every query the APP made, in order. */
@@ -106,7 +113,16 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     invites: { ...base.invites, ...options.invites },
   };
 
-  const raw = createTestShards({ primaryMax: 3 });
+  const raw = createTestShards(options.replicas ? { primaryMax: 3, replicaMax: 2, logReplicaQueries: true } : { primaryMax: 3 });
+  // Every query the REPLICA clients were asked, in order (only with `replicas`): the evidence that a read was answered by the replica.
+  const replicaLog: string[] = [];
+  if (options.replicas) {
+    for (const id of ['A', 'B'] as const) {
+      (raw[id].reader!.$replica() as unknown as { $on(event: 'query', cb: (e: { query: string }) => void): void }).$on('query', (e) => {
+        if (!/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(e.query)) replicaLog.push(`${id}:${e.query.slice(0, 60)}`);
+      });
+    }
+  }
 
   // The app sees instrumented clients: they record every query and can be told to fail a team insert.
   const queries: string[] = [];
@@ -126,8 +142,8 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
       },
     }) as unknown as PrismaClient;
   const shards: Shards = {
-    A: { primary: instrument(raw.A.primary, 'A') },
-    B: { primary: instrument(raw.B.primary, 'B') },
+    A: { primary: instrument(raw.A.primary, 'A'), reader: raw.A.reader },
+    B: { primary: instrument(raw.B.primary, 'B'), reader: raw.B.reader },
   };
 
   const redis: Redis = createProducerConnection(options.deadValkey ? 'redis://127.0.0.1:1' : undefined);
@@ -174,10 +190,14 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
 
   // The harness app: the real router plus the one test-only route. The 403 proof needs an Owner/Manager-only action and none
   // exists yet (the shifts slice adds the real ones), so the route is registered HERE and nowhere in the production server.
+  // These shards have no replica clients, so every read in these suites goes to the primary and a test never races replication lag. Routing against the real
+  // replicas is proved in src/db/readRouting.integration.test.ts and in the proof run (ADR 0037).
+  const reads = createReadRouting({ shards });
   const harnessApp = express();
   installPreRoutes(harnessApp, logger);
+  harnessApp.use(reads.writeMarker);
   if (webhookDeps) harnessApp.post(STRIPE_WEBHOOK_PATH, ...createStripeWebhook({ ...webhookDeps, logger }));
-  harnessApp.use('/teams', createTeamsRouter({ shards, tokens, limiter, logger, config, invites, billing: billingDeps }));
+  harnessApp.use('/teams', createTeamsRouter({ shards, reads, tokens, limiter, logger, config, invites, billing: billingDeps }));
   harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   harnessApp.use('/settings', createSettingsRouter({ shards, tokens, limiter, logger, config }));
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
@@ -197,7 +217,8 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
 
   const productionApp = createApp({
     logger,
-    teams: { shards, tokens, limiter, config, invites, billing: billingDeps },
+    reads,
+    teams: { shards, reads, tokens, limiter, config, invites, billing: billingDeps },
     invitations: { shards, tokens, limiter, config, invites },
     settings: { shards, tokens, limiter, config },
     stripeWebhook: webhookDeps,
@@ -241,6 +262,8 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     base: harness.url,
     productionBase: production.url,
     raw,
+    reads,
+    replicaQueries: () => [...replicaLog],
     config,
     logLines: () => lines,
     queryLog: () => [...queries],
@@ -300,6 +323,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     patch: (path, body, headers) => call('PATCH', path, body ?? {}, headers),
     del: (path, headers) => call('DELETE', path, undefined, headers),
     async stop() {
+      reads.stop();
       await new Promise<void>((r) => harness.server.close(() => r()));
       await new Promise<void>((r) => production.server.close(() => r()));
       if (!options.deadValkey) {
@@ -344,6 +368,9 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
       if (ids.length > 0) await raw.A.primary.user.deleteMany({ where: { id: { in: ids } } });
       await raw.A.primary.$disconnect();
       await raw.B.primary.$disconnect();
+      // The replica pools too, when this app had them (the extension's $disconnect closes its replicas as well as the primary it wraps).
+      await raw.A.reader?.$disconnect();
+      await raw.B.reader?.$disconnect();
     },
   };
 }
