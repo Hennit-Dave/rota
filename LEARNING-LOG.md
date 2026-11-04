@@ -237,3 +237,7 @@ The row ID tells me which push job I'm tracing, and the device ID tells me which
 ## 2026-11-03 — Shift and swap pushes (PR #65)
 
 I learned why Rota saves the activity row and the request to send a push in one transaction: either both are saved or neither is. If the server crashes just after saving a shift change, the worker still has a record telling it to send the notification.
+
+## 2026-11-04 — Offline upcoming shifts (PR #66)
+
+I learned that the saved offline copy needs a “Last updated” time so the user knows it might not reflect recent changes. If the server returns 401, 403 or 404, the app must not fall back to that old copy, because the user may no longer have access or the data may no longer exist. Offline storage should help when the connection fails, not bypass the server’s access checks.
