@@ -216,6 +216,24 @@ The server decides who is told, when and whether; a background job sends through
 - Opted in: the shift calendar, the activity feed (raw SQL, run on the client the router hands it) and the roster. Everything else reads the primary.
 - Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once, up to about 6.5 s for the first four queries across both shards): k6 warms them up before measuring.
 
+### 5q. The team cache (ADR 0038)
+
+- Three kinds in Valkey, cache-aside, in `server/src/cache/`: the roster, the shift calendar and the first page of the activity feed. Nothing else can be cached through it (the `CacheKind` type is the list).
+- **Scope of each endpoint** (`caching.md` asks for this before anything is cached). All three responses are the same for every role that may see them, so the scope is `team`; the calendar's `mine=true` view is personal, so its scope is `user:<id>`.
+
+  | Kind | Endpoint | Key (after `cache:v1:team:<teamId>:`) | Generation replaced by |
+  |---|---|---|---|
+  | `roster` | `GET /teams/:teamId/members` | `roster:<gen>:team` | a member joins or is deactivated (accepting an invitation; a paid renewal applying a reduction) |
+  | `cal` | `GET /teams/:teamId/shifts` | `cal:<gen>:team` or `cal:<gen>:user:<id>`, then `:<from>:<to>` in epoch milliseconds | a shift is created, edited or deleted; a swap is approved |
+  | `feed` | `GET /teams/:teamId/activity`, first page | `feed:<gen>:team:<limit>:<filtersHash>` | any new activity row: a shift change, a swap request, approval or rejection |
+
+- **TTLs** (config; CHOSEN, NOT MEASURED; approved 2026-11-04): feed 30 s, calendar 30 s, roster 60 s; the generation key 600 s. Every `SET` carries `EX`. **Worst case if an invalidation fails:** other users can see stale data for up to one entry TTL; the writer is protected by the 5 s window.
+- Fills read the **primary**, so with the cache on the replica is asked for these endpoints only when the switch is off or the cache cannot be reached (ADR 0038).
+- Bypass (no read, no fill) during a user's 5 s write window and the process's first 5 s. `CACHE_ENABLED=false` reads and writes nothing. Memory guard: stop filling above 70% of Valkey's `maxmemory`, checked at most every 30 s.
+- A cache failure falls back to the database, is logged once per outage, and never blocks a write: invalidation runs after the commit and never throws. The worker only invalidates (a renewal can deactivate members), through a wrapper around the `stripe_event` handler, so no billing file is touched.
+- Never cached: sessions, token state, permission checks, billing, payment status, credit balances, idempotency records, settings used for quiet hours. A guard test fails if a new writer of cached data is not on its registry.
+- Each request logs `cache` (`hit`, `miss`, `bypass`, `off`, `error`); a `cache_stats` line every 60 s carries the counters and the hit rate for the k6 report.
+
 ### 6. Mobile app
 
 Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and
@@ -265,5 +283,7 @@ app/src/
    The current 5-second read-your-own-writes mechanism uses an in-memory map valid for **exactly one API process** with stop-then-start deployments. In a multi-instance production environment, this must be replaced by a position-based design (comparing the replica's WAL replay position with the user's last write commit LSN stored in Postgres or session state).
 2. **Replication lag:**
    The replicas are real (Neon Free offers one per project), so lag already exists: measured below what a 130 ms round trip can resolve, not zero (ADR 0037). The user who wrote reads the primary for 5 s, so they never see it; another user can see a copy a fraction of a second old. In production the replica's lag needs monitoring and a bound beyond which the replica is not used, and the read-your-own-writes marker has to become position-based (item 1).
-3. **Queue clustering:**
+3. **The cache and more than one API instance:**
+   The team cache is safe across instances (generations live in Valkey), but its 5-second bypass rests on the in-memory marker of item 1, so it needs the same replacement. With real production Valkey, size `maxmemory` for the queue plus the cache and keep the 70% fill guard.
+4. **Queue clustering:**
    A single Aiven Valkey node periodic snapshot model means the queue is transient. Postgres remains the single source of truth for all work rows. In high-volume production, Valkey multi-node HA or Sentinel would provide queue persistence across node failures.

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AuthConfig } from '../auth/config.js';
+import type { Invalidator } from '../cache/store.js';
 import { getShard, type Shards } from '../db/clients.js';
 import { identityDb } from '../db/identity.js';
 import { shardFor, type ShardId } from '../db/shard.js';
@@ -497,7 +498,7 @@ export async function previewInvitation(shards: Shards, input: { token: string; 
  */
 export async function acceptInvitation(
   shards: Shards,
-  input: { token: string; userId: string },
+  input: { token: string; userId: string; cache?: Invalidator },
 ): Promise<{ team: { id: string; name: string; timeZone: string }; role: Role }> {
   const inv = await findPending(shards, input.token);
   if (!inv) {
@@ -539,6 +540,8 @@ export async function acceptInvitation(
     }
     throw error;
   }
+  // The join committed, so a new member is on the roster. After the commit; it never throws (cache/store.ts).
+  await input.cache?.invalidate(inv.teamId, ['roster']);
   return { team: { id: inv.teamId, name: inv.teamName, timeZone: inv.teamTimeZone }, role: inv.role };
 }
 

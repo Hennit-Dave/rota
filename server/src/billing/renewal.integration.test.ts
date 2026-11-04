@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
+import type { Invalidator } from '../cache/store.js';
+import { invalidateRosterAfterRenewalPayment } from '../cache/workerHooks.js';
 import { shardFor, type ShardId } from '../db/shard.js';
 import { createEmailHandler } from '../jobs/email.js';
 import type { ResendClient } from '../jobs/resend.js';
@@ -52,11 +54,14 @@ const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString().s
 function renewalDeps(over: Partial<RenewalDeps> = {}): RenewalDeps {
   return { shards: app.raw, stripe, graceDays: GRACE_DAYS, sender, enqueue: async (_p, row, shard) => void workerQueued.push({ rowId: row.id, shard }), ...over };
 }
+/** When set, the stripe_event handler is wrapped exactly as worker/main.ts wraps it (ADR 0038), with this standing in for the cache. Left unset, nothing changes. */
+let rosterInvalidator: Invalidator | undefined;
 function handlers(over: Partial<RenewalDeps> = {}) {
   const d = renewalDeps(over);
+  const stripeEvent = createStripeEventHandler({ shards: app.raw, stripe: d.stripe, renewal: { graceDays: d.graceDays, sender: d.sender, enqueue: d.enqueue } });
   return {
     [RENEWAL_KIND]: createRenewalHandler(d),
-    stripe_event: createStripeEventHandler({ shards: app.raw, stripe: d.stripe, renewal: { graceDays: d.graceDays, sender: d.sender, enqueue: d.enqueue } }),
+    stripe_event: rosterInvalidator ? invalidateRosterAfterRenewalPayment(stripeEvent, rosterInvalidator) : stripeEvent,
   };
 }
 /** Runs the REAL job processor (claim, handler, completion) for each row, as the worker would. */
@@ -618,6 +623,53 @@ test('a scheduled REDUCTION is applied FIRST, then the renewal charges the small
   // The Owner stays; the deactivated are a non-member on every team route.
   const gone = bearer((await app.signIn(t.staff[0]!.id)).accessToken);
   assert.equal((await app.get(`/teams/${t.teamId}`, gone)).status, 404);
+});
+
+test('a ready REDUCTION whose charge FAILS leaves every member active and the plan unchanged, and no roster invalidation runs; a successful one deactivates the chosen members and invalidates the roster once (ADR 0038)', async () => {
+  const calls: Array<{ teamId: string; kinds: readonly string[] }> = [];
+  rosterInvalidator = { invalidate: async (teamId, kinds) => void calls.push({ teamId, kinds }) };
+  try {
+    // ---- the charge FAILS
+    const t = await setup({ plan: 'team', seats: 9, staff: 3 }); // Owner, Manager and 3 staff: 5 active
+    const changeId = await scheduleReduction(t, { plan: 'starter', seats: 3 }, [t.staff[0]!.id, t.staff[1]!.id]);
+    const subBefore = await subscriptionOf(t.teamId);
+    stripe.renewalScript.push('declined');
+    const { made, paymentIntentId } = await charge(t);
+    assert.equal(made[0]!.request.amountCents, 2000, 'the reduced price is what was charged');
+    assert.equal((await changeOf(t.teamId, changeId)).status, 'ready', 'the boundary check ran: the reduction is ready to apply');
+    assert.equal(await activeMembers(t.teamId), 5, 'the charge was made, and nobody is deactivated yet');
+    const ledgerBefore = await ledgerOf(t.teamId);
+
+    const delivered = await deliver(t, { type: 'payment_intent.payment_failed', paymentIntentId: paymentIntentId!, errorCode: 'card_declined', amount: 2000 });
+    assert.equal((await eventRow(delivered.eventId))!.outcome, 'applied', 'the failure itself was recorded');
+    const failed = await renewalOf(t.teamId, t.renewalId);
+    assert.deepEqual([failed.status, failed.failure_code], ['past_due', 'card_declined']);
+
+    assert.equal(await activeMembers(t.teamId), 5, 'EVERY member is still active after the failed charge');
+    assert.deepEqual(
+      await db(t.teamId).$queryRaw`SELECT user_id::text AS user_id FROM memberships WHERE team_id = ${t.teamId}::uuid AND deactivated_at IS NOT NULL`,
+      [],
+      'nobody was deactivated',
+    );
+    assert.deepEqual(await subscriptionOf(t.teamId), subBefore, 'the plan, seats, paid basis and version are unchanged');
+    assert.equal((await subscriptionOf(t.teamId)).plan, 'team');
+    assert.notEqual((await changeOf(t.teamId, changeId)).status, 'applied', 'the reduction was not applied');
+    assert.deepEqual(await ledgerOf(t.teamId), ledgerBefore, 'and no ledger row was written');
+    const chosen = bearer((await app.signIn(t.staff[0]!.id)).accessToken);
+    assert.equal((await app.get(`/teams/${t.teamId}`, chosen)).status, 200, 'a person the reduction chose can still use the team');
+    assert.deepEqual(calls, [], 'NO roster invalidation ran for a failed charge');
+
+    // ---- contrast: a charge that SUCCEEDS deactivates the chosen members, and the wrapper replaces the roster generation once
+    const ok = await setup({ plan: 'team', seats: 9, staff: 3 });
+    const okChange = await scheduleReduction(ok, { plan: 'starter', seats: 3 }, [ok.staff[0]!.id, ok.staff[1]!.id]);
+    const paid = await charge(ok);
+    await deliver(ok, { paymentIntentId: paid.paymentIntentId!, amount: 2000 });
+    assert.equal(await activeMembers(ok.teamId), 3);
+    assert.equal((await changeOf(ok.teamId, okChange)).status, 'applied');
+    assert.deepEqual(calls, [{ teamId: ok.teamId, kinds: ['roster'] }], 'exactly one invalidation, for the roster of the team that paid');
+  } finally {
+    rosterInvalidator = undefined;
+  }
 });
 
 test('a reduction that does NOT fit pauses collection: the old, higher price is never charged silently, the team follows the failed-renewal path, and cancelling the reduction is the Owner\'s explicit way out', async () => {

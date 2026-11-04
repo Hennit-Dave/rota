@@ -5,7 +5,7 @@ import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../b
 import type { ReadRouting } from '../db/readRouting.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
-import { createInvitationsRouter, type InvitesRouteDeps } from '../invites/routes.js';
+import { createInvitationsRouter, type InvitationsDeps } from '../invites/routes.js';
 import { createDeviceRouter, type DeviceRouteDeps } from '../push/routes.js';
 import { createSettingsRouter, type SettingsRouteDeps } from '../settings/routes.js';
 import { createTeamsRouter, type TeamsDeps } from '../teams/routes.js';
@@ -21,7 +21,7 @@ export interface AppDeps {
   /** When given, mounts /teams. */
   teams?: Omit<TeamsDeps, 'logger'>;
   /** When given, mounts /invitations (preview and accept). */
-  invitations?: Omit<InvitesRouteDeps, 'logger'>;
+  invitations?: Omit<InvitationsDeps, 'logger'>;
   /** When given, mounts /settings (ADR 0024). */
   settings?: Omit<SettingsRouteDeps, 'logger'>;
   /** When given, mounts /devices (push device registration, ADR 0032). */

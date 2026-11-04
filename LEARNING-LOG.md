@@ -249,3 +249,7 @@ I learned that a container needs to shut down properly when it receives `docker 
 ## 2026-11-04 — Read routing (PR #69)
 
 I learned that only three selected reads use the replica because those can tolerate slightly older data while it catches up. Auth, billing and permission checks always use the primary because an old answer could allow access that was removed or use an outdated payment status. Replica routing is chosen carefully for each read rather than applied to everything.
+
+## 2026-11-04 — Caching (PR #70)
+
+I learned that filling the cache means saving a database result for later requests to reuse. The fill reads from the primary because a replica may still have old data, even after a change has been saved. Reading from the primary avoids putting that replica's outdated result back into the cache.

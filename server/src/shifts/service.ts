@@ -2,6 +2,7 @@ import { getShard, type Shards } from '../db/clients.js';
 import type { EnqueueRow } from '../billing/renewal.js';
 import { enqueueEvents, queueShiftEvent } from '../push/events.js';
 import { identityDb } from '../db/identity.js';
+import type { Invalidator } from '../cache/store.js';
 import type { ReadDb } from '../db/readRouting.js';
 import type { PrismaClient, Shift } from '../generated/prisma/client.js';
 import { ApiError } from '../http/errors.js';
@@ -131,7 +132,7 @@ export interface NewShift {
 }
 
 /** `enqueue`: puts the push event the change wrote onto the queue AFTER the commit (ADR 0033); without it the row waits for the sweep. */
-export async function createShift(shards: Shards, input: { teamId: string; actorUserId: string; shift: NewShift; enqueue?: EnqueueRow }): Promise<ShiftView> {
+export async function createShift(shards: Shards, input: { teamId: string; actorUserId: string; shift: NewShift; enqueue?: EnqueueRow; cache?: Invalidator }): Promise<ShiftView> {
   const { teamId, actorUserId, shift } = input;
   const prisma = getShard(shards, teamId).primary;
   const assignee = shift.assignedUserId ?? null;
@@ -159,6 +160,8 @@ export async function createShift(shards: Shards, input: { teamId: string; actor
     const work = await queueShiftEvent(tx, { teamId, moment: 'shift_created', shiftId: row.id, actorUserId, assignedUserId: row.assignedUserId });
     return { row, work };
   });
+  // The calendar and the feed changed (the feed row was written in the same transaction). After the commit, before answering; it never throws (cache/store.ts).
+  await input.cache?.invalidate(teamId, ['cal', 'feed']);
   await enqueueEvents(prisma, teamId, created.work, input.enqueue);
   return view(created.row, await namesFor(shards, [created.row.assignedUserId]));
 }
@@ -173,7 +176,7 @@ export interface ShiftPatch {
   assignedUserId?: string | null;
 }
 
-export async function updateShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; patch: ShiftPatch; enqueue?: EnqueueRow }): Promise<ShiftView> {
+export async function updateShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; patch: ShiftPatch; enqueue?: EnqueueRow; cache?: Invalidator }): Promise<ShiftView> {
   const { teamId, shiftId, actorUserId, patch } = input;
   const prisma = getShard(shards, teamId).primary;
 
@@ -207,11 +210,12 @@ export async function updateShift(shards: Shards, input: { teamId: string; shift
     const work = await queueShiftEvent(tx, { teamId, moment: 'shift_updated', shiftId, actorUserId, assignedUserId: row.assignedUserId, previousAssignedUserId: current.assignedUserId });
     return { row, work };
   });
+  await input.cache?.invalidate(teamId, ['cal', 'feed']);
   await enqueueEvents(prisma, teamId, updated.work, input.enqueue);
   return view(updated.row, await namesFor(shards, [updated.row.assignedUserId]));
 }
 
-export async function deleteShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; enqueue?: EnqueueRow }): Promise<void> {
+export async function deleteShift(shards: Shards, input: { teamId: string; shiftId: string; actorUserId: string; enqueue?: EnqueueRow; cache?: Invalidator }): Promise<void> {
   const { teamId, shiftId, actorUserId } = input;
   const prisma = getShard(shards, teamId).primary;
   const work = await prisma.$transaction(async (tx) => {
@@ -223,5 +227,6 @@ export async function deleteShift(shards: Shards, input: { teamId: string; shift
     await tx.activity.create({ data: { teamId, actorUserId, kind: 'shift_deleted', shiftId, data: snapshot(gone) } });
     return queueShiftEvent(tx, { teamId, moment: 'shift_deleted', shiftId, actorUserId, assignedUserId: gone.assignedUserId });
   });
+  await input.cache?.invalidate(teamId, ['cal', 'feed']);
   await enqueueEvents(prisma, teamId, work, input.enqueue);
 }

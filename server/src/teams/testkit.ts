@@ -16,6 +16,8 @@ import { createSession } from '../auth/sessions.js';
 import type { Reply } from '../auth/testkit.js';
 import { createTokenService, type TokenService } from '../auth/tokens.js';
 import { createTestShards, type Shards } from '../db/clients.js';
+import { loadCacheConfig, type CacheConfig } from '../cache/config.js';
+import { createTeamCache, type CacheRedis, type TeamCache } from '../cache/store.js';
 import { createReadRouting, type ReadRouting } from '../db/readRouting.js';
 import { identityDb } from '../db/identity.js';
 import { shardFor, type ShardId } from '../db/shard.js';
@@ -45,6 +47,11 @@ export interface TeamsTestOptions {
   /** Point the limiter at a Valkey that is not there, to prove team creation fails closed. */
   deadValkey?: boolean;
   /** Mounts the billing routes and the Stripe webhook, with this gateway standing in for Stripe (payments, ADR 0027). */
+  /**
+   * The team cache (ADR 0038). OFF unless a test asks for it, so no other suite sees a cached answer or writes a cache key. When on, it uses the REAL Valkey
+   * through a spy that records every command and can be told to fail. `ttlSeconds` shortens a TTL so a test need not wait out the real one.
+   */
+  cache?: { enabled?: boolean; ttlSeconds?: Partial<CacheConfig['ttlSeconds']> };
   /** Real read replicas (the test shards' replicas), so a test can prove which database a read used. Off by default: every read then goes to the primary. */
   replicas?: boolean;
   billing?: { stripe: StripeGateway; /** Pins "now" for the billing code, so a test can sit on a chosen day of a period. */ now?: () => Date };
@@ -63,6 +70,15 @@ export interface TeamsTestApp {
   raw: Shards;
   /** The read-routing function the app was built with (marker state, the decision). */
   reads: ReadRouting;
+  /** The team cache the app was built with. */
+  cache: TeamCache;
+  /** Every command the cache sent to Valkey, in order ("get <key>", "set <key> [NX] ex=<s>", "info memory"). */
+  cacheCommands(): string[];
+  clearCacheCommands(): void;
+  /** Makes the cache's Valkey commands fail (undefined: stop failing). Only the cache's own connection is affected, not the rate limiter's. */
+  failCache(fn: ((op: 'get' | 'set' | 'info', key: string) => Error | undefined) | undefined): void;
+  /** Every `cache:*` key of a team in the REAL Valkey with its TTL in seconds (-1: none, -2: gone). */
+  cacheEntries(teamId: string): Promise<Array<{ key: string; ttl: number }>>;
   /** Every query a replica client was asked, in order. Empty unless the app was started with `replicas: true`. */
   replicaQueries(): string[];
   config: AuthConfig;
@@ -193,12 +209,50 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
   // These shards have no replica clients, so every read in these suites goes to the primary and a test never races replication lag. Routing against the real
   // replicas is proved in src/db/readRouting.integration.test.ts and in the proof run (ADR 0037).
   const reads = createReadRouting({ shards });
+  // The cache gets its own connection, like the real API (ADR 0038), wrapped in a spy: the real Valkey, every command recorded, failures injectable.
+  const cacheCommands: string[] = [];
+  let cacheFailure: ((op: 'get' | 'set' | 'info', key: string) => Error | undefined) | undefined;
+  const cacheConnection = createProducerConnection(options.deadValkey ? 'redis://127.0.0.1:1' : undefined);
+  cacheConnection.on('error', () => {});
+  if (!options.deadValkey) await cacheConnection.connect();
+  const cacheSpy: CacheRedis = {
+    get: async (key) => {
+      cacheCommands.push(`get ${key}`);
+      const f = cacheFailure?.('get', key);
+      if (f) throw f;
+      return cacheConnection.get(key);
+    },
+    set: (async (key: string, value: string, mode: 'EX', seconds: number, nx?: 'NX') => {
+      cacheCommands.push(`set ${key}${nx ? ' NX' : ''} ex=${seconds}`);
+      const f = cacheFailure?.('set', key);
+      if (f) throw f;
+      return nx ? cacheConnection.set(key, value, mode, seconds, nx) : cacheConnection.set(key, value, mode, seconds);
+    }) as CacheRedis['set'],
+    info: async (section) => {
+      cacheCommands.push('info memory');
+      const f = cacheFailure?.('info', '');
+      if (f) throw f;
+      return cacheConnection.info(section);
+    },
+    get status() {
+      return cacheConnection.status;
+    },
+    disconnect: (reconnect) => cacheConnection.disconnect(reconnect),
+    once: (event, listener) => cacheConnection.once(event, listener),
+  };
+  const defaults = loadCacheConfig({});
+  const cache = createTeamCache({
+    redis: cacheSpy,
+    config: { ...defaults, enabled: options.cache?.enabled ?? false, ttlSeconds: { ...defaults.ttlSeconds, ...options.cache?.ttlSeconds } },
+    logger,
+    statsEveryMs: null,
+  });
   const harnessApp = express();
   installPreRoutes(harnessApp, logger);
   harnessApp.use(reads.writeMarker);
   if (webhookDeps) harnessApp.post(STRIPE_WEBHOOK_PATH, ...createStripeWebhook({ ...webhookDeps, logger }));
-  harnessApp.use('/teams', createTeamsRouter({ shards, reads, tokens, limiter, logger, config, invites, billing: billingDeps }));
-  harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
+  harnessApp.use('/teams', createTeamsRouter({ shards, reads, cache, tokens, limiter, logger, config, invites, billing: billingDeps }));
+  harnessApp.use('/invitations', createInvitationsRouter({ shards, tokens, limiter, logger, config, invites, cache }));
   harnessApp.use('/settings', createSettingsRouter({ shards, tokens, limiter, logger, config }));
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
@@ -218,8 +272,8 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
   const productionApp = createApp({
     logger,
     reads,
-    teams: { shards, reads, tokens, limiter, config, invites, billing: billingDeps },
-    invitations: { shards, tokens, limiter, config, invites },
+    teams: { shards, reads, cache, tokens, limiter, config, invites, billing: billingDeps },
+    invitations: { shards, tokens, limiter, config, invites, cache },
     settings: { shards, tokens, limiter, config },
     stripeWebhook: webhookDeps,
   });
@@ -263,6 +317,20 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     productionBase: production.url,
     raw,
     reads,
+    cache,
+    cacheCommands: () => [...cacheCommands],
+    clearCacheCommands: () => void (cacheCommands.length = 0),
+    failCache: (fn) => void (cacheFailure = fn),
+    cacheEntries: async (teamId) => {
+      const found: string[] = [];
+      let cursor = '0';
+      do {
+        const [next, keys] = await cacheConnection.scan(cursor, 'MATCH', `cache:v1:team:${teamId}:*`, 'COUNT', 200);
+        cursor = next;
+        found.push(...keys);
+      } while (cursor !== '0');
+      return Promise.all(found.map(async (key) => ({ key, ttl: await cacheConnection.ttl(key) })));
+    },
     replicaQueries: () => [...replicaLog],
     config,
     logLines: () => lines,
@@ -324,6 +392,7 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
     del: (path, headers) => call('DELETE', path, undefined, headers),
     async stop() {
       reads.stop();
+      cache.stop();
       await new Promise<void>((r) => harness.server.close(() => r()));
       await new Promise<void>((r) => production.server.close(() => r()));
       if (!options.deadValkey) {
@@ -338,6 +407,19 @@ export async function startTeamsTestApp(options: TeamsTestOptions = {}): Promise
         assert.deepEqual(leftovers, [], 'test left rate-limit keys behind');
       }
       redis.disconnect();
+
+      // The cache keys this run made (they would expire by TTL anyway; this keeps the shared Valkey tidy), then its connection.
+      if (!options.deadValkey) {
+        for (const teamId of teamIds) {
+          let cursor = '0';
+          do {
+            const [next, keys] = await cacheConnection.scan(cursor, 'MATCH', `cache:v1:team:${teamId}:*`, 'COUNT', 200);
+            cursor = next;
+            if (keys.length > 0) await cacheConnection.del(...keys);
+          } while (cursor !== '0');
+        }
+      }
+      cacheConnection.disconnect();
 
       // Teams made through the API are found by their members. Deleting a team cascades to its memberships; deleting a user
       // cascades to its sessions and directory rows.

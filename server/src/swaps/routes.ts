@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import type { Invalidator } from '../cache/store.js';
 import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import type { TokenService } from '../auth/tokens.js';
@@ -17,6 +18,8 @@ import { cancelSwap, createSwap, decideSwap, getSwap, listSwaps } from './servic
 
 export interface SwapsRouteDeps {
   shards: Shards;
+  /** Replaces the cache generation of what a swap changes (ADR 0038): the feed for a request or a rejection, the calendar too for an approval. */
+  cache: Invalidator;
   tokens: TokenService;
   limiter: RateLimiter;
   logger: Logger;
@@ -92,6 +95,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
         maxPending: swapsConfig.maxPending,
         maxWaitMs: config.transactionMaxWaitMs,
         enqueue: deps.enqueue,
+        cache: deps.cache,
       });
       // 201 when this call made the request, 200 when it is the stored answer to a repeat of the same key.
       res.status(result.created ? 201 : 200).json({ swap: result.swap });
@@ -108,7 +112,7 @@ export function createSwapsRouter(deps: SwapsRouteDeps): Router {
   for (const decision of ['approve', 'reject'] as const) {
     router.post(`/:swapId/${decision}`, validateRequest({ params: schemas.swapParams }), requireAuth, requireTeamRole('swaps.approve'), requireWritable, async (req, res) => {
       const { teamId, swapId } = req.validated!.params as { teamId: string; swapId: string };
-      res.json({ swap: await decideSwap(shards, { teamId, swapId, caller: caller(req), decision, maxWaitMs: config.transactionMaxWaitMs, enqueue: deps.enqueue }) });
+      res.json({ swap: await decideSwap(shards, { teamId, swapId, caller: caller(req), decision, maxWaitMs: config.transactionMaxWaitMs, enqueue: deps.enqueue, cache: deps.cache }) });
     });
   }
 

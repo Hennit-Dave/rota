@@ -3,6 +3,8 @@ import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import type { TokenService } from '../auth/tokens.js';
 import type { Shards } from '../db/clients.js';
+import { filtersHash } from '../cache/keys.js';
+import type { TeamCache } from '../cache/store.js';
 import { readContext, type ReadRouting } from '../db/readRouting.js';
 import { identityDb } from '../db/identity.js';
 import type { Logger } from '../http/logger.js';
@@ -18,6 +20,8 @@ export interface ActivityRouteDeps {
   shards: Shards;
   /** The read-routing function (ADR 0037): the feed is a routed read. */
   reads: ReadRouting;
+  /** The team cache (ADR 0038): the FIRST page of the feed is cached. Later pages never are. */
+  cache: TeamCache;
   tokens: TokenService;
   limiter: RateLimiter;
   logger: Logger;
@@ -38,7 +42,7 @@ const noStore: RequestHandler = (_req, res, next) => {
  * (503 when Valkey is unreachable), like every limited route (ADR 0022, issue #11). The team comes from the validated path, never from the cursor.
  */
 export function createActivityRouter(deps: ActivityRouteDeps): Router {
-  const { shards, reads, tokens, limiter, logger, config } = deps;
+  const { shards, reads, cache, tokens, limiter, logger, config } = deps;
   const schemas = createActivitySchemas(deps.activity ?? loadActivityConfig());
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
@@ -50,8 +54,25 @@ export function createActivityRouter(deps: ActivityRouteDeps): Router {
   router.get('/', validateRequest({ params: schemas.teamParams, query: schemas.query }), requireAuth, feedLimit, requireTeamRole('shifts.view'), async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
     const { limit, cursor } = req.validated!.query as { limit: number; cursor: Cursor | null };
+    const userId = req.auth!.userId;
     // The membership and role were just checked on the primary. The rows themselves may come from the replica (ADR 0037); the user's own recent write sends the read to the primary.
-    res.json(await reads.run(teamId, readContext(res, req.auth!.userId), (db) => listActivity(shards, { teamId, limit, cursor }, db)));
+    const read = (primary: boolean) => reads.run(teamId, readContext(res, userId, primary), (db) => listActivity(shards, { teamId, limit, cursor }, db));
+    if (cursor !== null) {
+      // A page after the first is never cached (caching.md): its cursor makes it too specific to be shared, and it is rarely asked twice.
+      res.json(await read(false));
+      return;
+    }
+    // The first page is the same for everyone who may see the feed, so it is one entry per team; the validated limit and a hash of the (today empty) filters are in the key.
+    const { value, status } = await cache.get({
+      kind: 'feed',
+      teamId,
+      scope: 'team',
+      params: [String(limit), filtersHash({})],
+      bypass: reads.decide(userId) !== 'none',
+      load: ({ primary }) => read(primary),
+    });
+    res.locals.cache = status;
+    res.json(value);
   });
 
   return router;

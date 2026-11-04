@@ -52,6 +52,12 @@ user who just wrote reads the primary for 5 seconds. Everything else reads the p
 `marker`, `startup`, `primary-required` or `replica-failed`. The replica sleeps after 5 minutes idle, so the first read after a quiet spell takes a
 second or two longer.
 
+**Team cache** (ADR 0038): the roster, the shift calendar and the first page of the activity feed are cached in Valkey (cache-aside, a TTL on every key, replaced after the
+write commits). Optional env names are in `.env.example` (`CACHE_ENABLED` and the `CACHE_TTL_*` values). **`CACHE_ENABLED=false` is the one switch:** nothing is read from or written to
+the cache, which is how the k6 "before" run is made with the same build. Each request on those three endpoints logs `cache` (`hit`, `miss`, `bypass`, `off`, `error`) beside `dbRoute`,
+and a `cache_stats` line every 60 seconds gives the counters and the hit rate. A cache failure is logged once and the request is answered from the database. Billing, payment status,
+sessions, permissions and idempotency records are never cached; `server/src/cache/writeSites.unit.test.ts` fails if a new writer of cached data forgets to replace the cache generation.
+
 ### Container image (issue #14, ADR 0036)
 
 One image runs both programs. The build context is `server/`:

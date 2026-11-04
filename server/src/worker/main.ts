@@ -1,3 +1,6 @@
+import { loadCacheConfig } from '../cache/config.js';
+import { createTeamCache } from '../cache/store.js';
+import { invalidateRosterAfterRenewalPayment } from '../cache/workerHooks.js';
 import { createReductionBoundaryHandler, REDUCTION_BOUNDARY_KIND } from '../billing/reductions.js';
 import { createStripeGateway } from '../billing/gateway.js';
 import { loadStripeApiConfig } from '../billing/stripeConfig.js';
@@ -25,6 +28,7 @@ import { createWorkWorker } from '../jobs/worker.js';
 import { loadPushConfig } from '../push/config.js';
 import { createExpoPushClient } from '../push/expo.js';
 import { createPushEventHandler, createPushHandler, createPushReceiptsHandler, PUSH_EVENT_KIND, PUSH_KIND, PUSH_RECEIPTS_KIND } from '../push/jobs.js';
+import { createLogger } from '../http/logger.js';
 import type { Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 
@@ -93,13 +97,30 @@ try {
 }
 const expo = createExpoPushClient({ timeoutMs: pushConfig.sendTimeoutMs });
 
+// The worker only INVALIDATES the cache, never reads it: a paid renewal can deactivate members, which changes the roster (ADR 0038). Its own bounded connection;
+// a cache failure is reported by the cache and never stops a job. The same CACHE_ENABLED switch applies: off means nothing is written.
+let cacheConfig: ReturnType<typeof loadCacheConfig>;
+try {
+  cacheConfig = loadCacheConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+const cacheConnection = createProducerConnection();
+cacheConnection.on('error', () => {});
+void cacheConnection.connect().catch(() => {});
+const cache = createTeamCache({ redis: cacheConnection, config: cacheConfig, logger: createLogger(), statsEveryMs: null });
+
 const handlers = {
   test: async (ctx: any) => {
     console.log(`[job:test] processing row ${ctx.row.id}`);
   },
   email: createEmailHandler({ resend: createResendClient(resendConfig) }),
   // Stripe webhook events recorded by the API (ADR 0027). The worker only READS from Stripe (the saved card, ADR 0030) and writes our own tables.
-  stripe_event: createStripeEventHandler({ shards, stripe, renewal: { graceDays: renewalConfig.graceDays, sender, enqueue } }),
+  stripe_event: invalidateRosterAfterRenewalPayment(
+    createStripeEventHandler({ shards, stripe, renewal: { graceDays: renewalConfig.graceDays, sender, enqueue } }),
+    cache,
+  ),
   // The renewal at the end of a period, and the Owner's retry (ADR 0031). It charges the saved card; only the verified webhook decides the outcome.
   [RENEWAL_KIND]: createRenewalHandler({ shards, stripe, graceDays: renewalConfig.graceDays, sender, enqueue }),
   // Push notifications (ADR 0032): fan out an event to its recipients, send to their devices, then read Expo's receipts.
@@ -150,6 +171,8 @@ const reconciler = startReconciler(shards, reconcileQueue, { reconnectSource: re
 
 async function shutdown(signal: NodeJS.Signals) {
   console.log(`worker received ${signal}, closing`);
+  cache.stop();
+  cacheConnection.disconnect();
   await reconciler.stop();
   await watchdog.stop();
   const { worker, connection } = watchdog.current();

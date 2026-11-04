@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import type { TeamCache } from '../cache/store.js';
 import { readContext, type ReadRouting } from '../db/readRouting.js';
 import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
@@ -17,6 +18,8 @@ export interface ShiftsRouteDeps {
   shards: Shards;
   /** The read-routing function (ADR 0037): the calendar (list) is a routed read. */
   reads: ReadRouting;
+  /** The team cache (ADR 0038): the calendar is cached, and every change here replaces its generation. */
+  cache: TeamCache;
   tokens: TokenService;
   config?: ShiftsConfig;
   /** Puts a push event onto the queue after the shift change committed (ADR 0033). It never throws. */
@@ -37,7 +40,7 @@ const noStore: RequestHandler = (_req, res, next) => {
  * (`shifts.view`); only an Owner or Manager may publish, change or delete (`shifts.edit`). The team comes from the validated path, never the body.
  */
 export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
-  const { shards, reads, tokens } = deps;
+  const { shards, reads, cache, tokens } = deps;
   const config = deps.config ?? loadShiftsConfig();
   const schemas = createShiftSchemas(config);
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
@@ -51,10 +54,21 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   router.get('/', validateRequest({ params: schemas.teamParams, query: schemas.list }), requireAuth, requireTeamRole('shifts.view'), async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
     const { from, to, mine } = req.validated!.query as { from: Date; to: Date; mine: boolean };
-    const shifts = await reads.run(teamId, readContext(res, req.auth!.userId), (db) =>
-      listShifts(shards, { teamId, from, to, assignedUserId: mine ? req.auth!.userId : undefined }, db),
-    );
-    res.json({ shifts });
+    const userId = req.auth!.userId;
+    // The membership and role were just checked on the primary, and a cache hit never skips that. The key holds every input that shapes the answer: who it is
+    // for (everyone in the team, or only this person with `mine`) and the exact range, as epoch milliseconds (the app asks for day-aligned weeks, so keys repeat).
+    const { value, status } = await cache.get({
+      kind: 'cal',
+      teamId,
+      scope: mine ? `user:${userId}` : 'team',
+      params: [String(from.getTime()), String(to.getTime())],
+      // The user's own 5 s window and the process's first 5 s: skip the cache entirely and do not fill it (caching.md).
+      bypass: reads.decide(userId) !== 'none',
+      load: ({ primary }) =>
+        reads.run(teamId, readContext(res, userId, primary), (db) => listShifts(shards, { teamId, from, to, assignedUserId: mine ? userId : undefined }, db)).then((shifts) => ({ shifts })),
+    });
+    res.locals.cache = status;
+    res.json(value);
   });
 
   // GET /teams/:teamId/shifts/upcoming: the caller's OWN shifts that have not ended, for the phone to keep for offline viewing (ADR 0034). Registered before
@@ -76,7 +90,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   // POST /teams/:teamId/shifts
   router.post('/', validateRequest({ params: schemas.teamParams, body: schemas.create }), requireAuth, requireTeamRole('shifts.edit'), requireWritable, async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
-    const shift = await createShift(shards, { teamId, actorUserId: req.auth!.userId, shift: req.validated!.body as NewShift, enqueue: deps.enqueue });
+    const shift = await createShift(shards, { teamId, actorUserId: req.auth!.userId, shift: req.validated!.body as NewShift, enqueue: deps.enqueue, cache });
     res.status(201).json({ shift });
   });
 
@@ -89,7 +103,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
     requireWritable,
     async (req, res) => {
       const { teamId, shiftId } = req.validated!.params as { teamId: string; shiftId: string };
-      const shift = await updateShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId, patch: req.validated!.body as ShiftPatch, enqueue: deps.enqueue });
+      const shift = await updateShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId, patch: req.validated!.body as ShiftPatch, enqueue: deps.enqueue, cache });
       res.json({ shift });
     },
   );
@@ -97,7 +111,7 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   // DELETE /teams/:teamId/shifts/:shiftId
   router.delete('/:shiftId', validateRequest({ params: schemas.shiftParams }), requireAuth, requireTeamRole('shifts.edit'), requireWritable, async (req, res) => {
     const { teamId, shiftId } = req.validated!.params as { teamId: string; shiftId: string };
-    await deleteShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId, enqueue: deps.enqueue });
+    await deleteShift(shards, { teamId, shiftId, actorUserId: req.auth!.userId, enqueue: deps.enqueue, cache });
     res.status(204).end();
   });
 

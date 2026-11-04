@@ -10,6 +10,7 @@ import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createTeamInvitationsRouter } from '../invites/routes.js';
 import { createActivityRouter } from '../activity/routes.js';
+import type { TeamCache } from '../cache/store.js';
 import { readContext, type ReadRouting } from '../db/readRouting.js';
 import { createSwapsRouter } from '../swaps/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
@@ -27,6 +28,8 @@ export interface TeamsDeps {
   shards: Shards;
   /** The read-routing function (ADR 0037): the roster, the calendar and the feed are routed reads. */
   reads: ReadRouting;
+  /** The team cache (ADR 0038): the roster, the calendar and the first page of the feed are cached; every change to them replaces a generation. */
+  cache: TeamCache;
   tokens: TokenService;
   limiter: RateLimiter;
   logger: Logger;
@@ -46,7 +49,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 /** The team routes (mounted at /teams). The pipelines are the ones in security.md: user routes and team routes. */
 export function createTeamsRouter(deps: TeamsDeps): Router {
-  const { shards, reads, tokens, limiter, logger, config, invites, billing, enqueue } = deps;
+  const { shards, reads, cache, tokens, limiter, logger, config, invites, billing, enqueue } = deps;
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
 
@@ -108,18 +111,32 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
     requireTeamRole('members.list'),
     async (req, res) => {
       const { teamId } = req.validated!.params as { teamId: string };
-      const members = await reads.run(teamId, readContext(res, req.auth!.userId), (db) =>
-        listMembers(shards, teamId, () => logger.warn('membership_without_user', { requestId: String(res.locals.requestId ?? '') }), db),
-      );
-      res.json({ members });
+      const userId = req.auth!.userId;
+      // Everyone who may list the members sees the same list, so one entry per team. For display only: whether someone may do something is always asked of the primary.
+      const { value, status } = await cache.get({
+        kind: 'roster',
+        teamId,
+        scope: 'team',
+        params: [],
+        bypass: reads.decide(userId) !== 'none',
+        load: ({ primary }) =>
+          reads
+            .run(teamId, readContext(res, userId, primary), (db) =>
+              listMembers(shards, teamId, () => logger.warn('membership_without_user', { requestId: String(res.locals.requestId ?? '') }), db),
+            )
+            // Stored as JSON, so the joined-at date becomes its ISO string here: exactly what res.json would have sent.
+            .then((members) => ({ members: members.map((m) => ({ ...m, joinedAt: m.joinedAt.toISOString() })) })),
+      });
+      res.locals.cache = status;
+      res.json(value);
     },
   );
 
   router.use('/:teamId/invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   // Shifts (ADR 0021). They carry the router's body parser, log base and no-store through `router.use` above.
-  router.use('/:teamId/shifts', createShiftsRouter({ shards, reads, tokens, enqueue }));
-  router.use('/:teamId/activity', createActivityRouter({ shards, reads, tokens, limiter, logger, config }));
-  router.use('/:teamId/swaps', createSwapsRouter({ shards, tokens, limiter, logger, config, enqueue }));
+  router.use('/:teamId/shifts', createShiftsRouter({ shards, reads, cache, tokens, enqueue }));
+  router.use('/:teamId/activity', createActivityRouter({ shards, reads, cache, tokens, limiter, logger, config }));
+  router.use('/:teamId/swaps', createSwapsRouter({ shards, cache, tokens, limiter, logger, config, enqueue }));
   if (billing) router.use('/:teamId/billing', createBillingRouter({ shards, tokens, limiter, logger, config, billing }));
 
   return router;

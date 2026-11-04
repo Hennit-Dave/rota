@@ -98,3 +98,17 @@ the feed. The report says which was which and gives the hit rate during the "aft
    database. **Valkey fully down:** the feed returns 503 (rate limiter fails closed, `security.md`; decided in issue #11, ADR 0022).
 9. **Never-cache:** subscription status, permissions and token checks never read from Valkey (instrumented).
 10. **Switch:** with caching off, no `cache:*` keys are written.
+
+## Decided when it was built (ADR 0038)
+
+The rules above are unchanged. What the implementation (`server/src/cache/`) settled:
+
+- **Kinds are a type:** `CacheKind` is `roster`, `cal`, `feed`. Nothing else can be cached through the module.
+- **Config (all CHOSEN, NOT MEASURED, Dave 2026-11-04):** entry TTLs feed 30 s, calendar 30 s, roster 60 s, generation 600 s; stop filling above 70% of `maxmemory`, checked at most every 30 s. The switch is
+  `CACHE_ENABLED` (strict `true` or `false`). Names are in `.env.example`.
+- **Scopes:** roster, calendar and the feed's first page are `team` (the same for every role that may see them); the calendar's `mine=true` view is `user:<id>`. If a response ever depends on the role, its scope
+  becomes the role class.
+- **After a Valkey failure,** reads skip the cache for 5 s (CHOSEN, NOT MEASURED); invalidations are still attempted every time. `OOM command not allowed` on a write is caught and counted, and stops fills for 30 s.
+- **Observability:** the request log's `cache` field (`hit`, `miss`, `bypass`, `off`, `error`) and a `cache_stats` line every 60 s.
+- **Every writer** of memberships, shifts, activity rows or a display name must replace the generation after its commit; `server/src/cache/writeSites.unit.test.ts` fails if a new one is not registered.
+- **The worker** invalidates (a paid renewal can deactivate members) through a wrapper around the `stripe_event` handler in `worker/main.ts`, so no `billing/` file changes for the cache.
