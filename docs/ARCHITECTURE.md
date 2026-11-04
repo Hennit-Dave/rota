@@ -198,7 +198,7 @@ The server decides who is told, when and whether; a background job sends through
 
 **Part 2 (ADR 0033): shift and swap pushes.** `createShift`, `updateShift`, `deleteShift`, `createSwap` and `decideSwap` each write a `push_event` work row **inside the same transaction as their activity row** (`push/events.ts`) and put it on the queue after the commit (the team and swap routers take an `enqueue`, like billing does); the part 1 jobs do the rest. Who is told is decided by pure rules (`push/recipients.ts`): the assignee of a shift (and the person it was taken from), the approvers and the other party for a swap request, both people for a decision, **never the person who acted**; an open shift and a cancelled swap tell nobody. For shift and swap types the push job requires the recipient to be an **active member** of the team when it runs, and the per-type switch applies. **One Android channel per type** (`shift_changes`, `swap_updates`, `billing`, plus the part 1 `default`): the server names the type's channel, the app creates all of them at every registration, and a server test checks the two lists agree. The words are generic (no title, time or name); the data carries a `shiftId` or `swapId` that the app maps to a screen. Older installs without the channels drop these pushes silently (known risk, ADR 0033).
 
-### 5b. Container image
+### 5o. Container image
 
 - `server/Dockerfile` builds one image for both programs: the API by default, the worker with `node dist/worker/main.js`.
   Debian slim on Node 24, two stages, production dependencies only at runtime, runs as the `node` user, no secrets or `.env`
