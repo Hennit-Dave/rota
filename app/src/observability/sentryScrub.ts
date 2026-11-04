@@ -79,7 +79,10 @@ const PATTERNS: Array<[RegExp, string | ((match: string, ...groups: string[]) =>
   [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi, `$1${REDACTED}@`],
   // The token in an invite, magic-link or reset URL path: /invite/<token>
   [/(\/(?:invite|magic|reset)\/)[^\s/?#"')]+/gi, `$1${REDACTED}`],
-  // A secret in a query string: ?token=..., &code=..., &password=...
+  // Any URL that appears INSIDE text (a message, a note, a breadcrumb line) loses its query string and fragment, not only a field that holds a URL: `https://host/path?x=1#top`
+  // and `/teams/:teamId/shifts?from=...` both lose everything from the "?". A "?" at the end of a sentence is left alone (it needs a URL or a path in front of it).
+  [/(https?:\/\/[^\s?#"')]+|(?<![\w:/])\/[A-Za-z0-9_\-.~%:@+,;=/[\]]+)\?[^\s"')]*/g, '$1'],
+  // A secret in a query string that is NOT part of a URL: ?token=..., &code=..., &password=...
   [/([?&][A-Za-z0-9_]*(?:token|secret|password|passwd|key|sig|signature|code|auth)[A-Za-z0-9_]*=)[^&\s#"')]+/gi, `$1${REDACTED}`],
   // Authorization headers and bearer tokens
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, REDACTED],
@@ -148,8 +151,24 @@ export function scrubBreadcrumb<B extends object>(breadcrumb: B): B | null {
 }
 
 /**
+ * The address EVERY event carries in `user.ip_address`, whatever it was sent with (a real address, `null`, `{{auto}}`, nothing): never a real one. Sentry works out a
+ * user's GEOGRAPHY (city, country) from the address it infers for the event, even when "Prevent Storing of IP Addresses" is on (docs.sentry.io/security-legal-pii/scrubbing/
+ * server-side-scrubbing, "Geographic Information"), and its docs name no SDK value that stops it. Tried on real events (ADR 0039): with no `ip_address` or with `null` the
+ * geography still appeared on a server and an app event; with this placeholder it did not. The project's own rule `[Remove] [Anything] from [$user.geo.**]` is a second layer
+ * for events this code never sees (a hard native crash in the app).
+ */
+export const ANONYMOUS_IP = '0.0.0.0';
+
+/** The `device` context keys that help debugging (model, memory, the kind of device). Everything else in it (the device id, battery, storage, boot time, time zone...) is dropped. */
+export const DEVICE_CONTEXT_KEEP: readonly string[] = ['model', 'model_id', 'family', 'manufacturer', 'brand', 'simulator', 'arch', 'memory_size'];
+
+/** Keys dropped from the `app` context: a stable per-install hash identifies one installation as surely as a device id does. */
+export const APP_CONTEXT_DROP: readonly string[] = ['device_app_hash'];
+
+/**
  * Cuts an error event down to what is safe to send:
- *  - `user`: only the id (never an email, username or IP address);
+ *  - `user`: only the id (never an email, username or geography), plus `ip_address` set to `ANONYMOUS_IP` on every event, with or without a user (see above);
+ *  - `contexts`: `culture` (locale and time zone) is removed, `device` keeps only `DEVICE_CONTEXT_KEEP`, and `app` loses its per-install hash;
  *  - `request`: removed (URL, headers, cookies, body and query string can all hold secrets); the route template and ids travel as tags;
  *  - exception messages, the message, extra data, contexts, tags and breadcrumbs: scrubbed with the list above;
  *  - stack frames: variable values removed (only the file, function and line stay).
@@ -159,7 +178,8 @@ export function scrubEvent<E extends object>(event: E): E {
   const e: Loose = { ...(event as Loose) };
 
   const id = e.user?.id;
-  e.user = id === undefined || id === null || id === '' ? undefined : { id: String(id) };
+  const hasId = id !== undefined && id !== null && id !== '';
+  e.user = { ...(hasId ? { id: String(id) } : {}), ip_address: ANONYMOUS_IP };
   delete e.request;
 
   if (typeof e.message === 'string') e.message = scrubString(e.message);
@@ -179,7 +199,22 @@ export function scrubEvent<E extends object>(event: E): E {
   }
 
   if (e.extra) e.extra = scrubValue(e.extra);
-  if (e.contexts) e.contexts = scrubValue(e.contexts);
+  if (e.contexts) {
+    const contexts = scrubValue(e.contexts) as Loose;
+    delete contexts.culture;
+    if (contexts.device && typeof contexts.device === 'object') {
+      contexts.device = Object.fromEntries(Object.entries(contexts.device as Loose).filter(([key]) => DEVICE_CONTEXT_KEEP.includes(key)));
+    }
+    if (contexts.app && typeof contexts.app === 'object') {
+      contexts.app = Object.fromEntries(Object.entries(contexts.app as Loose).filter(([key]) => !APP_CONTEXT_DROP.includes(key)));
+    }
+    // A context that ended up empty (the SDK's own switches leave `{}` behind) is removed, so Sentry shows no empty panel.
+    for (const key of Object.keys(contexts)) {
+      const c = contexts[key];
+      if (c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0) delete contexts[key];
+    }
+    e.contexts = contexts;
+  }
   if (e.tags) e.tags = scrubValue(e.tags);
   if (Array.isArray(e.breadcrumbs)) {
     e.breadcrumbs = e.breadcrumbs.map((b: Loose) => scrubBreadcrumb(b)).filter((b: Loose | null) => b !== null);

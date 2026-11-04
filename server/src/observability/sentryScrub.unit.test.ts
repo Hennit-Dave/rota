@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { createEventGate, fingerprintOf, isSensitiveKey, REDACTED, scrubBreadcrumb, scrubEvent, scrubString, scrubUrl, scrubValue } from './sentryScrub.js';
+import { ANONYMOUS_IP, createEventGate, fingerprintOf, isSensitiveKey, REDACTED, scrubBreadcrumb, scrubEvent, scrubString, scrubUrl, scrubValue } from './sentryScrub.js';
 
 // The ONE redaction list (shared/sentry-scrub.ts, ADR 0039), tested through the server's copy. The app's own test proves its copy is the same file.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,7 +53,8 @@ describe('strings that look like secrets are scrubbed', () => {
   for (const [name, text] of SECRETS) {
     it(`${name}`, () => {
       const out = scrubString(text);
-      assert.ok(out.includes(REDACTED), `${out}`);
+      // Either the secret became [redacted], or (a query string on a URL or path) the whole query string is gone.
+      assert.ok(out.includes(REDACTED) || (out !== text && !out.includes('token=')), `${out}`);
       for (const piece of [INVITE_SECRET, JWT.split('.')[1]!, STRIPE_SK, STRIPE_WHSEC, 'sam.o', '4242 4242', '5555-5555', 's3cr3t', RESEND, PI.slice(0, 20)]) {
         if (text.includes(piece)) assert.ok(!out.includes(piece), `${piece} survived in: ${out}`);
       }
@@ -75,6 +76,28 @@ describe('strings that look like secrets are scrubbed', () => {
         assert.ok(!out.includes(body), `${body} survived in: ${out}`);
       }
     }
+  });
+
+  it('a URL inside ordinary text (a message, a note) loses its query string and fragment, not only a field that holds a URL', () => {
+    const cases: Array<[string, string]> = [
+      [`request to https://api.example.com/auth/magic?token=abc failed`, 'request to https://api.example.com/auth/magic failed'],
+      [`note: https://rota.davebuilds.design/invite/${INVITE_TOKEN}?x=1`, `note: https://rota.davebuilds.design/invite/${REDACTED}`],
+      [`GET https://api.example.com/invitations/accept?token=abc&email=a@b.co#frag returned 400`, 'GET https://api.example.com/invitations/accept returned 400'],
+      [`failed on /teams/:teamId/shifts?from=2031-03-03&to=2031-03-10 twice`, 'failed on /teams/:teamId/shifts twice'],
+      [`link /invite/${INVITE_TOKEN}?x=1 was opened`, `link /invite/${REDACTED} was opened`],
+      [`see (https://example.com/a/b?q=secret-value) and "https://example.com/c?d=e"`, 'see (https://example.com/a/b) and "https://example.com/c"'],
+    ];
+    for (const [input, expected] of cases) {
+      const out = scrubString(input);
+      assert.equal(out, expected);
+      for (const gone of ['token=abc', 'x=1', 'q=secret-value', 'from=2031', 'a@b.co', '#frag']) assert.ok(!out.includes(gone), `${gone} survived in: ${out}`);
+    }
+  });
+
+  it('a "?token=abc" in a message with no URL around it still loses the secret; a question mark at the end of a sentence is left alone', () => {
+    const out = scrubString('the redirect came back with ?token=abc and &code=123456 appended');
+    assert.ok(!out.includes('abc') && !out.includes('123456'), out);
+    for (const keep of ['did that work?', 'what is this? it is a test', 'yes/no? maybe', 'is /teams/ok?', 'shifts: 3? 4?']) assert.equal(scrubString(keep), keep.replace(/is \/teams\/ok\?/, 'is /teams/ok'));
   });
 
   it('ordinary text and identifiers that help debugging are left alone', () => {
@@ -185,9 +208,9 @@ describe('an error event is cut down before it leaves (the whole point)', () => 
     breadcrumbs: [{ category: 'console', message: 'secret log' }, { category: 'http', data: { url: `https://x/?token=${INVITE_SECRET}` } }],
   });
 
-  it('sends the user id and nothing else about the user, and no request at all', () => {
+  it('sends the user id (and the placeholder address) and nothing else about the user, and no request at all', () => {
     const out = scrubEvent(event()) as any;
-    assert.deepEqual(out.user, { id: '11111111-1111-4111-8111-111111111111' });
+    assert.deepEqual(out.user, { id: '11111111-1111-4111-8111-111111111111', ip_address: ANONYMOUS_IP }, 'the id, and the placeholder address that stops Sentry inferring a geography');
     assert.equal(out.request, undefined);
   });
 
@@ -223,7 +246,49 @@ describe('an error event is cut down before it leaves (the whole point)', () => 
   });
 
   it('an event with no user and no exception is still fine', () => {
-    assert.deepEqual(scrubEvent({ message: 'hello' }), { message: 'hello', user: undefined });
+    assert.deepEqual(scrubEvent({ message: 'hello' }), { message: 'hello', user: { ip_address: ANONYMOUS_IP } });
+  });
+});
+
+describe('geography, device and culture (Dave, 2026-11-04)', () => {
+  const withUser = (user: Record<string, unknown>) => scrubEvent({ user }) as any;
+
+  it('EVERY event carries the placeholder address 0.0.0.0, whatever it came with: a real address (v4 or v6), null, {{auto}} or nothing; a geo block is always dropped (tried on real events: only this removes the geography)', () => {
+    assert.equal(ANONYMOUS_IP, '0.0.0.0');
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['a real IPv4 address', { id: 'u1', ip_address: '203.0.113.9', geo: { city: 'London', country_code: 'GB' } }],
+      ['a real IPv6 address', { id: 'u1', ip_address: '2001:db8::1' }],
+      ['{{auto}}', { id: 'u1', ip_address: '{{auto}}' }],
+      ['null', { id: 'u1', ip_address: null }],
+      ['nothing', { id: 'u1' }],
+      ['the placeholder itself', { id: 'u1', ip_address: ANONYMOUS_IP }],
+    ];
+    for (const [name, user] of cases) assert.deepEqual(withUser(user).user, { id: 'u1', ip_address: ANONYMOUS_IP }, name);
+    // With nobody signed in (and for a process crash, which has no user at all) the placeholder still goes, so the geography is not inferred there either.
+    assert.deepEqual(withUser({ email: 'a@b.co', username: 'sam', ip_address: '203.0.113.9' }).user, { ip_address: ANONYMOUS_IP });
+    assert.deepEqual((scrubEvent({ message: 'no user at all' }) as any).user, { ip_address: ANONYMOUS_IP });
+    assert.ok(!JSON.stringify(scrubEvent({ user: { id: 'u1', ip_address: '203.0.113.9' }, extra: {} })).includes('203.0.113.9'));
+  });
+
+  it('culture (locale and time zone) is removed; the device keeps only the model, the memory and the kind of device; the app loses its per-install hash', () => {
+    const out = scrubEvent({
+      contexts: {
+        culture: { locale: 'en-GB', timezone: 'Europe/London', calendar: 'GregorianCalendar' },
+        device: {
+          id: 'f0e1d2c3b4a59687', model: 'Pixel 9', model_id: 'AP3A', family: 'Pixel', manufacturer: 'Google', brand: 'google', simulator: false, arch: 'arm64-v8a', memory_size: 8_000_000_000,
+          battery_level: 83, battery_temperature: 28, charging: true, boot_time: '2026-11-04T08:00:00Z', timezone: 'America/Chicago', locale: 'en_US', storage_size: 1, free_storage: 2, online: true, screen_width_pixels: 1080,
+        },
+        app: { app_name: 'Rota', app_version: '1.0.0', app_identifier: 'design.davebuilds.rota', device_app_hash: 'a1b2c3d4e5f6', in_foreground: true },
+        os: { name: 'Android', version: '16' },
+      },
+    }) as any;
+    assert.equal(out.contexts.culture, undefined);
+    assert.deepEqual(out.contexts.device, { model: 'Pixel 9', model_id: 'AP3A', family: 'Pixel', manufacturer: 'Google', brand: 'google', simulator: false, arch: 'arm64-v8a', memory_size: 8_000_000_000 });
+    assert.equal(out.contexts.app.device_app_hash, undefined);
+    assert.equal(out.contexts.app.app_version, '1.0.0');
+    assert.deepEqual(out.contexts.os, { name: 'Android', version: '16' });
+    const text = JSON.stringify(out);
+    for (const gone of ['f0e1d2c3b4a59687', 'Europe/London', 'America/Chicago', 'battery', 'boot_time', 'a1b2c3d4e5f6']) assert.ok(!text.includes(gone), gone);
   });
 });
 

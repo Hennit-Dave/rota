@@ -69,13 +69,21 @@ describe('breadcrumbs and events in the app (the links must never leave with the
     assert.equal(scrubBreadcrumb({ category: 'console', message: 'a log line with sam@example.com' }), null);
   });
 
+  it('every app event carries the placeholder address 0.0.0.0 (it is what stops Sentry inferring a geography), and a URL inside a message loses its query string', () => {
+    const out = scrubEvent({ user: { id: 'u1', ip_address: '203.0.113.9' }, message: `failed: https://api.example.com/auth/magic?token=abc and ${TOKEN}` }) as any;
+    assert.deepEqual(out.user, { id: 'u1', ip_address: '0.0.0.0' });
+    assert.ok(!JSON.stringify(out).includes('203.0.113.9') && !JSON.stringify(out).includes('token=abc'));
+    assert.equal(out.message.startsWith('failed: https://api.example.com/auth/magic and'), true);
+    assert.deepEqual((scrubEvent({ message: 'signed out' }) as any).user, { ip_address: '0.0.0.0' });
+  });
+
   it('an app error event keeps its tags and user id, and loses the email, the token and the card in it', () => {
     const out = scrubEvent({
       user: { id: '11111111-1111-4111-8111-111111111111', email: 'sam@example.com', ip_address: '203.0.113.9' },
       exception: { values: [{ type: 'Error', value: `invite ${TOKEN} for sam@example.com failed; card 4242 4242 4242 4242` }] },
       tags: { request_id: 'req-1', team_id: TEAM },
     }) as any;
-    assert.deepEqual(out.user, { id: '11111111-1111-4111-8111-111111111111' });
+    assert.deepEqual(out.user, { id: '11111111-1111-4111-8111-111111111111', ip_address: '0.0.0.0' });
     assert.deepEqual(out.tags, { request_id: 'req-1', team_id: TEAM });
     const text = JSON.stringify(out);
     for (const secret of ['sam@example.com', '4242 4242', 'AAAAAAAAAA', '203.0.113.9']) assert.ok(!text.includes(secret), secret);

@@ -48,15 +48,36 @@ November); Dave will check the first Developer period after the trial ends. Unti
 - **Everything the SDK collects by default is switched off** on the server (`dataCollection`: user, cookies, headers, bodies, query strings, database query data, queue arguments, local-variable values), and
   `sendDefaultPii` is off in the app (the app's options type does not accept `dataCollection`; the user is only an ID and `scrubEvent` removes any request, cookie, header, body or query string).
 - **Tags** are put on at the moment of capture, from the failing request's own data, never onto a shared scope: `request_id`, `team_id` (only if the path's team ID passed validation), `route` (the template, never the raw
-  URL), `role` (`api`, `worker`), and for a job `job_kind`, `row_id`, `attempts`, `terminal`, with the work row's origin request ID as `request_id`. **User: the ID only.** In the app the user is set when someone signs in and
+  URL), `role` (`api`, `worker`), and for a job `job_kind`, `row_id`, `attempts`, `terminal`, with the work row's origin request ID as `request_id`. **User: the ID only, plus the placeholder address `0.0.0.0` in `ip_address` on every event (see "Geography").** In the app the user is set when someone signs in and
   cleared whenever the session store says nobody is signed in (every sign-out path resets it); the team tag follows the selected team.
 - **Source maps:** the server runs with `node --enable-source-maps`, so stack traces name the TypeScript file and line without uploading anything. The app's source-map upload needs an auth token and waits for the deploy slice.
+
+**Geography (found by looking at the first real test events, 2026-11-04).** Sentry shows a user's city and country in the User context, inferred from the IP address of the connection, **even with "Prevent
+Storing of IP Addresses" on**: its own page says so ("Geographic information is extracted from the user's IP address ... This occurs even if the setting to stop storing IP addresses is turned on"). On an app event
+that is the end user's location, which we do not want. Sentry's docs name **no SDK value** that stops it, and the only documented removal is a server-side Advanced Data Scrubbing rule, so three ways of sending
+`user.ip_address` were tried on real events from the server and from the app (each tagged `geo_variant`): nothing, an explicit `null`, and the placeholder `0.0.0.0`. **Result (Dave read the events in Sentry):**
+
+| `ip_address` sent | Server event | App event |
+|---|---|---|
+| nothing | Geography shown | Geography shown |
+| `null` | Geography shown | Geography shown |
+| **`0.0.0.0`** | **no Geography** (the User context shows only the id and `IP Address <redacted>`) | **no Geography** |
+
+**Decision: every event carries `user.ip_address = 0.0.0.0`, whatever it was sent with** (a real address, `null`, `{{auto}}` or nothing), with or without a signed-in user, set in the shared scrubber, so a real address can
+never go out through that field and a process crash event is covered too. A test pins it (a real IPv4 and IPv6 address, `null`, `{{auto}}`, nothing and the placeholder itself all come out as `0.0.0.0`; a geo block is always
+dropped). **A second layer, added by Dave at organisation level:** the Advanced Data Scrubbing rule `[Remove] [Anything] from [$user.geo.**]` (docs.sentry.io/security-legal-pii/scrubbing/advanced-datascrubbing), for the events
+my JavaScript never sees: a hard native crash in the app is sent by the native layer and skips the JS scrubber. The experiment code was removed once the result was in.
+
+**Contexts.** The server's own switches (`nodeContextIntegration({ device: false, culture: false, cloudResource: false })`) empty the Device, Culture and Cloud contexts with no code of ours (the defaults carried the boot time, CPU,
+memory, locale and time zone); the shared scrubber then drops any context left empty. In the app, `culture` (locale and time zone) is removed, the `device` context keeps only `model`, `model_id`, `family`, `manufacturer`,
+`brand`, `simulator`, `arch` and `memory_size` (so the device id, battery, storage, boot time and time zone are gone), and the `app` context loses its per-install hash. Verified from the app: its development build logs the keys of
+the event just before it leaves.
 
 **One redaction list for both** (`observability.md`: "one redaction list serves the logger and Sentry"). `shared/sentry-scrub.ts` is plain TypeScript with no imports, copied **byte for byte** to
 `server/src/observability/sentryScrub.ts` and `app/src/observability/sentryScrub.ts` by `node shared/sync-sentry-scrub.mjs`; a test in each package fails if its copy differs. It replaces the value under any key whose name
 suggests a secret, a person or a payment (Authorization, cookies, passwords, tokens, secrets, API keys, signatures, JWTs, emails, card number, brand, last four, expiry, payment method and intent, amounts), and any string that looks like one: bearer and basic
 credentials, JWTs, invite tokens, magic and reset links, secrets in a query string, passwords in a URL, Stripe keys, webhook secrets, client secrets and object ids, Resend keys, email addresses and card numbers (Luhn-checked).
-A URL loses its query string and fragment. The user is cut to an ID, the request is removed, stack-frame variables and source lines are removed, breadcrumbs lose their console lines.
+A URL loses its query string and fragment, **wherever it appears: a URL field, and also a URL inside ordinary text (a message, a note, a breadcrumb line), found by pattern** (a first test event showed `.../invite/[redacted]?x=1` in an extra field: the token was gone but the query string was not). The user is cut to an ID, the request is removed, stack-frame variables and source lines are removed, breadcrumbs lose their console lines.
 
 **The gate on what leaves** (CHOSEN, NOT MEASURED; Dave, 2026-11-04): one event per error (same type, place and wording, with ids and numbers ignored) per 5 minutes; at most 10 events a minute; **50 a day per server process**
 (API and worker each); **20 per app session**. A duplicate is turned away before it uses any budget. The server's three numbers are config (`SENTRY_MAX_EVENTS_PER_DAY`, `SENTRY_MAX_EVENTS_PER_MINUTE`, `SENTRY_DEDUPE_SECONDS`).
@@ -98,13 +119,19 @@ With several API instances each would keep its own gate, so the daily cap would 
 
 ## Evidence
 
-- `shared/sentry-scrub.ts` through the server's copy (`sentryScrub.unit.test.ts`, 37 tests): 18 kinds of secret removed, ordinary identifiers kept, edge cases of random tokens (a secret that starts or ends with `-` or `_`), keys, URLs, breadcrumbs, a whole
+- `shared/sentry-scrub.ts` through the server's copy (`sentryScrub.unit.test.ts`, 41 tests): 18 kinds of secret removed, a URL inside text loses its query string (six cases, plus a bare `?token=abc` and question marks left alone), the placeholder address on every event, contexts trimmed, ordinary identifiers kept, edge cases of random tokens (a secret that starts or ends with `-` or `_`), keys, URLs, breadcrumbs, a whole
   event (none of 13 secrets survive in the serialized event; the input is not changed), the fingerprint, and the gate. **The random-data tests were run 100 times with fresh secrets**, which found and fixed two real gaps (a Stripe-style
   key containing `_` or `-`, and an invite token ending in `-`); the deterministic edge-case test now pins both.
-- `sentry.unit.test.ts` (13): tags, user and secrets on a captured event; only errors are sent (no log, metric or breadcrumb leaves); **two requests failing at once keep their own request and team IDs**; the gate (duplicates, 10 a minute,
+- `sentry.unit.test.ts` (15): tags, user and secrets on a captured event; only errors are sent (no log, metric or breadcrumb leaves); **two requests failing at once keep their own request and team IDs**; the gate (duplicates, 10 a minute,
   the daily cap); **`X-Load-Test` is ignored while `LOAD_TEST_MODE` is off** and honoured while it is on; with no DSN nothing is sent. `errorReporting.unit.test.ts` (8): what the API's handler reports and what it does not.
   `worker.integration.test.ts`: a job that says stop and a job on its last attempt are reported once each, a retryable failure and a success are not, and a hook that throws changes nothing.
-- App (`observability.test.ts`, 10, in `npm test`, 416 pass): the copy is identical to the shared file; which errors are reportable; a navigation breadcrumb to an invite, magic or reset link loses its token and query string.
-- **Test events, visible in Sentry (Dave checks them):** from the server, event `a873dbd9cc0747e0a59f4639902245e2`, `request_id` `d6991505-b111-4720-a578-0bf488ce7457`; from the app on the emulator, event
-  `017c3ecc3f24400b85af893fc3205032`, `request_id` `6a487902-00d9-4254-8fa2-eae449d7438b`. Each carries FAKE secrets (an email, a card number, a bearer token, an invite link) that should show as `[redacted]`. Screenshots and logs:
-  `Rota-evidence/sentry/`.
+- App (`observability.test.ts`, 11, in `npm test`, 417 pass): the copy is identical to the shared file; which errors are reportable; a navigation breadcrumb to an invite, magic or reset link loses its token and query string.
+- **Test events (Dave read them in Sentry).** First set: server `a873dbd9cc0747e0a59f4639902245e2`, app `017c3ecc3f24400b85af893fc3205032`: redaction, tags and breadcrumbs worked; they showed the geography, the app event had no user or team
+  (it was sent from the sign-in screen, where nobody is signed in) and a device context with a device id, battery, boot time and time zone. Geography experiment: server `bbf1525b6b494223b6ae95f046bb6954` (nothing),
+  `336a7c1def754907a49d84a52a7e8528` (`null`), `dfa554a7271641acad8a262a210d8463` (`0.0.0.0`); app, signed in as a seeded Staff member with the team open, `d5a74e194fce4f498e1f474a2415b279`, `e497a4d9d68f4b27b0358bed13229366`,
+  `f52394cdd6b8495fb5aba887005953e2`. **Final events with the placeholder as the default:** server `7c61a47ff680496e916c0d6389a62517` (request_id `0fe5abc5-0676-4f4e-8d5e-360e35c8863e`); app `2abbbee456254790bb8b842ce8016e0e`
+  (request_id `test-mw2iaokj`, signed in, team open). Each carries FAKE secrets (an email, a card number, a bearer token, an invite link, a URL with `?token=abc`).
+- **From the app itself** (development log of what leaves, `Rota-evidence/sentry/app-final-event-logcat.txt`): user `{id, ip_address: 0.0.0.0}`, tags `team_id` and `request_id`, no `culture`, a `device` context of the seven kept keys only,
+  and the scope's recent breadcrumbs are all `fetch` with the keys `method`, `url` and `status_code`, no query strings. **Left in and judged harmless:** `expo_constants.session_id` (a new value each launch) and the `app` context's view names and
+  permission names.
+- **Hard native crashes** skip the JS scrubber; the organisation-level `$user.geo.**` rule is their only protection against the geography, and the other contexts a native crash carries are not trimmed.

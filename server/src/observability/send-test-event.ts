@@ -12,6 +12,7 @@ if (!config.dsn) {
 console.log(`sending one test event to ${new URL(config.dsn).host} (environment ${config.environment})`);
 
 const reporter = createErrorReporter(config, { role: 'api' });
+
 const requestId = randomUUID();
 const eventId = reporter.captureServerError(
   new Error('Rota test event from the server. Fake data that must NOT appear in Sentry: sam.test@example.com, card 4242 4242 4242 4242, Bearer fakefakefakefakefakefake'),
@@ -25,7 +26,7 @@ const eventId = reporter.captureServerError(
       email: 'sam.test@example.com',
       cardNumber: '4242 4242 4242 4242',
       authorization: 'Bearer fakefakefakefakefakefake',
-      note: 'invite link https://rota.davebuilds.design/invite/00000000-0000-4000-8000-0000000000b2.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?x=1',
+      note: 'invite link https://rota.davebuilds.design/invite/00000000-0000-4000-8000-0000000000b2.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?x=1 and https://api.example.com/auth/magic?token=abc',
       attempt: 1,
     },
   },

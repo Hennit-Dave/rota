@@ -125,6 +125,9 @@ export function createErrorReporter(config: SentryConfig, options: ErrorReporter
     beforeSendLog: () => null,
     beforeSendMetric: () => null,
     maxBreadcrumbs: 0,
+    // The server's own environment contexts: keep the app and the OS, drop the machine's description (CPU, memory, boot time) and the locale and time zone (culture), which tell
+    // a debugger little here. These are the SDK's own switches; no code of ours is involved. The scrubber trims the same contexts again as a second layer.
+    integrations: [Sentry.nodeContextIntegration({ device: false, culture: false, cloudResource: false })],
     // Switch off everything the SDK collects by default (they are ON by default in version 11).
     dataCollection: {
       userInfo: false,

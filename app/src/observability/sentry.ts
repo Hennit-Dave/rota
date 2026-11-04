@@ -47,7 +47,13 @@ export function initSentry(config: SentryInitConfig): boolean {
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
     beforeSend: (event) => {
       const clean = scrubEvent(event);
-      return gate.check(fingerprintOf(clean)) === 'send' ? clean : null;
+      const decision = gate.check(fingerprintOf(clean));
+      if (__DEV__) {
+        // Development builds only: what is about to leave, as keys (never values of anything personal), so the trimming can be seen without opening Sentry.
+        const e = clean as { user?: Record<string, unknown>; contexts?: Record<string, Record<string, unknown>>; tags?: Record<string, unknown> };
+        console.log('[sentry] outgoing ' + JSON.stringify({ decision, user: e.user ?? null, tags: e.tags ?? {}, contexts: Object.fromEntries(Object.entries(e.contexts ?? {}).map(([k, v]) => [k, Object.keys(v ?? {})])) }));
+      }
+      return decision === 'send' ? clean : null;
     },
   });
   started = true;
@@ -87,15 +93,32 @@ export function setSentryTeam(teamId: string | null): void {
   Sentry.setTag('team_id', teamId ?? undefined);
 }
 
+/** What the Sentry scope holds right now, for the development check screen only: the user ID, the team tag, and the last few breadcrumbs (their kind, data keys and URL, never their bodies). */
+export function sentryScopeSummary(): { userId: string | null; teamId: string | null; breadcrumbs: Array<{ category?: string; type?: string; keys: string[]; url?: string; message?: string }> } {
+  if (!started) return { userId: null, teamId: null, breadcrumbs: [] };
+  const data = Sentry.getIsolationScope().getScopeData();
+  const team = data.tags?.team_id;
+  return {
+    userId: typeof data.user?.id === 'string' ? data.user.id : null,
+    teamId: typeof team === 'string' ? team : null,
+    breadcrumbs: (data.breadcrumbs ?? []).slice(-8).map((b) => ({
+      category: b.category,
+      type: b.type,
+      keys: Object.keys(b.data ?? {}),
+      url: typeof b.data?.url === 'string' ? b.data.url : undefined,
+      message: b.message,
+    })),
+  };
+}
+
 /**
- * One test event for the development check screen. FAKE secrets in the message and the extra data, which must show as [redacted] in Sentry. Returns the event id, whether
- * Sentry flushed it, and the host it went to (so the person can see it is the EU one).
+ * One test event for the development check screen. FAKE secrets in the message and the extra data (including a URL with a query string and a token), which must show as
+ * [redacted] or without their query string in Sentry. The navigation breadcrumb to an invite link is added BEFORE the capture so it is attached.
  */
-export async function sendSentryTestEvent(requestId: string): Promise<{ eventId: string | undefined; flushed: boolean; host: string | null }> {
-  const client = Sentry.getClient();
-  const host = client?.getDsn()?.host ?? null;
-  if (!started) return { eventId: undefined, flushed: false, host };
-  // A navigation breadcrumb to an invite link (with its token and a query string), added BEFORE the capture so it is attached: Sentry should show it without either.
+export async function sendSentryTestEvent(): Promise<{ eventId: string | undefined; requestId: string; flushed: boolean; host: string | null }> {
+  const host = Sentry.getClient()?.getDsn()?.host ?? null;
+  const requestId = `test-${Date.now().toString(36)}`;
+  if (!started) return { eventId: undefined, requestId, flushed: false, host };
   Sentry.addBreadcrumb({ category: 'navigation', data: { from: '/(app)/index', to: '/invite/00000000-0000-4000-8000-0000000000b2.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?x=1' } });
   const eventId = Sentry.captureException(
     new Error('Rota test event from the app. Fake data that must NOT appear in Sentry: sam.test@example.com, card 4242 4242 4242 4242, Bearer fakefakefakefakefakefake'),
@@ -105,11 +128,11 @@ export async function sendSentryTestEvent(requestId: string): Promise<{ eventId:
         email: 'sam.test@example.com',
         cardNumber: '4242 4242 4242 4242',
         authorization: 'Bearer fakefakefakefakefakefake',
-        note: 'invite link https://rota.davebuilds.design/invite/00000000-0000-4000-8000-0000000000b2.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?x=1',
+        note: 'invite link https://rota.davebuilds.design/invite/00000000-0000-4000-8000-0000000000b2.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?x=1 and https://api.example.com/auth/magic?token=abc',
         attempt: 1,
       },
     },
   );
   const flushed = await Sentry.flush();
-  return { eventId, flushed, host };
+  return { eventId, requestId, flushed, host };
 }

@@ -87,7 +87,7 @@ describe('what an event carries (observability.md test 6: request, user and team
     await s.reporter.flush(1000);
     const [event] = s.events();
     assert.deepEqual(event.tags, { role: 'api', request_id: 'req-1', team_id: TEAM_A, route: '/teams/:teamId/billing/changes' });
-    assert.deepEqual(event.user, { id: USER });
+    assert.deepEqual(event.user, { id: USER, ip_address: '0.0.0.0' });
     assert.equal(event.environment, 'test');
     assert.equal(event.server_name, 'rota-api');
     const text = JSON.stringify(s.envelopes);
@@ -106,6 +106,26 @@ describe('what an event carries (observability.md test 6: request, user and team
     assert.deepEqual(s.otherItems(), [], 'nothing but the error was sent');
     assert.ok(!JSON.stringify(s.envelopes).includes('must not leave'));
     assert.equal(s.events()[0].breadcrumbs, undefined);
+  });
+
+  it('the server\'s own contexts are trimmed by the SDK\'s switches: no culture, no device description; the app and the OS stay', async () => {
+    const s = setup();
+    s.reporter.captureServerError(new Error('contexts check'), { requestId: 'r' });
+    await s.reporter.flush(1000);
+    const contexts = s.events()[0].contexts ?? {};
+    assert.equal(contexts.culture, undefined, 'no locale or time zone');
+    assert.equal(contexts.device, undefined, 'no CPU, memory or boot time');
+    assert.ok(contexts.os || contexts.app || contexts.runtime, 'the useful contexts are still there');
+  });
+
+  it('EVERY event carries the placeholder address 0.0.0.0 in user.ip_address, with or without a signed-in user, so Sentry does not infer a geography; never a real address', async () => {
+    const s = setup();
+    s.reporter.captureServerError(new Error('with a user'), { requestId: 'r', userId: USER });
+    s.reporter.captureServerError(new Error('without a user'), { requestId: 'r' });
+    await s.reporter.flush(1000);
+    const byMessage = new Map(s.events().map((e) => [e.exception.values[0].value as string, e.user]));
+    assert.deepEqual(byMessage.get('with a user'), { id: USER, ip_address: '0.0.0.0' });
+    assert.deepEqual(byMessage.get('without a user'), { ip_address: '0.0.0.0' });
   });
 
   it('a worker job carries its kind, row and the request that made it', async () => {

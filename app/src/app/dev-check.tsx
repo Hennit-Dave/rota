@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Rect } from 'react-native-svg';
-import { reportAppError, sendSentryTestEvent, sentryIsOn } from '../observability/sentry';
+import { reportAppError, sendSentryTestEvent, sentryIsOn, sentryScopeSummary } from '../observability/sentry';
 import { palette, space, useColors } from '../theme';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
@@ -133,10 +133,12 @@ export default function DevCheck() {
           onPress={() => {
             // Development only. One event with FAKE secrets in it: Sentry should show them as [redacted].
             setSentryTest('sending…');
-            const requestId = Crypto.randomUUID();
-            void sendSentryTestEvent(requestId)
+            // What the scope holds BEFORE the events go: who is signed in, which team is open, and the last breadcrumbs (kind, data keys, URL): scrubbed ones only.
+            const scope = sentryScopeSummary();
+            console.log('[dev-check] sentry-scope ' + JSON.stringify(scope));
+            void sendSentryTestEvent()
               .then((r) => {
-                const line = `event ${r.eventId ?? '(none)'}; request_id ${requestId}; flushed ${String(r.flushed)}; host ${r.host ?? '(no DSN)'}; on ${String(sentryIsOn())}`;
+                const line = `event ${r.eventId ?? '(none)'}; request_id ${r.requestId}; flushed ${String(r.flushed)}; host ${r.host ?? '(no DSN)'}; on ${String(sentryIsOn())}; user ${scope.userId ?? '(none)'}; team ${scope.teamId ?? '(none)'}`;
                 console.log('[dev-check] sentry ' + line);
                 setSentryTest(line);
               })
