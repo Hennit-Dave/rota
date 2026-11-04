@@ -38,14 +38,24 @@ Option 2.
   a replica read; the activity feed's raw cursor query is routed this way.
 - **The marker (read-your-own-writes):** an in-process `Map` of user ID to commit time. Express middleware records it for the signed-in user on every
   non-safe request (POST, PATCH, DELETE...) *just before the response headers are written*, so it exists before the client can send its next request.
-  Expired entries are removed when read and by a sweep every 5 s (no I/O). It is **valid for exactly one API process** (data.md); see "What changes in
-  production" in `ARCHITECTURE.md`.
+  Expired entries are removed when read and by a sweep every 5 s (no I/O). **The marker is in memory, so it only works while there is exactly one API
+  process and a deploy stops the old process before it starts the new one (stop-then-start).** A second instance would not know about the first one's
+  writes, and a rolling deploy (old and new overlapping) would break the startup window that covers a restart. This is why the deployment gate in
+  `AGENTS.md` requires stop-then-start to be confirmed on the host before read-your-own-writes is marked done, and why `ARCHITECTURE.md` lists it under
+  "What changes in production".
 - **Opted in (first PR):** the shift calendar (`GET /teams/:teamId/shifts`), the activity feed (`GET /teams/:teamId/activity`) and the roster
   (`GET /teams/:teamId/members`). The caller's role and membership are still checked on the primary first. **Everything else stays on the primary,
   by default**: the session check, refresh tokens, permission checks, invitations, billing and the ledger, settings, swaps, single-shift reads, and the
   user-name lookups on shard A.
-- **A replica that cannot answer** (asleep too long, unreachable, a pool error): the failure is logged (`replica_read_failed`), the read is repeated on the
-  primary, and the route is `replica-failed`. A read is safe to repeat. A caller is never given a 500 because the replica was down.
+- **A replica that cannot be reached falls back to the primary; a query error does not.** Only connection and timeout errors are retried on the primary:
+  the database was unreachable, the connect timed out, or the connection was reset (Prisma's driver-adapter kinds `DatabaseNotReachable`, `ConnectionClosed`,
+  `SocketTimeout`, `TlsConnectionError`, `TooManyConnections`; pg's own connect-timeout and "terminated unexpectedly" errors; Node socket codes such as
+  `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`). The failure is logged (`replica_read_failed`), the read is repeated on the primary, and the route is
+  `replica-failed`. A read is safe to repeat, so a caller is not given a 500 because the replica was down. **An error the replica returned for the query** (a missing
+  table, bad SQL, a constraint) **is not retried**: the primary would fail the same way, and quietly re-running it would hide a bug. It reaches the caller and the
+  route stays `none`. Prisma 7 with `adapter-pg` reports a refused connection and a bad query under the same `P2010` code, so the classifier looks at the kind
+  inside `meta.driverAdapterError.cause` (shapes observed in a spike, names checked in the installed packages). A wrong password (`AuthenticationFailed`) is not
+  retried either: it is a configuration fault to surface.
 
 ## Why
 
@@ -66,8 +76,11 @@ measurement can resolve.** It is not zero, and it will be larger under load. Wha
 - The user who wrote reads the primary for 5 s, so they never see the lag.
 - *Another* user can read a replica copy that is a fraction of a second behind: for example a Staff member opening the calendar the instant a Manager
   publishes a shift may not see it for that fraction of a second. This is the accepted, documented trade of the brief's design.
-- Waking: a replica that scaled to zero answered its first query in 1.4 to 2.5 s once (the first test run needed up to about 6.5 s for its first four
-  queries across both shards, which also woke the primaries). The 8 s connection timeout is **chosen, not measured**; past it the primary answers.
+- **Cold start:** a replica that scaled to zero (5 minutes without a query, not configurable on Free) wakes on its first query. That took 1.4 to 2.5 s once,
+  and the first test run needed up to about **6.5 s** for its first four queries across both shards (which also woke the primaries). The 8 s connection
+  timeout is **chosen, not measured**; past it the primary answers. **k6 needs a warm-up before it measures**: a few requests that wake both replicas and
+  both primaries, so the first seconds of cold-start latency are not counted as the cache's or the replica's cost. The report states the warm-up and
+  that the replicas were awake.
 
 ## Consequences
 
@@ -91,9 +104,11 @@ Postgres or the session). Replication lag also becomes a real operational concer
 
 - Spike: `Rota-evidence/read-routing/spike-replicas.ts` and its output (summarised above). Replica check: both replicas answer `pg_is_in_recovery() = true`,
   on the right project, with the same rows as the primary.
-- `server/src/db/readRouting.unit.test.ts` (14): data.md tests 4, 5, 6, 7 and 10, the fallback, the middleware marking before the response.
-- `server/src/db/readRouting.integration.test.ts` (5): real replicas, `pg_is_in_recovery()` true for opted-in reads on both shards, false on the primary
+- `server/src/db/readRouting.unit.test.ts` (17): data.md tests 4, 5, 6, 7 and 10, the fallback on a connection error, **a query error on the replica is not
+  retried on the primary**, the error classifier on the shapes Prisma 7 really produces, the middleware marking before the response.
+- `server/src/db/readRouting.integration.test.ts` (6): real replicas, `pg_is_in_recovery()` true for opted-in reads on both shards, false on the primary
   clients; the same user on the primary for 5 s after a write and on the replica at 6 s, with real clocks; raw and model reads on the same client;
-  fallback to the primary with an unreachable replica.
+  fallback to the primary with an unreachable replica; and a real query error on the real replica (missing table) that is **not** retried: the replica
+  was asked exactly once, the route stayed `none`, nothing was reported as a reachability failure.
 - `server/src/db/readRouting.http.integration.test.ts`: the three real endpoints over HTTP, with the replica's own query log and the request log's `dbRoute`.
 - Lag: `Rota-evidence/read-routing/lag-measurement.txt`.

@@ -67,6 +67,21 @@ describe('read-your-own-writes, with real clocks (data.md tests 4 and 6)', () =>
   });
 });
 
+describe('a QUERY error on the real replica', () => {
+  it('is not retried on the primary: the caller gets the database error, nothing is reported, the route stays none', async () => {
+    const errorsBefore = replicaErrors.length;
+    const before = replicaQueries.length;
+    const routes: DbRoute[] = [];
+    await assert.rejects(
+      reads.run(TEAM_A, { userId: OTHER, onRoute: (r) => routes.push(r) }, (db) => db.$queryRaw`SELECT * FROM table_that_does_not_exist`),
+      (e: { meta?: { driverAdapterError?: { cause?: { originalCode?: string } } } }) => e.meta?.driverAdapterError?.cause?.originalCode === '42P01',
+    );
+    assert.deepEqual(routes, ['none'], 'asked the replica once; never replica-failed');
+    assert.equal(replicaErrors.length, errorsBefore, 'no reachability failure was reported');
+    assert.equal(replicaQueries.length - before, 1, 'the replica was asked exactly once: no second attempt');
+  });
+});
+
 describe('raw and model reads agree (data.md test 8)', () => {
   it('in the same state a raw read and a model read hit the same client: both on the replica, or neither', async () => {
     const both = (teamId: string, userId: string) =>
@@ -86,7 +101,7 @@ describe('raw and model reads agree (data.md test 8)', () => {
   });
 });
 
-describe('a replica that cannot answer', () => {
+describe('a replica that cannot be reached', () => {
   it('is reported and the primary answers, so the caller still gets its data', async () => {
     // Replica URLs pointing at a port nothing listens on; the primaries are the real test shards.
     const broken = createShards(

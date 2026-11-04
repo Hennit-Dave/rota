@@ -252,10 +252,10 @@ app/src/
 - One Neon read replica per project (shard A, shard B), pooled, capped at 0.25 CU. `shards.X.primary` stays the plain client; the API alone also holds
   `shards.X.reader` (the primary extended with `$replica()`), reached only through `reads.run(teamId, ctx, read)` in `server/src/db/readRouting.ts`.
 - `reads.run` picks the database: `primary-required` → `marker` (the user wrote less than 5 s ago) → `startup` (process younger than 5 s) → `none` (replica).
-  A replica that cannot answer falls back to the primary (`replica-failed`). The reason is the request log's `dbRoute`.
+  A replica that cannot be reached (unreachable, connect timeout, connection reset) falls back to the primary (`replica-failed`); a query error on the replica is not retried. The reason is the request log's `dbRoute`.
 - The marker is set by middleware just before the response headers of any non-safe request go out. In-process map, **one API process only**.
 - Opted in: the shift calendar, the activity feed (raw SQL, run on the client the router hands it) and the roster. Everything else reads the primary.
-- Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once).
+- Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once, up to about 6.5 s for the first four queries across both shards): k6 warms them up before measuring.
 
 ---
 

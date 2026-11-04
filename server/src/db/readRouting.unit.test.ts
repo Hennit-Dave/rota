@@ -4,7 +4,7 @@ import { after, describe, it } from 'node:test';
 import express from 'express';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import type { Shards } from './clients.js';
-import { createReadRouting, readContext, type DbRoute, type ReadDb } from './readRouting.js';
+import { createReadRouting, isConnectionError, readContext, type DbRoute, type ReadDb } from './readRouting.js';
 import { shardFor } from './shard.js';
 
 // Fake clients: each is just a label, so a test can see exactly which one a read was given. No database is touched.
@@ -128,20 +128,42 @@ describe('read routing and read-your-own-writes (data.md tests 4 to 8 and 10)', 
     s.stop();
   });
 
-  it('a replica that cannot answer: the failure is reported, the primary answers, and the route says so', async () => {
+  it('a replica that cannot be REACHED: the failure is reported, the primary answers, and the route says so', async () => {
     const errors: unknown[] = [];
     const s = setup({ onReplicaError: (e) => errors.push(e) });
     s.advance(60_000);
     const seen: string[] = [];
     const answer = await s.reads.run(TEAM_A, { userId: USER, onRoute: (r) => s.routes.push(r) }, async (db) => {
       seen.push(labelOf(db));
-      if (labelOf(db).startsWith('replica')) throw new Error('replica asleep too long');
+      if (labelOf(db).startsWith('replica')) throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
       return 'answered by ' + labelOf(db);
     });
     assert.equal(answer, 'answered by primary-A');
     assert.deepEqual(seen, ['replica-A', 'primary-A']);
     assert.equal(errors.length, 1);
     assert.deepEqual(s.routes.slice(-2), ['none', 'replica-failed']);
+    s.stop();
+  });
+
+  it('a QUERY error on the replica is NOT retried on the primary: it reaches the caller, nothing is reported, the primary is never asked', async () => {
+    const errors: unknown[] = [];
+    const s = setup({ onReplicaError: (e) => errors.push(e) });
+    s.advance(60_000);
+    const seen: string[] = [];
+    const queryError = Object.assign(new Error(''), {
+      code: 'P2010',
+      meta: { driverAdapterError: { name: 'DriverAdapterError', cause: { originalCode: '42P01', kind: 'TableDoesNotExist', table: 'nope' } } },
+    });
+    await assert.rejects(
+      s.reads.run(TEAM_A, { userId: USER, onRoute: (r) => s.routes.push(r) }, async (db) => {
+        seen.push(labelOf(db));
+        throw queryError;
+      }),
+      (e) => e === queryError,
+    );
+    assert.deepEqual(seen, ['replica-A'], 'asked once, of the replica only');
+    assert.deepEqual(errors, [], 'not a replica-reachability failure, so nothing reported');
+    assert.deepEqual(s.routes, ['none'], 'never replica-failed');
     s.stop();
   });
 
@@ -228,5 +250,32 @@ describe('the write marker middleware', () => {
     assert.equal(s.reads.decide(USER), 'marker');
     assert.equal(s.reads.decide(OTHER), 'none');
     s.stop();
+  });
+});
+
+describe('which errors mean "could not reach the replica"', () => {
+  const adapterError = (cause: Record<string, unknown>) => Object.assign(new Error(''), { code: 'P2010', meta: { driverAdapterError: { name: 'DriverAdapterError', cause } } });
+
+  it('connection and timeout errors, in the shapes Prisma 7 with adapter-pg really produces, are retried on the primary', () => {
+    assert.equal(isConnectionError(adapterError({ kind: 'DatabaseNotReachable', host: '127.0.0.1', port: 1 })), true, 'refused or unknown host');
+    assert.equal(isConnectionError(adapterError({ kind: 'ConnectionClosed' })), true, 'reset by the server');
+    assert.equal(isConnectionError(adapterError({ kind: 'SocketTimeout' })), true);
+    assert.equal(isConnectionError(adapterError({ kind: 'TlsConnectionError' })), true);
+    assert.equal(isConnectionError(adapterError({ kind: 'TooManyConnections' })), true);
+    assert.equal(isConnectionError(new Error('Connection terminated due to connection timeout')), true, 'pg connect timeout');
+    assert.equal(isConnectionError(new Error('timeout exceeded when trying to connect')), true, 'pg-pool wait');
+    assert.equal(isConnectionError(new Error('Connection terminated unexpectedly')), true);
+    assert.equal(isConnectionError(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })), true);
+    assert.equal(isConnectionError(Object.assign(new Error('wrapped'), { cause: Object.assign(new Error('x'), { code: 'ETIMEDOUT' }) })), true, 'found down the cause chain');
+  });
+
+  it('errors the database RETURNED for the query are not: they reach the caller', () => {
+    assert.equal(isConnectionError(adapterError({ kind: 'TableDoesNotExist', originalCode: '42P01', table: 't' })), false, 'missing table');
+    assert.equal(isConnectionError(adapterError({ kind: 'postgres', code: '42601', message: 'syntax error at or near "selec"' })), false, 'syntax error');
+    assert.equal(isConnectionError(adapterError({ kind: 'UniqueConstraintViolation' })), false);
+    assert.equal(isConnectionError(adapterError({ kind: 'AuthenticationFailed' })), false, 'a wrong password is a configuration fault to surface, not to hide');
+    assert.equal(isConnectionError(new Error('boom')), false);
+    assert.equal(isConnectionError('not even an error'), false);
+    assert.equal(isConnectionError(undefined), false);
   });
 });

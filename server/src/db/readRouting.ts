@@ -14,7 +14,9 @@ import type { Shards } from './clients.js';
  *   - `marker`: this user wrote less than 5 seconds ago (read-your-own-writes).
  *   - `startup`: this process started less than 5 seconds ago, so a write made just before a crash or deploy may have been forgotten.
  *   - `none`: no reason to use the primary, so the replica answered.
- *   - `replica-failed`: the replica could not answer (asleep too long, unreachable), so the primary did. The read was repeated, which is safe because it is a read.
+ *   - `replica-failed`: the replica could not be REACHED (unreachable, connect timeout, connection reset), so the primary answered. The read was repeated, which is
+ *     safe because it is a read. A QUERY error on the replica (bad SQL, a missing table, a constraint) is not retried: the primary would fail the same way, and
+ *     hiding it would hide a bug.
  *
  * VALID FOR EXACTLY ONE API PROCESS. The marker lives in this process's memory (data.md), so a second API instance would not see the first one's writes. The host
  * runs one instance with a stop-then-start deploy; the startup window covers the old process's last writes. See ARCHITECTURE.md, "What changes in production".
@@ -38,7 +40,7 @@ export interface ReadContext {
 }
 
 export interface ReadRouting {
-  /** Runs `read` against the database this user's read should use. `read` must be a pure read: on a replica failure it is run again on the primary. */
+  /** Runs `read` against the database this user's read should use. `read` must be a pure read: if the replica cannot be REACHED it is run again on the primary. */
   run<T>(teamId: string, ctx: ReadContext, read: (db: ReadDb) => Promise<T>): Promise<T>;
   /** The decision alone, without running anything. */
   decide(userId: string, primaryRequired?: boolean): Exclude<DbRoute, 'replica-failed'>;
@@ -59,11 +61,32 @@ export interface ReadRoutingOptions {
   windowMs?: number;
   /** How often expired markers are swept out (no I/O). */
   sweepMs?: number;
-  /** Told when the replica could not answer, before the primary is used. Log it with the usual redaction. */
+  /** Told when the replica could not be reached, before the primary is used. Log it with the usual redaction. */
   onReplicaError?: (err: unknown) => void;
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// What counts as "could not reach the replica". Every name below was checked against the installed packages (@prisma/driver-adapter-utils, pg, pg-pool) and the
+// shapes were observed in a spike (ADR 0037): Prisma 7 reports BOTH a refused connection and a bad query as P2010, so the code alone cannot tell them apart.
+// The kind inside `meta.driverAdapterError.cause` can: DatabaseNotReachable (refused, unknown host), ConnectionClosed (reset), SocketTimeout, TlsConnectionError,
+// TooManyConnections. A connect timeout surfaces as pg's own Error; a raw socket error carries a Node error code.
+const CONNECTION_KINDS = new Set(['DatabaseNotReachable', 'ConnectionClosed', 'SocketTimeout', 'TlsConnectionError', 'TooManyConnections']);
+const SOCKET_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH']);
+const PG_CONNECTION_MESSAGE = /Connection terminated (due to connection timeout|unexpectedly)|timeout exceeded when trying to connect/i;
+
+/** True when the error means the database could not be reached or the connection broke; false for any error the database itself returned for the query. */
+export function isConnectionError(err: unknown): boolean {
+  let e = err as { meta?: { driverAdapterError?: { cause?: { kind?: unknown } } }; code?: unknown; message?: unknown; cause?: unknown } | undefined;
+  for (let depth = 0; e && typeof e === 'object' && depth < 5; depth++) {
+    const kind = e.meta?.driverAdapterError?.cause?.kind;
+    if (typeof kind === 'string' && CONNECTION_KINDS.has(kind)) return true;
+    if (typeof e.code === 'string' && SOCKET_CODES.has(e.code)) return true;
+    if (typeof e.message === 'string' && PG_CONNECTION_MESSAGE.test(e.message)) return true;
+    e = e.cause as typeof e;
+  }
+  return false;
+}
 
 export function createReadRouting(options: ReadRoutingOptions): ReadRouting {
   const { shards, onReplicaError } = options;
@@ -110,6 +133,8 @@ export function createReadRouting(options: ReadRoutingOptions): ReadRouting {
       // different, and its model delegates do not line up with PrismaClient's. The cast is the whole difference.
       return await read(shard.reader.$replica() as unknown as PrismaClient);
     } catch (err) {
+      // A query error is the caller's to see: only "could not reach the replica" falls back to the primary.
+      if (!isConnectionError(err)) throw err;
       onReplicaError?.(err);
       ctx.onRoute?.('replica-failed');
       return read(shard.primary);
