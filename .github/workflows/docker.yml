@@ -39,12 +39,20 @@ jobs:
             -e STRIPE_WEBHOOK_SECRET=whsec_ci_placeholder \
             -e SHARD_A_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
             -e SHARD_B_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
+            -e SHARD_A_READ_URL='postgresql://ci:ci@localhost:5432/ci' \
+            -e SHARD_B_READ_URL='postgresql://ci:ci@localhost:5432/ci' \
             -e VALKEY_URL='redis://localhost:6379' \
             rota-server
+          ok=no
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:3000/health > health.json 2>/dev/null; then break; fi
+            if curl -fsS http://localhost:3000/health > health.json 2>/dev/null; then ok=yes; break; fi
             sleep 1
           done
+          if [ "$ok" != yes ]; then
+            echo "::error::the API did not answer /health; its log follows"
+            docker logs api
+            exit 1
+          fi
           cat health.json
           grep -q '"ok":true' health.json
           # SIGTERM reaches node (PID 1), the API closes, and the container exits 0 well inside the grace period.
