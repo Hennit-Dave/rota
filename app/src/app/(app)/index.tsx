@@ -5,6 +5,11 @@ import { ApiError, OfflineError } from '../../api/errors';
 import { bannerCopy } from '../../auth/copy';
 import { ActivateBanner } from '../../billing/ActivateBanner';
 import { TeamBillingBanner } from '../../billing/TeamBillingBanner';
+import { savedShiftsApply } from '../../offline/fallback';
+import { isExpired } from '../../offline/offlineConfig';
+import { offlineCopy } from '../../offline/offlineCopy';
+import { SavedShifts } from '../../offline/SavedShifts';
+import { useUpcomingShifts } from '../../offline/useUpcomingShifts';
 import { ShiftCard } from '../../shifts/ShiftCard';
 import { scheduleCopy } from '../../shifts/shiftCopy';
 import { addDays, dayKeyOf, formatLongDate, greetingFor, shiftsOnDay, weekWindow } from '../../shifts/shiftTime';
@@ -52,6 +57,9 @@ function Schedule() {
 
   const ready = detail.data !== undefined;
   const shifts = useShiftsRange(userId, ready ? teamId : null, week, !canEdit);
+  // The person's own upcoming shifts, kept on the phone (ADR 0034). It refreshes while this screen is open, and it is what the screen falls back to.
+  const upcoming = useUpcomingShifts(userId, teamId);
+  const saved = upcoming.data && !isExpired(upcoming.dataUpdatedAt, now.getTime()) ? upcoming.data : undefined;
   const dayShifts = shiftsOnDay(shifts.data ?? [], selected, zone);
   const isToday = selected === today;
 
@@ -72,6 +80,8 @@ function Schedule() {
   const loadFailure = (detail.error ?? shifts.error ?? teams.error ?? me.error) as unknown;
   const failed = !shifts.data && (shifts.isError || detail.isError || teams.isError || me.isError);
   const offline = loadFailure instanceof OfflineError || !online;
+  // Offline, or the server could not be reached: show the saved shifts, read-only, instead of the error. A server that answered with a refusal never gets this.
+  const showSaved = !shifts.data && failed && saved !== undefined && savedShiftsApply({ error: loadFailure, online });
   const open = (shiftId: string) => router.push({ pathname: '/shift/[shiftId]', params: { shiftId } });
 
   const card = (shift: (typeof dayShifts)[number]) => (
@@ -114,6 +124,8 @@ function Schedule() {
         )}
       </>
     );
+  } else if (showSaved && saved) {
+    body = <SavedShifts saved={saved} now={now} offline={offline} onRetry={retryAll} />;
   } else if (failed) {
     const reference = loadFailure instanceof ApiError && loadFailure.requestId ? `${bannerCopy.referencePrefix}${loadFailure.requestId}` : undefined;
     body = (
@@ -137,12 +149,12 @@ function Schedule() {
     );
   }
 
-  const title = failed && !shifts.data ? scheduleCopy.error.title : !ready ? scheduleCopy.loading.title : scheduleCopy.greeting(greetingFor(now, zone), firstName);
-  const header = failed && !shifts.data ? scheduleCopy.error.subtitle : !ready ? scheduleCopy.loading.subtitle : subtitle;
+  const title = showSaved ? offlineCopy.title : failed && !shifts.data ? scheduleCopy.error.title : !ready ? scheduleCopy.loading.title : scheduleCopy.greeting(greetingFor(now, zone), firstName);
+  const header = showSaved ? offlineCopy.subtitle : failed && !shifts.data ? scheduleCopy.error.subtitle : !ready ? scheduleCopy.loading.subtitle : subtitle;
 
   return (
     <Screen gap={space[12]}>
-      <PageHeader eyebrowGap={16} teamName={teamName} title={title} subtitle={header} />
+      <PageHeader eyebrowGap={16} teamName={teamName ?? (showSaved ? saved?.team.name : undefined)} title={title} subtitle={header} />
       {/* The Owner's reminder to activate (ADR 0026); shown only when the server says this person manages billing and the team has no subscription. */}
       <TeamBillingBanner notice={detail.data?.billingNotice ?? null} canManageBilling={detail.data?.canManageBilling === true} />
       <ActivateBanner userId={userId} teamId={teamId} canManageBilling={detail.data?.canManageBilling === true} />

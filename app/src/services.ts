@@ -3,7 +3,8 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { AppState } from 'react-native';
 import { createApiClient } from './api/client';
 import { readApiBaseUrl } from './api/config';
-import { shouldRetryQuery, type Logger } from './api/errors';
+import { type Logger } from './api/errors';
+import { queryClientDefaults } from './api/queryDefaults';
 import { createAuthActions } from './auth/authActions';
 import type { AuthUser } from './auth/authResponses';
 import { createRestoreSession } from './auth/restore';
@@ -24,6 +25,10 @@ import { settingsKey } from './settings/settingsResponses';
 import { createBillingApi } from './billing/billingApi';
 import { createSwapApi } from './swaps/swapApi';
 import { createTeamApi } from './teams/teamApi';
+import { OFFLINE_MAX_AGE_MS } from './offline/offlineConfig';
+import { createOfflineSaving } from './offline/offlineSaving';
+import { createSqliteStore } from './offline/sqliteStore';
+import { UPCOMING_ROOT } from './offline/upcoming';
 
 /**
  * Composition root: the real instances, built once. Everything below the line is plain, injected, unit-tested code.
@@ -35,13 +40,14 @@ const logger: Logger = {
 
 export const epoch = new AccountEpoch();
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: shouldRetryQuery },
-    // Mutations never retry by default; settings and swaps additionally set networkMode 'always' (app-state.md).
-    mutations: { retry: 0 },
-  },
-});
+export const queryClient = new QueryClient({ defaultOptions: queryClientDefaults });
+
+// The saved copy must outlive the usual 5 minutes in memory, or a copy put back from the device would be dropped before anyone looked at it (and the next save
+// would then forget it): its gcTime is the maximum age (docs/STATE.md).
+queryClient.setQueryDefaults([UPCOMING_ROOT], { gcTime: OFFLINE_MAX_AGE_MS });
+
+/** The only thing kept on the device besides the tokens: the person's upcoming shifts (ADR 0010, ADR 0034). */
+export const offlineSaving = createOfflineSaving({ queryClient, store: createSqliteStore(), epoch, maxAgeMs: OFFLINE_MAX_AGE_MS, logger });
 
 export const signOutLocal = createSignOutLocal({
   epoch,
@@ -51,8 +57,7 @@ export const signOutLocal = createSignOutLocal({
       await queryClient.cancelQueries();
       queryClient.clear(); // clears the query cache and the mutation cache
     },
-    // The persister arrives with the offline-shifts slice; there is nothing persisted yet.
-    clearPersistedCache: () => {},
+    clearPersistedCache: () => offlineSaving.stopAndClear(),
     resetClientState: (notice) => useSessionStore.getState().resetForSignOut(notice),
     clearTokens: () => secureTokenStore.clear(),
   },
@@ -175,6 +180,7 @@ function onSignedIn(user: AuthUser | null) {
   if (user) {
     queryClient.setQueryData(meQueryKey, user);
     void prefetchSettings(user.id);
+    void offlineSaving.begin(user.id);
   }
   useSessionStore.getState().setSignedIn();
 }
@@ -194,6 +200,8 @@ export function getAuthActions() {
  * Offline or unreachable keeps the session and shows the signed-in side with its own offline state (app-state.md).
  */
 export async function restoreSession(): Promise<void> {
+  // The saved shifts go back into the cache before either side is shown, so an offline start can use them. Never throws.
+  await offlineSaving.restoreOnStart();
   let client: ReturnType<typeof getApi>;
   try {
     client = getApi();
