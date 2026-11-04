@@ -109,6 +109,6 @@ Postgres or the session). Replication lag also becomes a real operational concer
 - `server/src/db/readRouting.integration.test.ts` (6): real replicas, `pg_is_in_recovery()` true for opted-in reads on both shards, false on the primary
   clients; the same user on the primary for 5 s after a write and on the replica at 6 s, with real clocks; raw and model reads on the same client;
   fallback to the primary with an unreachable replica; and a real query error on the real replica (missing table) that is **not** retried: the replica
-  was asked exactly once, the route stayed `none`, nothing was reported as a reachability failure.
+  ran once, on the replica, with no second attempt on the primary; the route stayed `none`; nothing was reported as a reachability failure.
 - `server/src/db/readRouting.http.integration.test.ts`: the three real endpoints over HTTP, with the replica's own query log and the request log's `dbRoute`.
 - Lag: `Rota-evidence/read-routing/lag-measurement.txt`.

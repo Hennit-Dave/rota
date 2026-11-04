@@ -70,15 +70,18 @@ describe('read-your-own-writes, with real clocks (data.md tests 4 and 6)', () =>
 describe('a QUERY error on the real replica', () => {
   it('is not retried on the primary: the caller gets the database error, nothing is reported, the route stays none', async () => {
     const errorsBefore = replicaErrors.length;
-    const before = replicaQueries.length;
     const routes: DbRoute[] = [];
+    const attempts: boolean[] = []; // one entry per time the read ran: was it on a replica?
     await assert.rejects(
-      reads.run(TEAM_A, { userId: OTHER, onRoute: (r) => routes.push(r) }, (db) => db.$queryRaw`SELECT * FROM table_that_does_not_exist`),
+      reads.run(TEAM_A, { userId: OTHER, onRoute: (r) => routes.push(r) }, async (db) => {
+        attempts.push(await inRecovery(db)); // true: this attempt is on the replica
+        return db.$queryRaw`SELECT * FROM table_that_does_not_exist`;
+      }),
       (e: { meta?: { driverAdapterError?: { cause?: { originalCode?: string } } } }) => e.meta?.driverAdapterError?.cause?.originalCode === '42P01',
     );
-    assert.deepEqual(routes, ['none'], 'asked the replica once; never replica-failed');
+    assert.deepEqual(attempts, [true], 'the read ran once, on the replica: there was no second attempt on the primary');
+    assert.deepEqual(routes, ['none'], 'never replica-failed');
     assert.equal(replicaErrors.length, errorsBefore, 'no reachability failure was reported');
-    assert.equal(replicaQueries.length - before, 1, 'the replica was asked exactly once: no second attempt');
   });
 });
 
