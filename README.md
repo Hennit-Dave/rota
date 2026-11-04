@@ -45,6 +45,21 @@ need them.
 Migrations use the direct (unpooled) URLs because Prisma's migration engine does not work through the pooler.
 Runtime clients (`server/src/db/clients.ts`) use the pooled URLs. See `docs/decisions/0002-database-foundation.md`.
 
+### Container image (issue #14, ADR 0036)
+
+One image runs both programs. The build context is `server/`:
+
+```
+docker build -t rota-server server
+docker run --rm -p 3000:3000 --env-file .env rota-server                  # the API (default)
+docker run --rm --env-file .env rota-server node dist/worker/main.js      # the worker
+curl localhost:3000/health                                                # {"ok":true}
+```
+
+The image holds no secrets and no `.env` file; settings arrive as environment variables (names in `.env.example`). It does
+not run migrations: those stay `npm run db:deploy:a` then `db:deploy:b`, from a developer machine. Add `-e
+USE_TEST_SHARDS=true -e WORK_QUEUE_NAME=work-proof` to run it on the test shards, as `proof:api` does.
+
 ### Queue and worker commands (need `VALKEY_URL` in `.env`)
 
 Valkey on Aiven is used for background queuing (`docs/ARCHITECTURE.md`, `docs/decisions/0003-queue-worker-and-recovery.md`).
