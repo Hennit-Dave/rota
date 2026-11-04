@@ -38,6 +38,7 @@ only in this file.
 - `server/src/api/app.ts`: builds the Express app (`createApp()`); no listening, so tests can import it.
 - `server/src/api/main.ts`: reads `PORT`, starts the API process.
 - `server/src/worker/main.ts`: the separate worker process.
+- `server/Dockerfile`: one image for both programs, API by default (ADR 0036). Context is `server/`; no secrets in it.
 - Toolchain choices: `docs/decisions/0001-server-toolchain.md`. Commands: root `AGENTS.md`, Commands.
 
 ## Pending
