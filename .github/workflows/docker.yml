@@ -1,0 +1,72 @@
+# Builds the server image and runs it (issue #14, ADR 0036). Build-only: nothing is pushed anywhere and no secret is used.
+# Free: standard runners in a public repo cost nothing (same as pages.yml). Runs only when the server or this file changes.
+name: Server image
+
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/docker.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image (context is server/)
+        run: docker build -t rota-server server
+
+      # /health never touches Postgres or Valkey (data.md), so the API answers with placeholder values: nothing here connects to a real service.
+      # The JWT secret is generated for this run only. The Stripe values only need to look like test keys; the process refuses anything else.
+      - name: Run the API, call /health, then stop it
+        run: |
+          set -euo pipefail
+          docker run -d --name api -p 3000:3000 \
+            -e AUTH_JWT_SECRET="$(openssl rand -base64 32)" \
+            -e MAIL_FROM='Rota <ci@example.invalid>' \
+            -e MAIL_REPLY_TO='ci@example.invalid' \
+            -e STRIPE_SECRET_KEY=sk_test_ci_placeholder \
+            -e STRIPE_WEBHOOK_SECRET=whsec_ci_placeholder \
+            -e SHARD_A_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
+            -e SHARD_B_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
+            -e VALKEY_URL='redis://localhost:6379' \
+            rota-server
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/health > health.json 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat health.json
+          grep -q '"ok":true' health.json
+          # SIGTERM reaches node (PID 1), the API closes, and the container exits 0 well inside the grace period.
+          docker stop -t 10 api
+          code="$(docker inspect api --format '{{.State.ExitCode}}')"
+          docker logs api
+          test "$code" = 0
+
+      - name: The image runs as a non-root user
+        run: |
+          uid="$(docker run --rm --entrypoint id rota-server -u)"
+          echo "uid=$uid"
+          test "$uid" != 0
+
+      # The worker is the same image with another command. With no reachable Valkey it stops itself; what matters is that this command starts the worker.
+      - name: The worker starts from the same image
+        run: |
+          set +e
+          out="$(timeout 60 docker run --rm \
+            -e VALKEY_URL='redis://localhost:6379' \
+            -e SHARD_A_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
+            -e SHARD_B_DATABASE_URL='postgresql://ci:ci@localhost:5432/ci' \
+            rota-server node dist/worker/main.js 2>&1)"
+          echo "$out"
+          echo "$out" | grep -q 'worker starting'

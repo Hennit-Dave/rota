@@ -57,4 +57,6 @@ Prisma client and compiles TypeScript. The runtime stage installs production dep
   build`, `npm ci --omit=dev --ignore-scripts`), the compiled API started from the runtime tree with an empty
   environment plus the test-shard variables, `GET /health` returned 200, and SIGTERM closed it in about 2 seconds.
   `npm ci --os=linux --cpu=x64|arm64 --libc=glibc` installs the matching argon2 binary from the lockfile.
-- A real `docker build` and `docker run` of the image: see the PR description.
+- `.github/workflows/docker.yml` runs a real `docker build`, starts the API with placeholder values, calls `GET /health`, stops it with
+  `docker stop` and requires exit code 0 (graceful shutdown as PID 1), checks the user is not root, and checks the worker command starts. The
+  green run is linked in the PR.

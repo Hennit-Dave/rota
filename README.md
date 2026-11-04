@@ -60,6 +60,10 @@ The image holds no secrets and no `.env` file; settings arrive as environment va
 not run migrations: those stay `npm run db:deploy:a` then `db:deploy:b`, from a developer machine. Add `-e
 USE_TEST_SHARDS=true -e WORK_QUEUE_NAME=work-proof` to run it on the test shards, as `proof:api` does.
 
+GitHub Actions (`.github/workflows/docker.yml`) builds the image on every change under `server/`, starts the API with placeholder
+values (no secret, no real service), calls `/health`, checks that `docker stop` ends it with exit code 0 and that it runs as a non-root
+user, and checks that the worker command starts from the same image. Nothing is pushed anywhere.
+
 ### Queue and worker commands (need `VALKEY_URL` in `.env`)
 
 Valkey on Aiven is used for background queuing (`docs/ARCHITECTURE.md`, `docs/decisions/0003-queue-worker-and-recovery.md`).
