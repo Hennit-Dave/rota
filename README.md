@@ -45,6 +45,13 @@ need them.
 Migrations use the direct (unpooled) URLs because Prisma's migration engine does not work through the pooler.
 Runtime clients (`server/src/db/clients.ts`) use the pooled URLs. See `docs/decisions/0002-database-foundation.md`.
 
+**Read replicas** (issue #15, ADR 0037): each Neon project has one read replica. The API needs `SHARD_A_READ_URL` and `SHARD_B_READ_URL` (the replica's
+pooled host, same role and database as the primary) and refuses to start without them; `proof:api` and the replica tests need `TEST_SHARD_A_READ_URL` and
+`TEST_SHARD_B_READ_URL`. The worker does not use them. Three reads are routed to the replica (the shift calendar, the activity feed, the roster); the
+user who just wrote reads the primary for 5 seconds. Everything else reads the primary. Each request's log line carries `dbRoute`: `none` (replica),
+`marker`, `startup`, `primary-required` or `replica-failed`. The replica sleeps after 5 minutes idle, so the first read after a quiet spell takes a
+second or two longer.
+
 ### Container image (issue #14, ADR 0036)
 
 One image runs both programs. The build context is `server/`:

@@ -2,6 +2,7 @@ import { getShard, type Shards } from '../db/clients.js';
 import type { EnqueueRow } from '../billing/renewal.js';
 import { enqueueEvents, queueShiftEvent } from '../push/events.js';
 import { identityDb } from '../db/identity.js';
+import type { ReadDb } from '../db/readRouting.js';
 import type { PrismaClient, Shift } from '../generated/prisma/client.js';
 import { ApiError } from '../http/errors.js';
 import { timesProblem } from './schemas.js';
@@ -87,8 +88,10 @@ const snapshot = (s: Pick<Shift, 'title' | 'startsAt' | 'endsAt' | 'assignedUser
 export async function listShifts(
   shards: Shards,
   input: { teamId: string; from: Date; to: Date; assignedUserId?: string },
+  db?: ReadDb,
 ): Promise<ShiftView[]> {
-  const rows = await getShard(shards, input.teamId).primary.shift.findMany({
+  // A routed read (ADR 0037): `db` is the database the read-routing function chose; without one, the primary.
+  const rows = await (db ?? getShard(shards, input.teamId).primary).shift.findMany({
     where: {
       teamId: input.teamId,
       startsAt: { lt: input.to },

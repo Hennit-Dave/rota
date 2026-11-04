@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import { readContext, type ReadRouting } from '../db/readRouting.js';
 import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import type { TokenService } from '../auth/tokens.js';
@@ -14,6 +15,8 @@ import { createShift, deleteShift, getShift, listShifts, listUpcomingShifts, upd
 
 export interface ShiftsRouteDeps {
   shards: Shards;
+  /** The read-routing function (ADR 0037): the calendar (list) is a routed read. */
+  reads: ReadRouting;
   tokens: TokenService;
   config?: ShiftsConfig;
   /** Puts a push event onto the queue after the shift change committed (ADR 0033). It never throws. */
@@ -34,7 +37,7 @@ const noStore: RequestHandler = (_req, res, next) => {
  * (`shifts.view`); only an Owner or Manager may publish, change or delete (`shifts.edit`). The team comes from the validated path, never the body.
  */
 export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
-  const { shards, tokens } = deps;
+  const { shards, reads, tokens } = deps;
   const config = deps.config ?? loadShiftsConfig();
   const schemas = createShiftSchemas(config);
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
@@ -48,7 +51,9 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
   router.get('/', validateRequest({ params: schemas.teamParams, query: schemas.list }), requireAuth, requireTeamRole('shifts.view'), async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
     const { from, to, mine } = req.validated!.query as { from: Date; to: Date; mine: boolean };
-    const shifts = await listShifts(shards, { teamId, from, to, assignedUserId: mine ? req.auth!.userId : undefined });
+    const shifts = await reads.run(teamId, readContext(res, req.auth!.userId), (db) =>
+      listShifts(shards, { teamId, from, to, assignedUserId: mine ? req.auth!.userId : undefined }, db),
+    );
     res.json({ shifts });
   });
 

@@ -4,6 +4,8 @@ import { createPasswordService } from '../auth/password.js';
 import { createTokenService } from '../auth/tokens.js';
 import { createStripeGateway } from '../billing/gateway.js';
 import { loadStripeConfig } from '../billing/stripeConfig.js';
+import { closeShards } from '../db/clients.js';
+import { createReadRouting } from '../db/readRouting.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
@@ -51,8 +53,14 @@ try {
   process.exit(1);
 }
 
-// data.md: the API's pool is 5 per shard primary. Identity lives on shard A.
-const shards = createRuntimeShards({ primaryMax: 5 }, 'api');
+// data.md: the API's pools are 5 per shard primary and 5 per shard replica (ADR 0037). Identity lives on shard A. The API refuses to start without the
+// replicas' URLs (SHARD_A_READ_URL, SHARD_B_READ_URL): it never quietly reads from the primary only.
+const shards = createRuntimeShards({ primaryMax: 5, replicaMax: 5 }, 'api');
+// The ONE read-routing function and the 5-second write marker (data.md). A replica that cannot answer is reported and the primary answers instead.
+const reads = createReadRouting({
+  shards,
+  onReplicaError: (err) => logger.warn('replica_read_failed', { reason: sanitizeError(err) }),
+});
 
 // Rate limiting uses the bounded producer-style connection: short timeouts, no offline queue, so a Valkey outage
 // fails the limited routes closed (503) quickly instead of hanging them.
@@ -136,10 +144,11 @@ const billing = {
 
 const app = createApp({
   logger,
+  reads,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
   recovery,
   // A shift or swap change writes its push event in its own transaction; the event is enqueued here after the commit (ADR 0033). It never throws.
-  teams: { shards, tokens, limiter, config, invites, billing, enqueue: billing.enqueue },
+  teams: { shards, reads, tokens, limiter, config, invites, billing, enqueue: billing.enqueue },
   // Verified, recorded on shard A, then the job is enqueued (it never throws): the request does no business processing (AGENTS.md rules 7 and 9).
   stripeWebhook: {
     shards,
@@ -174,8 +183,8 @@ async function shutdown(signal: NodeJS.Signals) {
   await recoveryTasks.drain();
   redis.disconnect();
   await closeProducerQueue();
-  await shards.A.primary.$disconnect();
-  await shards.B.primary.$disconnect();
+  reads.stop();
+  await closeShards(shards);
   console.log('api closed');
 }
 

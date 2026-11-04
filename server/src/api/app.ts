@@ -2,6 +2,7 @@ import express from 'express';
 import { createRecoveryRouter, type RecoveryRouteDeps } from '../auth/recoveryRoutes.js';
 import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
 import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../billing/webhook.js';
+import type { ReadRouting } from '../db/readRouting.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { createInvitationsRouter, type InvitesRouteDeps } from '../invites/routes.js';
@@ -11,6 +12,8 @@ import { createTeamsRouter, type TeamsDeps } from '../teams/routes.js';
 
 export interface AppDeps {
   logger?: Logger;
+  /** When given, its write marker runs before every router (read-your-own-writes, ADR 0037). Must be the same instance the team routes read through. */
+  reads?: ReadRouting;
   /** When given, mounts /auth. Left out by tests that only need the bare app. */
   auth?: Omit<AuthDeps, 'logger'>;
   /** When given, mounts magic link and password reset under /auth (ADR 0020). */
@@ -31,6 +34,7 @@ export function createApp(deps: AppDeps = {}) {
   const logger = deps.logger ?? createLogger();
   const app = express();
   installPreRoutes(app, logger);
+  if (deps.reads) app.use(deps.reads.writeMarker);
 
   // Health checks never touch Postgres or Valkey (data.md).
   app.get('/health', (_req, res) => {

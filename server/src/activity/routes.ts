@@ -3,6 +3,7 @@ import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import type { TokenService } from '../auth/tokens.js';
 import type { Shards } from '../db/clients.js';
+import { readContext, type ReadRouting } from '../db/readRouting.js';
 import { identityDb } from '../db/identity.js';
 import type { Logger } from '../http/logger.js';
 import { validateRequest } from '../http/validate.js';
@@ -15,6 +16,8 @@ import { listActivity } from './service.js';
 
 export interface ActivityRouteDeps {
   shards: Shards;
+  /** The read-routing function (ADR 0037): the feed is a routed read. */
+  reads: ReadRouting;
   tokens: TokenService;
   limiter: RateLimiter;
   logger: Logger;
@@ -35,7 +38,7 @@ const noStore: RequestHandler = (_req, res, next) => {
  * (503 when Valkey is unreachable), like every limited route (ADR 0022, issue #11). The team comes from the validated path, never from the cursor.
  */
 export function createActivityRouter(deps: ActivityRouteDeps): Router {
-  const { shards, tokens, limiter, logger, config } = deps;
+  const { shards, reads, tokens, limiter, logger, config } = deps;
   const schemas = createActivitySchemas(deps.activity ?? loadActivityConfig());
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
@@ -47,7 +50,8 @@ export function createActivityRouter(deps: ActivityRouteDeps): Router {
   router.get('/', validateRequest({ params: schemas.teamParams, query: schemas.query }), requireAuth, feedLimit, requireTeamRole('shifts.view'), async (req, res) => {
     const { teamId } = req.validated!.params as { teamId: string };
     const { limit, cursor } = req.validated!.query as { limit: number; cursor: Cursor | null };
-    res.json(await listActivity(shards, { teamId, limit, cursor }));
+    // The membership and role were just checked on the primary. The rows themselves may come from the replica (ADR 0037); the user's own recent write sends the read to the primary.
+    res.json(await reads.run(teamId, readContext(res, req.auth!.userId), (db) => listActivity(shards, { teamId, limit, cursor }, db)));
   });
 
   return router;

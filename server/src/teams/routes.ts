@@ -10,6 +10,7 @@ import { validateRequest } from '../http/validate.js';
 import { rateLimit, type RateLimiter } from '../ratelimit/limiter.js';
 import { createTeamInvitationsRouter } from '../invites/routes.js';
 import { createActivityRouter } from '../activity/routes.js';
+import { readContext, type ReadRouting } from '../db/readRouting.js';
 import { createSwapsRouter } from '../swaps/routes.js';
 import { createShiftsRouter } from '../shifts/routes.js';
 import type { EnqueueRow } from '../billing/renewal.js';
@@ -24,6 +25,8 @@ import { createTeam, listMembers, listTeamsForUser } from './service.js';
 
 export interface TeamsDeps {
   shards: Shards;
+  /** The read-routing function (ADR 0037): the roster, the calendar and the feed are routed reads. */
+  reads: ReadRouting;
   tokens: TokenService;
   limiter: RateLimiter;
   logger: Logger;
@@ -43,7 +46,7 @@ const noStore: RequestHandler = (_req, res, next) => {
 
 /** The team routes (mounted at /teams). The pipelines are the ones in security.md: user routes and team routes. */
 export function createTeamsRouter(deps: TeamsDeps): Router {
-  const { shards, tokens, limiter, logger, config, invites, billing, enqueue } = deps;
+  const { shards, reads, tokens, limiter, logger, config, invites, billing, enqueue } = deps;
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
   const requireTeamRole = createRequireTeamRole({ shards });
 
@@ -105,8 +108,8 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
     requireTeamRole('members.list'),
     async (req, res) => {
       const { teamId } = req.validated!.params as { teamId: string };
-      const members = await listMembers(shards, teamId, () =>
-        logger.warn('membership_without_user', { requestId: String(res.locals.requestId ?? '') }),
+      const members = await reads.run(teamId, readContext(res, req.auth!.userId), (db) =>
+        listMembers(shards, teamId, () => logger.warn('membership_without_user', { requestId: String(res.locals.requestId ?? '') }), db),
       );
       res.json({ members });
     },
@@ -114,8 +117,8 @@ export function createTeamsRouter(deps: TeamsDeps): Router {
 
   router.use('/:teamId/invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites }));
   // Shifts (ADR 0021). They carry the router's body parser, log base and no-store through `router.use` above.
-  router.use('/:teamId/shifts', createShiftsRouter({ shards, tokens, enqueue }));
-  router.use('/:teamId/activity', createActivityRouter({ shards, tokens, limiter, logger, config }));
+  router.use('/:teamId/shifts', createShiftsRouter({ shards, reads, tokens, enqueue }));
+  router.use('/:teamId/activity', createActivityRouter({ shards, reads, tokens, limiter, logger, config }));
   router.use('/:teamId/swaps', createSwapsRouter({ shards, tokens, limiter, logger, config, enqueue }));
   if (billing) router.use('/:teamId/billing', createBillingRouter({ shards, tokens, limiter, logger, config, billing }));
 
