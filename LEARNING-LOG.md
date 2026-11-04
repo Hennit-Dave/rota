@@ -237,3 +237,7 @@ The row ID tells me which push job I'm tracing, and the device ID tells me which
 ## 2026-11-03 — Shift and swap pushes (PR #65)
 
 I learned why Rota saves the activity row and the request to send a push in one transaction: either both are saved or neither is. If the server crashes just after saving a shift change, the worker still has a record telling it to send the notification.
+
+## 2026-11-04 — Dockerfile (PR #67)
+
+I learned that a container needs to shut down properly when it receives `docker stop`. It should stop accepting new work, safely finish or release work already running, and close its connections before exiting with code 0. This helps stop-then-start deploys avoid cutting work off halfway, although exit 0 alone doesn't prove that every job was handled safely.
