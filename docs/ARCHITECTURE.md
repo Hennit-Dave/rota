@@ -206,6 +206,16 @@ The server decides who is told, when and whether; a background job sends through
   Debian slim on Node 24, two stages, production dependencies only at runtime, runs as the `node` user, no secrets or `.env`
   inside, no migrations run by the image. Provider-neutral. Decision and trade-offs: `docs/decisions/0036-container-image.md` (ADR 0036).
 
+### 5p. Read replicas and read routing (ADR 0037)
+
+- One Neon read replica per project (shard A, shard B), pooled, capped at 0.25 CU. `shards.X.primary` stays the plain client; the API alone also holds
+  `shards.X.reader` (the primary extended with `$replica()`), reached only through `reads.run(teamId, ctx, read)` in `server/src/db/readRouting.ts`.
+- `reads.run` picks the database: `primary-required` → `marker` (the user wrote less than 5 s ago) → `startup` (process younger than 5 s) → `none` (replica).
+  A replica that cannot be reached (unreachable, connect timeout, connection reset) falls back to the primary (`replica-failed`); a query error on the replica is not retried. The reason is the request log's `dbRoute`.
+- The marker is set by middleware just before the response headers of any non-safe request go out. In-process map, **one API process only**.
+- Opted in: the shift calendar, the activity feed (raw SQL, run on the client the router hands it) and the roster. Everything else reads the primary.
+- Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once, up to about 6.5 s for the first four queries across both shards): k6 warms them up before measuring.
+
 ### 6. Mobile app
 
 Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and
@@ -246,16 +256,6 @@ app/src/
 - **The invite link** opens `invite/[token]`, a root route outside both session guards (so it works signed in or out). Sign in and Create account open on top of it carrying the token as route params, and once the session starts they return to it with `dismissTo`; Accept puts the accepted team in the teams list and selects it. Every exit goes through `goBackTo`. Details and the bugs that shaped it: ADR 0017.
 - **Native modules** are fixed at build time. Everything the whole app needs is installed up front so the limited EAS build quota is spent
   once (`expo-builds.md`, ADR 0011).
-
-### 5p. Read replicas and read routing (ADR 0037)
-
-- One Neon read replica per project (shard A, shard B), pooled, capped at 0.25 CU. `shards.X.primary` stays the plain client; the API alone also holds
-  `shards.X.reader` (the primary extended with `$replica()`), reached only through `reads.run(teamId, ctx, read)` in `server/src/db/readRouting.ts`.
-- `reads.run` picks the database: `primary-required` → `marker` (the user wrote less than 5 s ago) → `startup` (process younger than 5 s) → `none` (replica).
-  A replica that cannot be reached (unreachable, connect timeout, connection reset) falls back to the primary (`replica-failed`); a query error on the replica is not retried. The reason is the request log's `dbRoute`.
-- The marker is set by middleware just before the response headers of any non-safe request go out. In-process map, **one API process only**.
-- Opted in: the shift calendar, the activity feed (raw SQL, run on the client the router hands it) and the roster. Everything else reads the primary.
-- Neon replicas share the project's CU-hours, sleep after 5 minutes idle, and wake on the first query (1.4 to 2.5 s measured once, up to about 6.5 s for the first four queries across both shards): k6 warms them up before measuring.
 
 ---
 

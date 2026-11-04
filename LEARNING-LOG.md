@@ -245,3 +245,7 @@ I learned that the saved offline copy needs a “Last updated” time so the use
 ## 2026-11-04 — Dockerfile (PR #67)
 
 I learned that a container needs to shut down properly when it receives `docker stop`. It should stop accepting new work, safely finish or release work already running, and close its connections before exiting with code 0. This helps stop-then-start deploys avoid cutting work off halfway, although exit 0 alone doesn't prove that every job was handled safely.
+
+## 2026-11-04 — Read routing (PR #69)
+
+I learned that only three selected reads use the replica because those can tolerate slightly older data while it catches up. Auth, billing and permission checks always use the primary because an old answer could allow access that was removed or use an outdated payment status. Replica routing is chosen carefully for each read rather than applied to everything.
