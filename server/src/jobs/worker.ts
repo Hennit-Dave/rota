@@ -44,6 +44,21 @@ export interface JobContext {
 
 export type JobHandler = (ctx: JobContext) => Promise<void>;
 
+/**
+ * What is told to `onTerminalFailure` (Sentry in the worker, ADR 0039) when a job has FAILED FOR GOOD: it asked to stop (`TerminalJobError`) or used its last attempt.
+ * A retryable failure that will run again is not reported. The error is the raw one: whoever receives it must scrub it before it leaves the machine.
+ */
+export interface TerminalFailureInfo {
+  rowId: string;
+  kind: string;
+  originRequestId: string | null;
+  generation: number;
+  attempts: number;
+  /** True when the job itself said "stop" (`TerminalJobError`), false when it used up its attempts. */
+  terminal: boolean;
+  error: unknown;
+}
+
 export type ShardResolver =
   | PrismaClient
   | Shards
@@ -68,6 +83,8 @@ export interface WorkerOptions {
   maxAttempts?: number;
   concurrency?: number;
   autorun?: boolean;
+  /** Told when a job has failed for good (ADR 0039). It must not throw, and anything it throws is ignored. */
+  onTerminalFailure?: (info: TerminalFailureInfo) => void;
 }
 
 /**
@@ -109,7 +126,7 @@ export async function renewClaimLease(
 export function createWorkProcessor(
   shards: ShardResolver,
   handlers: Record<string, JobHandler>,
-  options?: { leaseMs?: number; maxAttempts?: number },
+  options?: { leaseMs?: number; maxAttempts?: number; onTerminalFailure?: (info: TerminalFailureInfo) => void },
 ): Processor {
   const leaseMs = options?.leaseMs ?? WORK_LEASE_MS;
   const maxAttempts = options?.maxAttempts ?? WORK_MAX_ATTEMPTS;
@@ -244,6 +261,14 @@ export function createWorkProcessor(
       } catch (err: any) {
         // Handler failure
         const durationMs = performance.now() - startTime;
+        // Reporting must never change what a job does: whatever it does or throws is swallowed here.
+        const report = (terminal: boolean) => {
+          try {
+            options?.onTerminalFailure?.({ rowId: row.id, kind: row.kind, originRequestId: row.originRequestId ?? null, generation: row.generation, attempts: row.executionAttempts, terminal, error: err });
+          } catch {
+            // ignored on purpose
+          }
+        };
         if (err instanceof TerminalJobError) {
           const reason = `terminal: ${err.reason}`;
           await prisma.$executeRaw`
@@ -259,6 +284,7 @@ export function createWorkProcessor(
           console.error(
             `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${reason}`,
           );
+          report(true);
           return;
         }
         if (row.executionAttempts >= maxAttempts) {
@@ -277,6 +303,7 @@ export function createWorkProcessor(
           console.error(
             `[job:execution] job_id=${job.id} row_id=${row.id} origin_request_id=${row.originRequestId ?? '-'} generation=${row.generation} attempts=${row.executionAttempts} outcome=failed duration_ms=${durationMs.toFixed(2)} reason=${sanitizedErr || 'attempt_budget_exhausted'}`,
           );
+          report(false);
           throw err;
         } else {
           const sanitizedErr = sanitizeError(err);
@@ -384,6 +411,7 @@ export function createWorkWorker(
   const processor = createWorkProcessor(shards, handlers, {
     leaseMs: options?.leaseMs,
     maxAttempts: options?.maxAttempts,
+    onTerminalFailure: options?.onTerminalFailure,
   });
 
   return new Worker(queueName, processor, {

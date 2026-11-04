@@ -3,6 +3,7 @@ import { createRecoveryRouter, type RecoveryRouteDeps } from '../auth/recoveryRo
 import { createAuthRouter, type AuthDeps } from '../auth/routes.js';
 import { createStripeWebhook, STRIPE_WEBHOOK_PATH, type WebhookDeps } from '../billing/webhook.js';
 import type { ReadRouting } from '../db/readRouting.js';
+import type { ErrorReporter } from '../observability/sentry.js';
 import { createLogger, type Logger } from '../http/logger.js';
 import { installPostRoutes, installPreRoutes } from '../http/pipeline.js';
 import { createInvitationsRouter, type InvitationsDeps } from '../invites/routes.js';
@@ -12,6 +13,8 @@ import { createTeamsRouter, type TeamsDeps } from '../teams/routes.js';
 
 export interface AppDeps {
   logger?: Logger;
+  /** When given, unexpected errors are reported to Sentry from the error handler (ADR 0039). Tests leave it out, so nothing is ever sent from a test. */
+  reporter?: ErrorReporter;
   /** When given, its write marker runs before every router (read-your-own-writes, ADR 0037). Must be the same instance the team routes read through. */
   reads?: ReadRouting;
   /** When given, mounts /auth. Left out by tests that only need the bare app. */
@@ -66,6 +69,6 @@ export function createApp(deps: AppDeps = {}) {
     app.use('/devices', createDeviceRouter({ ...deps.devices, logger }));
   }
 
-  installPostRoutes(app, logger);
+  installPostRoutes(app, logger, deps.reporter);
   return app;
 }

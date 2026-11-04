@@ -234,6 +234,14 @@ The server decides who is told, when and whether; a background job sends through
 - Never cached: sessions, token state, permission checks, billing, payment status, credit balances, idempotency records, settings used for quiet hours. A guard test fails if a new writer of cached data is not on its registry.
 - Each request logs `cache` (`hit`, `miss`, `bypass`, `off`, `error`); a `cache_stats` line every 60 s carries the counters and the hit rate for the k6 report.
 
+### 5r. Sentry (ADR 0039)
+
+- **Errors only** (no tracing, profiling, logs, metrics or replay), on the API, the worker and the app, into two EU projects of the `davebuilds` organisation (`rota-server`, `rota-app`). Off without a DSN; `Sentry.init` runs only in the API's and the worker's `main.ts` and the app's root layout, so tests never send.
+- **One redaction list** for both packages: `shared/sentry-scrub.ts`, copied byte for byte into `server/src/observability/` and `app/src/observability/` (`node shared/sync-sentry-scrub.mjs`), with a parity test in each. It also holds the **gate**: one event per error per 5 minutes, 10 a minute, 50 a day per server process, 20 per app session (chosen, not measured).
+- **What is reported:** the API's unexpected errors and unreachable-database errors (from the error handler), a worker job that failed for good (`onTerminalFailure`), process crashes, and in the app render errors, global errors and the TanStack errors that are bugs (`isReportableError`). Tags: `request_id`, `team_id`, `route`, `role`, job fields. User: the ID only.
+- **k6:** `X-Load-Test: k6` is honoured only while `LOAD_TEST_MODE=true`. **Retention** on the Developer plan: a 30-day lookback; the 5,000-error quota is treated as monthly (unconfirmed).
+- **Server stacks** name TypeScript files because the processes run with `--enable-source-maps`. The app's source-map upload waits for the deploy slice (auth token as an EAS secret, never public).
+
 ### 6. Mobile app
 
 Expo SDK 58 (React Native 0.88, React 19.3), TypeScript, Android only, Expo Router (ADR 0009). The decisions, the native-module list and
@@ -285,5 +293,7 @@ app/src/
    The replicas are real (Neon Free offers one per project), so lag already exists: measured below what a 130 ms round trip can resolve, not zero (ADR 0037). The user who wrote reads the primary for 5 s, so they never see it; another user can see a copy a fraction of a second old. In production the replica's lag needs monitoring and a bound beyond which the replica is not used, and the read-your-own-writes marker has to become position-based (item 1).
 3. **The cache and more than one API instance:**
    The team cache is safe across instances (generations live in Valkey), but its 5-second bypass rests on the in-memory marker of item 1, so it needs the same replacement. With real production Valkey, size `maxmemory` for the queue plus the cache and keep the 70% fill guard.
-4. **Queue clustering:**
+4. **Sentry and more than one process:**
+   Each process keeps its own event gate (50 a day), so N API instances could send N times as many; a shared gate, or a lower number per process, would replace it, and a release would be tagged with uploaded source maps (ADR 0039).
+5. **Queue clustering:**
    A single Aiven Valkey node periodic snapshot model means the queue is transient. Postgres remains the single source of truth for all work rows. In high-volume production, Valkey multi-node HA or Sentinel would provide queue persistence across node failures.

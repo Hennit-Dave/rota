@@ -73,3 +73,14 @@ IDs (Checkout session, PaymentIntent, event ID) as soon as each exists.
    body fields.
 6. A thrown error reaches Sentry (test project) with request, user and team tags and no secrets.
 7. The payment runbook, followed against one test-mode payment, reconstructs every step from logs alone.
+
+## Decided when it was built (ADR 0039)
+
+The rules above are unchanged. What the implementation settled:
+
+- **One list, two copies:** `shared/sentry-scrub.ts` is canonical; `server/src/observability/sentryScrub.ts` and `app/src/observability/sentryScrub.ts` are byte-for-byte copies (`node shared/sync-sentry-scrub.mjs`), each with a parity test. Change the shared file, then sync.
+- **Errors only.** Tags go on at capture time from the failing request's own data, never onto a shared scope. User: the ID only. `request` is removed from every event.
+- **The gate** (CHOSEN, NOT MEASURED, Dave 2026-11-04): one event per error per 5 minutes, 10 a minute, 50 a day per server process, 20 per app session.
+- **k6:** `X-Load-Test: k6` is honoured only while `LOAD_TEST_MODE=true`. With the switch off the header is ignored.
+- **Retention:** Sentry's Developer plan keeps a 30-day lookback (sentry.io/pricing, read 2026-11-04). Whether its 5,000-error quota is monthly is unconfirmed. The host's own log retention is recorded in the deploy slice.
+- **Test 6** (a thrown error reaches Sentry with request, user and team tags and no secrets) is covered by `sentry.unit.test.ts` and `errorReporting.unit.test.ts` for what is sent, and by the two real test events for what Sentry shows.

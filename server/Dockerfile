@@ -1,6 +1,6 @@
 # Rota server image (issue #14). One image, two processes:
 #   API    (default)            docker run <image>
-#   worker                      docker run <image> node dist/worker/main.js
+#   worker                      docker run <image> node --enable-source-maps dist/worker/main.js
 # The build context is server/ (docker build -t rota-server server). The image holds no secrets and no .env file: every
 # setting is a runtime environment variable named in .env.example. Database migrations are NOT run from the image: they
 # run from a developer machine through the direct URL on both shards (data.md). (The prisma CLI package is present in the
@@ -37,4 +37,4 @@ EXPOSE 3000
 # Exec form, calling node directly: SIGTERM reaches the process itself, so both programs run their graceful shutdown.
 # No HEALTHCHECK here: the worker runs from this same image and has no HTTP port, so an image-level check would mark it
 # unhealthy. The host's health check for the API service uses GET /health.
-CMD ["node", "dist/api/main.js"]
+CMD ["node", "--enable-source-maps", "dist/api/main.js"]

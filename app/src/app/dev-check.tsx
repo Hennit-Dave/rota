@@ -17,7 +17,9 @@ import { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Rect } from 'react-native-svg';
+import { reportAppError, sendSentryTestEvent, sentryIsOn } from '../observability/sentry';
 import { palette, space, useColors } from '../theme';
+import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 
 /**
@@ -82,12 +84,13 @@ const checks: Array<[string, () => Promise<string>]> = [
   ['expo-constants', async () => `scheme=${String(Constants.expoConfig?.scheme)} name=${Constants.expoConfig?.name}`],
   ['expo-system-ui', async () => `background=${String(await SystemUI.getBackgroundColorAsync())}`],
   ['expo-font', async () => `Manrope_700Bold loaded=${Font.isLoaded('Manrope_700Bold')} DMSans_400Regular loaded=${Font.isLoaded('DMSans_400Regular')}`],
-  ['@sentry/react-native', async () => `captureMessage is ${typeof Sentry.captureMessage}; client=${Sentry.getClient() ? 'set' : 'not initialised (Sentry slice)'}`],
+  ['@sentry/react-native', async () => `captureMessage is ${typeof Sentry.captureMessage}; client=${Sentry.getClient() ? `set, sending to ${Sentry.getClient()?.getDsn()?.host}` : 'not initialised (no EXPO_PUBLIC_SENTRY_DSN)'}`],
 ];
 
 export default function DevCheck() {
   const colors = useColors();
   const [results, setResults] = useState<Result[]>([]);
+  const [sentryTest, setSentryTest] = useState<string | null>(null);
 
   useEffect(() => {
     if (!__DEV__) return;
@@ -124,6 +127,30 @@ export default function DevCheck() {
             react-native-svg rendered
           </Text>
         </View>
+        <Button
+          label="Send Sentry test event"
+          variant="outline"
+          onPress={() => {
+            // Development only. One event with FAKE secrets in it: Sentry should show them as [redacted].
+            setSentryTest('sending…');
+            const requestId = Crypto.randomUUID();
+            void sendSentryTestEvent(requestId)
+              .then((r) => {
+                const line = `event ${r.eventId ?? '(none)'}; request_id ${requestId}; flushed ${String(r.flushed)}; host ${r.host ?? '(no DSN)'}; on ${String(sentryIsOn())}`;
+                console.log('[dev-check] sentry ' + line);
+                setSentryTest(line);
+              })
+              .catch((error) => {
+                reportAppError(error);
+                setSentryTest(error instanceof Error ? error.message : 'failed');
+              });
+          }}
+        />
+        {sentryTest ? (
+          <Text variant="caption" tone="muted">
+            {sentryTest}
+          </Text>
+        ) : null}
         {results.length === 0 ? <Text tone="muted">Running…</Text> : null}
         {results.map((r) => (
           <View key={r.name}>

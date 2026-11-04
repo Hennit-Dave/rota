@@ -18,6 +18,8 @@ import {
   createWorkProcessor,
   createWorkWorker,
   renewClaimLease,
+  TerminalJobError,
+  type TerminalFailureInfo,
 } from './worker.js';
 
 let shards: Shards;
@@ -470,6 +472,57 @@ test('atomic claim and 3-field completion succeeds', async () => {
     assert.ok(fresh.claimToken);
   } finally {
     await cleanupRow(prismaA, row.id);
+  }
+});
+
+// --- SENTRY HOOK (ADR 0039): a job that has failed FOR GOOD is reported; nothing else is ---
+test('onTerminalFailure: a job that says stop and a job on its last attempt are told once each; a retryable failure and a success are not; a hook that throws changes nothing', async () => {
+  const make = (originRequestId: string | null) =>
+    prismaA.workRow.create({
+      data: { kind: 'test-sentry', status: 'pending', generation: 1, executionAttempts: 0, runAt: new Date(Date.now() - 1000), availableAt: new Date(), originRequestId },
+    });
+  const ids = { stop: randomUUID(), last: randomUUID(), retry: randomUUID(), fine: randomUUID(), hookThrows: randomUUID() };
+  const rows = await Promise.all([make(ids.stop), make(ids.last), make(ids.retry), make(ids.fine), make(ids.hookThrows)]);
+  const [stop, last, retry, fine, hookThrows] = rows as [(typeof rows)[number], (typeof rows)[number], (typeof rows)[number], (typeof rows)[number], (typeof rows)[number]];
+  const told: TerminalFailureInfo[] = [];
+  const hook = (info: TerminalFailureInfo) => void told.push(info);
+  const run = (row: typeof stop, handler: () => Promise<void>, opts: { maxAttempts: number; onTerminalFailure?: (i: TerminalFailureInfo) => void }) =>
+    createWorkProcessor(shards, { 'test-sentry': handler }, { leaseMs: 10_000, maxAttempts: opts.maxAttempts, onTerminalFailure: opts.onTerminalFailure ?? hook })(
+      { data: { rowId: row.id, generation: 1, shard: 'A' } } as any,
+    );
+
+  try {
+    // 1. The job itself says "stop": reported, terminal, with the request that made the row.
+    await run(stop, async () => { throw new TerminalJobError('payload_invalid'); }, { maxAttempts: 5 });
+    assert.equal(told.length, 1);
+    assert.deepEqual(
+      { rowId: told[0]!.rowId, kind: told[0]!.kind, originRequestId: told[0]!.originRequestId, terminal: told[0]!.terminal, attempts: told[0]!.attempts, generation: told[0]!.generation },
+      { rowId: stop.id, kind: 'test-sentry', originRequestId: ids.stop, terminal: true, attempts: 1, generation: 1 },
+    );
+    assert.ok(told[0]!.error instanceof TerminalJobError);
+    assert.equal((await prismaA.workRow.findUniqueOrThrow({ where: { id: stop.id } })).status, 'failed');
+
+    // 2. It used its LAST attempt: reported, not terminal-by-choice, and the processor still throws as before.
+    await assert.rejects(run(last, async () => { throw new Error('the database said no'); }, { maxAttempts: 1 }), /the database said no/);
+    assert.equal(told.length, 2);
+    assert.deepEqual([told[1]!.rowId, told[1]!.originRequestId, told[1]!.terminal, told[1]!.attempts], [last.id, ids.last, false, 1]);
+    assert.equal((await prismaA.workRow.findUniqueOrThrow({ where: { id: last.id } })).status, 'failed');
+
+    // 3. A failure that WILL be retried is not reported (the attempt is released and rethrown for backoff).
+    await assert.rejects(run(retry, async () => { throw new Error('try again later'); }, { maxAttempts: 5 }), /try again later/);
+    assert.equal(told.length, 2, 'not told');
+    assert.equal((await prismaA.workRow.findUniqueOrThrow({ where: { id: retry.id } })).status, 'pending');
+
+    // 4. A job that succeeds is not reported.
+    await run(fine, async () => {}, { maxAttempts: 5 });
+    assert.equal(told.length, 2);
+    assert.equal((await prismaA.workRow.findUniqueOrThrow({ where: { id: fine.id } })).status, 'done');
+
+    // 5. A hook that throws changes nothing about what the job does: the row is still marked failed and the processor still returns.
+    await run(hookThrows, async () => { throw new TerminalJobError('x'); }, { maxAttempts: 5, onTerminalFailure: () => { throw new Error('reporting broke'); } });
+    assert.equal((await prismaA.workRow.findUniqueOrThrow({ where: { id: hookThrows.id } })).status, 'failed');
+  } finally {
+    for (const r of rows) await cleanupRow(prismaA, r.id);
   }
 });
 

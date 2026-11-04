@@ -8,6 +8,7 @@ import { createStripeEventHandler } from '../billing/stripeEventJob.js';
 import { createRenewalHandler, ensureRenewals, RENEWAL_KIND, type EnqueueRow } from '../billing/renewal.js';
 import { loadRenewalConfig } from '../billing/renewalConfig.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
+import { createErrorReporter, loadSentryConfig } from '../observability/sentry.js';
 import {
   createProducerConnection,
   createWorkerConnection,
@@ -106,6 +107,18 @@ try {
   console.error(`worker cannot start: ${err.message}`);
   process.exit(1);
 }
+// Sentry (ADR 0039): the worker reports a job that has failed FOR GOOD (a job that said "stop", or used its last attempt) and any crash of the process. Errors only,
+// scrubbed by the shared list, limited by the gate (50 a day for this process). Off without a DSN.
+let sentryConfig: ReturnType<typeof loadSentryConfig>;
+try {
+  sentryConfig = loadSentryConfig();
+} catch (err: any) {
+  console.error(`worker cannot start: ${err.message}`);
+  process.exit(1);
+}
+const reporter = createErrorReporter(sentryConfig, { role: 'worker', logger: createLogger() });
+console.log(`sentry: ${reporter.enabled ? `on (environment ${sentryConfig.environment})` : 'off (no SENTRY_DSN)'}`);
+
 const cacheConnection = createProducerConnection();
 cacheConnection.on('error', () => {});
 void cacheConnection.connect().catch(() => {});
@@ -150,7 +163,16 @@ function attach(worker: Worker) {
   });
 }
 
-const makeWorker = (connection: Redis) => createWorkWorker(shards, handlers, { connection });
+const makeWorker = (connection: Redis) =>
+  createWorkWorker(shards, handlers, {
+    connection,
+    onTerminalFailure: (info) =>
+      void reporter.captureServerError(info.error, {
+        // The request that made the work row is the "request ID" of a job (jobs.md): it ties the Sentry event to the logs of the request that started it.
+        requestId: info.originRequestId ?? undefined,
+        tags: { job_kind: info.kind, row_id: info.rowId, attempts: String(info.attempts), terminal: String(info.terminal) },
+      }),
+  });
 const firstWorker = makeWorker(redis);
 attach(firstWorker);
 
@@ -171,6 +193,7 @@ const reconciler = startReconciler(shards, reconcileQueue, { reconnectSource: re
 
 async function shutdown(signal: NodeJS.Signals) {
   console.log(`worker received ${signal}, closing`);
+  await reporter.flush(2000);
   cache.stop();
   cacheConnection.disconnect();
   await reconciler.stop();

@@ -86,7 +86,7 @@ test('a mutation that says nothing about networkMode runs and fails at once offl
 });
 
 test('services.ts builds the QueryClient from these defaults, and no source file opts back in to pausing', () => {
-  assert.match(readFileSync(join(SRC, 'services.ts'), 'utf8'), /new QueryClient\(\{ defaultOptions: queryClientDefaults \}\)/);
+  assert.match(readFileSync(join(SRC, 'services.ts'), 'utf8'), /new QueryClient\(\{\s*defaultOptions: queryClientDefaults,/);
   const offenders = files(SRC).filter((f) => /networkMode:\s*['"](online|offlineFirst)['"]/.test(readFileSync(f, 'utf8')));
   assert.deepEqual(offenders, []);
 });

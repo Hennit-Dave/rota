@@ -9,6 +9,7 @@ import { createTeamCache } from '../cache/store.js';
 import { closeShards } from '../db/clients.js';
 import { createReadRouting } from '../db/readRouting.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
+import { createErrorReporter, loadSentryConfig } from '../observability/sentry.js';
 import { identityDb } from '../db/identity.js';
 import { createLogger } from '../http/logger.js';
 import { createProducerConnection, recycleIfStale } from '../jobs/connection.js';
@@ -44,6 +45,7 @@ let port: number;
 let mail: { from: string; replyTo: string };
 let stripeConfig: ReturnType<typeof loadStripeConfig>;
 let cacheConfig: ReturnType<typeof loadCacheConfig>;
+let sentryConfig: ReturnType<typeof loadSentryConfig>;
 try {
   port = readPort();
   config = loadAuthConfig();
@@ -53,10 +55,16 @@ try {
   stripeConfig = loadStripeConfig();
   // CACHE_ENABLED and the TTLs (ADR 0038). A bad value stops the API here: a typo must not leave caching quietly on or off for a load test.
   cacheConfig = loadCacheConfig();
+  // SENTRY_DSN, SENTRY_ENVIRONMENT, LOAD_TEST_MODE and the event limits (ADR 0039). No DSN means Sentry is off. A malformed value stops the API here.
+  sentryConfig = loadSentryConfig();
 } catch (err) {
   console.error(`api cannot start: ${sanitizeError(err)}`);
   process.exit(1);
 }
+
+// Sentry (ADR 0039): errors only, scrubbed by the shared list, limited by the gate. Off without a DSN. Started here so a failure while the rest starts is also seen.
+const reporter = createErrorReporter(sentryConfig, { role: 'api', logger });
+console.log(`sentry: ${reporter.enabled ? `on (environment ${sentryConfig.environment})` : 'off (no SENTRY_DSN)'}${sentryConfig.loadTestMode ? '; LOAD_TEST_MODE is on' : ''}`);
 
 // data.md: the API's pools are 5 per shard primary and 5 per shard replica (ADR 0037). Identity lives on shard A. The API refuses to start without the
 // replicas' URLs (SHARD_A_READ_URL, SHARD_B_READ_URL): it never quietly reads from the primary only.
@@ -158,6 +166,7 @@ const billing = {
 
 const app = createApp({
   logger,
+  reporter,
   reads,
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
   recovery,
@@ -197,6 +206,8 @@ async function shutdown(signal: NodeJS.Signals) {
   await recoveryTasks.drain();
   redis.disconnect();
   await closeProducerQueue();
+  // Give Sentry a moment to send what it holds before the process ends.
+  await reporter.flush(2000);
   reads.stop();
   cache.stop();
   cacheRedis.disconnect();

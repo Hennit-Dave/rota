@@ -1,5 +1,7 @@
-import type { ErrorRequestHandler, RequestHandler } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler, Response } from 'express';
+import { CANONICAL_UUID } from '../db/shard.js';
 import { sanitizeError } from '../jobs/redact.js';
+import type { ErrorContext, ErrorReporter } from '../observability/sentry.js';
 import type { Logger } from './logger.js';
 
 /**
@@ -196,7 +198,25 @@ function fromConnectionFailure(err: unknown): ApiError | null {
   return isConnectionFailure(err) ? new ApiError('service_unavailable', { reason: 'database_connection_failed' }) : null;
 }
 
-export function createErrorHandler(logger: Logger): ErrorRequestHandler {
+/**
+ * What Sentry may be told about a failing request (ADR 0039): its ID, the signed-in user's ID, the team ID, and the route TEMPLATE. Nothing from the body, the query
+ * string, the URL or the headers is read, except the one load-test header (which only matters while LOAD_TEST_MODE is on).
+ */
+function sentryContextOf(req: Request, res: Response): ErrorContext {
+  const fromContext = (req as { teamContext?: { team?: { id?: unknown } } }).teamContext?.team?.id;
+  const fromParams = (req as { validated?: { params?: { teamId?: unknown } } }).validated?.params?.teamId ?? (req.params as { teamId?: unknown } | undefined)?.teamId;
+  const team = fromContext ?? fromParams;
+  const base = String(res.locals.routeBase ?? req.baseUrl ?? '');
+  return {
+    requestId: String(res.locals.requestId ?? '') || undefined,
+    userId: typeof res.locals.userId === 'string' ? res.locals.userId : undefined,
+    teamId: typeof team === 'string' && CANONICAL_UUID.test(team) ? team : undefined,
+    route: req.route?.path ? `${base}${String(req.route.path)}` : '(unmatched)',
+    loadTestHeader: req.header('x-load-test'),
+  };
+}
+
+export function createErrorHandler(logger: Logger, reporter?: ErrorReporter): ErrorRequestHandler {
   // Express identifies error middleware by its four parameters, so `_next` must stay.
   return (err, req, res, next) => {
     if (res.headersSent) {
@@ -205,6 +225,11 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
     }
 
     const requestId = String(res.locals.requestId ?? '');
+    // A database that cannot be reached is answered with a polite 503, so it never reaches the branch below, but it is worth knowing about: the gate lets one through
+    // per 5 minutes (ADR 0039). Expected rejections (ApiError, a malformed body, a transaction that could not start) are not reported.
+    if (reporter && !(err instanceof ApiError) && isConnectionFailure(err)) {
+      reporter.captureServerError(err, { ...sentryContextOf(req, res), tags: { reason: 'database_connection_failed' } });
+    }
     let apiError: ApiError | null =
       err instanceof ApiError
         ? err
@@ -213,6 +238,7 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
     if (!apiError) {
       // Unexpected: log a sanitized message for us, tell the caller nothing about it.
       logger.error('unhandled_error', { requestId, reason: sanitizeError(err) });
+      reporter?.captureServerError(err, sentryContextOf(req, res));
       apiError = new ApiError('internal_error');
     } else if (apiError.reason) {
       // Expected-but-noteworthy (e.g. refresh rejected): the true reason stays server-side.
