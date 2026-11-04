@@ -17,6 +17,19 @@ const ALLOWED = [
   'durationMs',
   'errorCode',
   'dbRoute',
+  // The cache (ADR 0038): what happened to this request's cache lookup, and the counters of the stats line.
+  'cache',
+  'windowSeconds',
+  'cacheHits',
+  'cacheMisses',
+  'cacheBypassed',
+  'cacheOff',
+  'cacheErrors',
+  'cacheFillsSkipped',
+  'cacheWritesRejected',
+  'cacheInvalidations',
+  'cacheInvalidationFailures',
+  'cacheHitRate',
   'outcome',
   'reason',
   'rule',
@@ -79,7 +92,7 @@ export const recordRouteBase: RequestHandler = (req, res, next) => {
 /**
  * One line per request (observability.md): request ID, user ID when authenticated, the route TEMPLATE (never
  * the raw URL, which could carry a token), status, duration, error code on failure, and the database route.
- * Handlers set `res.locals.userId` and `res.locals.dbRoute`; the error handler sets `res.locals.errorCode`.
+ * Handlers set `res.locals.userId`, `res.locals.dbRoute` and (for the three cached reads) `res.locals.cache`; the error handler sets `res.locals.errorCode`.
  */
 export function requestLogger(logger: Logger): RequestHandler {
   return (req, res, next) => {
@@ -100,6 +113,7 @@ export function requestLogger(logger: Logger): RequestHandler {
       if (res.locals.userId) fields.userId = String(res.locals.userId);
       if (res.locals.errorCode) fields.errorCode = String(res.locals.errorCode);
       if (res.locals.dbRoute) fields.dbRoute = String(res.locals.dbRoute);
+      if (res.locals.cache) fields.cache = String(res.locals.cache);
       const level: LogLevel = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
       logger[level]('request', fields);
     });

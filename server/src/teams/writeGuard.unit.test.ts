@@ -29,8 +29,8 @@ function routesOf(router: Router): Array<{ method: string; path: string; steps: 
 }
 
 const routers: Array<[string, Router]> = [
-  ['shifts', createShiftsRouter({ shards, reads: undefined as never, tokens })],
-  ['swaps', createSwapsRouter({ shards, tokens, limiter, logger, config })],
+  ['shifts', createShiftsRouter({ shards, reads: undefined as never, cache: undefined as never, tokens })],
+  ['swaps', createSwapsRouter({ shards, cache: undefined as never, tokens, limiter, logger, config })],
   ['invitations', createTeamInvitationsRouter({ shards, tokens, limiter, logger, config, invites: {} as never })],
 ];
 

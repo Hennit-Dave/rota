@@ -5,6 +5,7 @@ import { ApiError } from '../http/errors.js';
 import { can, type Role } from '../teams/permissions.js';
 import { assertNoOverlap, type Tx } from '../shifts/service.js';
 import type { EnqueueRow } from '../billing/renewal.js';
+import type { Invalidator } from '../cache/store.js';
 import { enqueueEvents, queueSwapDecided, queueSwapRequested } from '../push/events.js';
 import { approverMayDecide } from './rules.js';
 
@@ -160,7 +161,7 @@ const invalid = (details: Array<{ path: string; code: string }>) => new ApiError
  */
 export async function createSwap(
   shards: Shards,
-  input: { teamId: string; caller: Caller; idempotencyKey: string; offeredShiftId: string; requestedShiftId: string; maxPending: number; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow },
+  input: { teamId: string; caller: Caller; idempotencyKey: string; offeredShiftId: string; requestedShiftId: string; maxPending: number; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow; cache?: Invalidator },
 ): Promise<{ swap: SwapView; created: boolean }> {
   const { teamId, caller, idempotencyKey, offeredShiftId, requestedShiftId, maxPending } = input;
   const now = input.now ?? new Date();
@@ -256,6 +257,8 @@ export async function createSwap(
       const work = await queueSwapRequested(tx, { teamId, swapId: created.id, actorUserId: caller.userId, counterpartyUserId: counterpartyId, approverIds: await approverIdsOf(tx, teamId) });
       return { row: created, created: true, work };
     }, { maxWait: input.maxWaitMs ?? DEFAULT_MAX_WAIT_MS });
+    // A new request wrote a feed row (a repeat of the same Idempotency-Key wrote nothing). After the commit; it never throws (cache/store.ts).
+    if (made.created) await input.cache?.invalidate(teamId, ['feed']);
     await enqueueEvents(prisma, teamId, made.work, input.enqueue);
     return { swap: await viewOne(shards, made.row, caller), created: made.created };
   } catch (error) {
@@ -300,7 +303,7 @@ export async function cancelSwap(shards: Shards, input: { teamId: string; swapId
  */
 export async function decideSwap(
   shards: Shards,
-  input: { teamId: string; swapId: string; caller: Caller; decision: 'approve' | 'reject'; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow },
+  input: { teamId: string; swapId: string; caller: Caller; decision: 'approve' | 'reject'; now?: Date; maxWaitMs?: number; enqueue?: EnqueueRow; cache?: Invalidator },
 ): Promise<SwapView> {
   const { teamId, swapId, caller, decision } = input;
   const now = input.now ?? new Date();
@@ -370,6 +373,8 @@ export async function decideSwap(
     const work = await queueSwapDecided(tx, { teamId, swapId, moment: 'swap_approved', actorUserId: caller.userId, requesterUserId: swap.requesterUserId, counterpartyUserId: swap.counterpartyUserId });
     return { updated, work };
   }, { maxWait: input.maxWaitMs ?? DEFAULT_MAX_WAIT_MS });
+  // An approval moves two shifts between people (the calendar) and both decisions write a feed row.
+  await input.cache?.invalidate(teamId, decision === 'approve' ? ['cal', 'feed'] : ['feed']);
   await enqueueEvents(prisma, teamId, decided.work, input.enqueue);
   return viewOne(shards, decided.updated, caller);
 }

@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import type { Invalidator } from '../cache/store.js';
 import type { AuthConfig } from '../auth/config.js';
 import { createRequireAuth } from '../auth/middleware.js';
 import type { TokenService } from '../auth/tokens.js';
@@ -31,6 +32,9 @@ export interface InvitesRouteDeps {
   config: AuthConfig;
   invites: InviteDeps;
 }
+
+/** The accept router also needs the cache invalidator: a new member changes the roster (ADR 0038). Required here, so leaving it out is a type error. */
+export type InvitationsDeps = InvitesRouteDeps & { cache: Invalidator };
 
 const noStore: RequestHandler = (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -175,7 +179,7 @@ export function createTeamInvitationsRouter(deps: InvitesRouteDeps): Router {
  * The routes that do not start from a team the caller belongs to (mounted at /invitations): the link's preview, and accepting. The caller holds
  * a token, not (yet) a membership.
  */
-export function createInvitationsRouter(deps: InvitesRouteDeps): Router {
+export function createInvitationsRouter(deps: InvitationsDeps): Router {
   const { shards, tokens, limiter, logger, config } = deps;
   const schemas = createInviteSchemas(config);
   const requireAuth = createRequireAuth({ tokens, db: identityDb(shards) });
@@ -211,7 +215,7 @@ export function createInvitationsRouter(deps: InvitesRouteDeps): Router {
     rateLimit(limiter, logger, (req) => [{ name: 'invite_accept_user', subject: req.auth!.userId, ...config.rateLimits.inviteAcceptUser }]),
     async (req, res) => {
       const { token } = req.validated!.body as { token: string };
-      res.json(await acceptInvitation(shards, { token, userId: req.auth!.userId }));
+      res.json(await acceptInvitation(shards, { token, userId: req.auth!.userId, cache: deps.cache }));
     },
   );
 

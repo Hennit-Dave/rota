@@ -4,6 +4,8 @@ import { createPasswordService } from '../auth/password.js';
 import { createTokenService } from '../auth/tokens.js';
 import { createStripeGateway } from '../billing/gateway.js';
 import { loadStripeConfig } from '../billing/stripeConfig.js';
+import { loadCacheConfig } from '../cache/config.js';
+import { createTeamCache } from '../cache/store.js';
 import { closeShards } from '../db/clients.js';
 import { createReadRouting } from '../db/readRouting.js';
 import { createRuntimeShards } from '../db/runtimeShards.js';
@@ -41,6 +43,7 @@ let secret: Uint8Array;
 let port: number;
 let mail: { from: string; replyTo: string };
 let stripeConfig: ReturnType<typeof loadStripeConfig>;
+let cacheConfig: ReturnType<typeof loadCacheConfig>;
 try {
   port = readPort();
   config = loadAuthConfig();
@@ -48,6 +51,8 @@ try {
   mail = loadSenderConfig();
   // Test keys only: anything but sk_test_ stops the API here (ADR 0027).
   stripeConfig = loadStripeConfig();
+  // CACHE_ENABLED and the TTLs (ADR 0038). A bad value stops the API here: a typo must not leave caching quietly on or off for a load test.
+  cacheConfig = loadCacheConfig();
 } catch (err) {
   console.error(`api cannot start: ${sanitizeError(err)}`);
   process.exit(1);
@@ -79,6 +84,15 @@ redis.on('ready', () => {
 void redis.connect().catch(() => {
   // Already reported through the 'error' event; ioredis keeps retrying in the background.
 });
+
+// The team cache (ADR 0038) has its OWN bounded connection (short timeouts, no offline queue), so a slow cache cannot hold up the rate limiter's connection and the
+// other way round. Every cache problem is reported by the cache itself (`cache_unavailable`, once per outage) and falls back to the database, so the 'error' event
+// needs no handler of its own here.
+const cacheRedis = createProducerConnection();
+cacheRedis.on('error', () => {});
+void cacheRedis.connect().catch(() => {});
+const cache = createTeamCache({ redis: cacheRedis, config: cacheConfig, logger });
+console.log(`cache: ${cacheConfig.enabled ? 'on' : 'OFF (CACHE_ENABLED=false)'}`);
 
 const passwords = createPasswordService();
 await passwords.ready();
@@ -148,7 +162,7 @@ const app = createApp({
   auth: { db: identityDb(shards), tokens, passwords, limiter, config, blocklist },
   recovery,
   // A shift or swap change writes its push event in its own transaction; the event is enqueued here after the commit (ADR 0033). It never throws.
-  teams: { shards, reads, tokens, limiter, config, invites, billing, enqueue: billing.enqueue },
+  teams: { shards, reads, cache, tokens, limiter, config, invites, billing, enqueue: billing.enqueue },
   // Verified, recorded on shard A, then the job is enqueued (it never throws): the request does no business processing (AGENTS.md rules 7 and 9).
   stripeWebhook: {
     shards,
@@ -157,7 +171,7 @@ const app = createApp({
       await enqueueCommittedRow(prisma, row, shard, () => getProducerQueue());
     },
   },
-  invitations: { shards, tokens, limiter, config, invites },
+  invitations: { shards, tokens, limiter, config, invites, cache },
   // A quiet-hours or time-zone change moves the user's waiting pushes in its own transaction; the moved rows are enqueued after it commits (ADR 0032).
   settings: {
     shards,
@@ -184,6 +198,8 @@ async function shutdown(signal: NodeJS.Signals) {
   redis.disconnect();
   await closeProducerQueue();
   reads.stop();
+  cache.stop();
+  cacheRedis.disconnect();
   await closeShards(shards);
   console.log('api closed');
 }
