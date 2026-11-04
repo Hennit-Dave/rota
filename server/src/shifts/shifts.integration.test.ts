@@ -335,3 +335,54 @@ test('get one shift: any member may read it; another team\'s shift, an unknown o
   assert.deepEqual(strip(stranger), strip(unknown));
   assert.equal((await app.get(shiftsUrl(x.teamId, 'nope'), x.ownerH)).status, 400);
 });
+
+// GET /teams/:teamId/shifts/upcoming (ADR 0034): what the phone keeps for offline viewing. The real clock, so the shifts are made relative to it.
+const DAY = 24 * 60 * 60 * 1000;
+const inDays = (d: number, hours = 0) => new Date(Date.now() + d * DAY + hours * 60 * 60 * 1000).toISOString();
+const upcomingUrl = (teamId: string) => `${shiftsUrl(teamId)}/upcoming`;
+
+test('upcoming: the caller\'s OWN shifts that have not ended and start within 42 days, with the team\'s name and time zone and the server\'s own asOf', async () => {
+  const t = await setup({ shard: 'A' });
+  const mk = async (title: string, startsAt: string, endsAt: string, assignedUserId: string | null) =>
+    (await app.post(shiftsUrl(t.teamId), { title, startsAt, endsAt, assignedUserId }, t.managerH)).body.shift.id as string;
+  const later = await mk('Later', inDays(3), inDays(3, 8), t.staff.id);
+  const sooner = await mk('Sooner', inDays(1), inDays(1, 8), t.staff.id);
+  const edge = await mk('Edge of the window', inDays(41), inDays(41, 8), t.staff.id);
+  await mk('Too far', inDays(43), inDays(43, 8), t.staff.id);
+  await mk('Already over', inDays(-2), inDays(-2, 8), t.staff.id);
+  await mk('Someone else', inDays(2), inDays(2, 8), t.staff2.id);
+  await mk('Open shift', inDays(2, 1), inDays(2, 9), null);
+
+  const before = Date.now();
+  const res = await app.get(upcomingUrl(t.teamId), t.staffH);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(res.body.shifts.map((s: { id: string }) => s.id), [sooner, later, edge], 'own shifts only, soonest first, nothing ended, nothing beyond 42 days');
+  const asOf = Date.parse(res.body.asOf);
+  assert.ok(asOf >= before && asOf <= Date.now(), 'asOf is the server clock at the time of the request');
+  const team = await db(t.teamId).team.findUniqueOrThrow({ where: { id: t.teamId } });
+  assert.deepEqual(res.body.team, { name: team.name, timeZone: team.timeZone });
+  assert.deepEqual(Object.keys(res.body).sort(), ['asOf', 'shifts', 'team'], 'nothing else is handed over');
+});
+
+test('upcoming: a Manager and an Owner also get only THEIR OWN shifts, never the team\'s', async () => {
+  const t = await setup();
+  await app.post(shiftsUrl(t.teamId), { title: 'Staff shift', startsAt: inDays(1), endsAt: inDays(1, 8), assignedUserId: t.staff.id }, t.managerH);
+  const mine = await app.post(shiftsUrl(t.teamId), { title: 'Manager shift', startsAt: inDays(2), endsAt: inDays(2, 8), assignedUserId: t.manager.id }, t.managerH);
+  const asManager = await app.get(upcomingUrl(t.teamId), t.managerH);
+  assert.deepEqual(asManager.body.shifts.map((s: { id: string }) => s.id), [mine.body.shift.id]);
+  const asOwner = await app.get(upcomingUrl(t.teamId), t.ownerH);
+  assert.deepEqual(asOwner.body.shifts, [], 'the Owner has none of their own');
+});
+
+test('upcoming: another team is 404 (and never its shifts), no token is 401, and a query that names a person or a window is 400', async () => {
+  const t = await setup();
+  const other = await setup();
+  await app.post(shiftsUrl(t.teamId), { title: 'Mine', startsAt: inDays(1), endsAt: inDays(1, 8), assignedUserId: t.staff.id }, t.managerH);
+  assert.equal((await app.get(upcomingUrl(other.teamId), t.staffH)).status, 404, 'not a member: the same answer as a team that does not exist');
+  assert.equal((await app.get(upcomingUrl(t.teamId))).status, 401);
+  for (const q of [`?userId=${t.staff2.id}`, `?from=${inDays(0)}`, '?mine=false']) {
+    assert.equal((await app.get(upcomingUrl(t.teamId) + q, t.staffH)).status, 400, q);
+  }
+  assert.equal((await app.get(`${shiftsUrl(t.teamId)}/not-a-uuid`, t.staffH)).status, 400, '/:shiftId still wants a UUID');
+});

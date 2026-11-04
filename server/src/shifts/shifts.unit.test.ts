@@ -60,3 +60,8 @@ test('the calendar query: from before to, at most the cap, mine defaults to fals
   assert.equal(q({ to: '2031-04-15T00:00:00.000Z' }).success, true, '42 days');
   assert.equal(q({ to: '2031-04-15T00:00:00.001Z' }).success, false, '42 days and a millisecond');
 });
+
+test('the upcoming query takes nothing: the window is the server\'s and the person is the signed-in one', () => {
+  assert.equal(schemas.upcoming.safeParse({}).success, true);
+  for (const extra of [{ userId: '1' }, { from: '2031-03-04T09:00:00Z' }, { mine: 'false' }]) assert.equal(schemas.upcoming.safeParse(extra).success, false);
+});

@@ -10,7 +10,7 @@ import { createRequireWritable } from '../teams/writeGuard.js';
 import type { EnqueueRow } from '../billing/renewal.js';
 import { createShiftSchemas } from './schemas.js';
 import { loadShiftsConfig, type ShiftsConfig } from './config.js';
-import { createShift, deleteShift, getShift, listShifts, updateShift, type NewShift, type ShiftPatch } from './service.js';
+import { createShift, deleteShift, getShift, listShifts, listUpcomingShifts, updateShift, type NewShift, type ShiftPatch } from './service.js';
 
 export interface ShiftsRouteDeps {
   shards: Shards;
@@ -18,6 +18,8 @@ export interface ShiftsRouteDeps {
   config?: ShiftsConfig;
   /** Puts a push event onto the queue after the shift change committed (ADR 0033). It never throws. */
   enqueue?: EnqueueRow;
+  /** The clock `GET /upcoming` reads (its `asOf` and the start of its window). Tests set it; the default is the real time. */
+  now?: () => Date;
 }
 
 // Shift data is the team's schedule: never cacheable between the server and the app.
@@ -48,6 +50,16 @@ export function createShiftsRouter(deps: ShiftsRouteDeps): Router {
     const { from, to, mine } = req.validated!.query as { from: Date; to: Date; mine: boolean };
     const shifts = await listShifts(shards, { teamId, from, to, assignedUserId: mine ? req.auth!.userId : undefined });
     res.json({ shifts });
+  });
+
+  // GET /teams/:teamId/shifts/upcoming: the caller's OWN shifts that have not ended, for the phone to keep for offline viewing (ADR 0034). Registered before
+  // `/:shiftId`, so "upcoming" is never read as a shift ID. Everyone in the team may ask; whatever the role, it is only their own shifts.
+  router.get('/upcoming', validateRequest({ params: schemas.teamParams, query: schemas.upcoming }), requireAuth, requireTeamRole('shifts.view'), async (req, res) => {
+    const { teamId } = req.validated!.params as { teamId: string };
+    const { team } = req.teamContext!;
+    const asOf = (deps.now ?? (() => new Date()))();
+    const shifts = await listUpcomingShifts(shards, { teamId, userId: req.auth!.userId, now: asOf, days: config.maxRangeDays });
+    res.json({ asOf: asOf.toISOString(), team: { name: team.name, timeZone: team.timeZone }, shifts });
   });
 
   // GET /teams/:teamId/shifts/:shiftId (the shift screen, and later a tapped notification, open one shift directly)
