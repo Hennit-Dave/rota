@@ -94,3 +94,14 @@ test('answers that cannot be read throw invalid_response: a missing shift, a bad
   const h = makeHarness({ handler: () => json(200, { shifts: [shiftBody, { id: 'x' }] }) });
   await assert.rejects(createShiftApi(h.client).list(TEAM, { from: 'a', to: 'b', mine: false }), (e: unknown) => e instanceof ApiError && e.code === 'invalid_response');
 });
+
+test('upcoming: GET with the team in the path and no query at all; only the offline fields come back', async () => {
+  const body = { asOf: '2031-03-04T12:00:00.000Z', team: { name: 'The Olive Room', timeZone: 'Europe/London' }, shifts: [shiftBody] };
+  const h = makeHarness({ handler: () => json(200, body) });
+  const upcoming = await createShiftApi(h.client).upcoming(TEAM);
+  assert.equal(h.calls[0]?.method, 'GET');
+  assert.equal(h.calls[0]?.path, `/teams/${TEAM}/shifts/upcoming`);
+  assert.equal(h.calls[0]?.search, '', 'the window and the person are the server\'s');
+  assert.deepEqual(Object.keys(upcoming.shifts[0] ?? {}).sort(), ['area', 'endsAt', 'id', 'startsAt', 'title']);
+  assert.equal(upcoming.asOf, '2031-03-04T12:00:00.000Z');
+});

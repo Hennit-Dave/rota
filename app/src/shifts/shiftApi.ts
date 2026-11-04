@@ -1,4 +1,5 @@
 import type { createApiClient } from '../api/client';
+import { parseUpcoming, type Upcoming } from '../offline/upcoming';
 import { parseShiftResponse, parseShiftsList, type Shift } from './shiftResponses';
 
 type Client = Pick<ReturnType<typeof createApiClient>, 'get' | 'post' | 'request'>;
@@ -22,6 +23,10 @@ export function createShiftApi(client: Client) {
     async list(teamId: string, range: { from: string; to: string; mine: boolean }, signal?: AbortSignal): Promise<Shift[]> {
       const query = `from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}&mine=${range.mine ? 'true' : 'false'}`;
       return parseShiftsList(await client.get<unknown>(`${base(teamId)}?${query}`, { signal }));
+    },
+    /** GET /teams/:teamId/shifts/upcoming: the caller's OWN shifts that have not ended, with the team's name and time zone and the server's clock (`asOf`). No query: the window and the person are the server's. */
+    async upcoming(teamId: string, signal?: AbortSignal): Promise<Upcoming> {
+      return parseUpcoming(await client.get<unknown>(`${base(teamId)}/upcoming`, { signal }));
     },
     async get(teamId: string, shiftId: string, signal?: AbortSignal): Promise<Shift> {
       return parseShiftResponse(await client.get<unknown>(`${base(teamId)}/${encodeURIComponent(shiftId)}`, { signal }));

@@ -49,6 +49,9 @@ export function createShiftSchemas(config: ShiftsConfig) {
       }
     });
 
+  /** No query at all: the window is the server's (now to the range cap), the person is the signed-in one. Strict, so a stray `userId=` is a 400, not ignored. */
+  const upcoming = z.strictObject({});
+
   function checkTimes(v: { startsAt: Date; endsAt: Date; breakMinutes?: number | null }, ctx: z.RefinementCtx) {
     // If either instant failed to parse, that field already has its own error; there is nothing to compare.
     if (!(v.startsAt instanceof Date) || !(v.endsAt instanceof Date)) return;
@@ -90,7 +93,7 @@ export function createShiftSchemas(config: ShiftsConfig) {
       if (v.startsAt && v.endsAt) checkTimes({ startsAt: v.startsAt, endsAt: v.endsAt, breakMinutes: v.breakMinutes }, ctx);
     });
 
-  return { teamParams, shiftParams, list, create, update, checkTimes };
+  return { teamParams, shiftParams, list, upcoming, create, update, checkTimes };
 }
 
 export type ShiftSchemas = ReturnType<typeof createShiftSchemas>;

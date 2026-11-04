@@ -101,6 +101,15 @@ export async function listShifts(
   return rows.map((r) => view(r, names));
 }
 
+/**
+ * The caller's own shifts that have not ended and start before `now + days` (the calendar's range cap), soonest first (ADR 0034). The person is always the
+ * signed-in one, whatever their role: this is what the phone keeps for offline viewing, not the team's schedule.
+ */
+export function listUpcomingShifts(shards: Shards, input: { teamId: string; userId: string; now: Date; days: number }): Promise<ShiftView[]> {
+  const to = new Date(input.now.getTime() + input.days * 24 * 60 * 60 * 1000);
+  return listShifts(shards, { teamId: input.teamId, from: input.now, to, assignedUserId: input.userId });
+}
+
 /** One shift, scoped by team: a shift of another team is "not found", the same answer as a shift that does not exist. */
 export async function getShift(shards: Shards, input: { teamId: string; shiftId: string }): Promise<ShiftView> {
   const row = await getShard(shards, input.teamId).primary.shift.findFirst({ where: { id: input.shiftId, teamId: input.teamId } });

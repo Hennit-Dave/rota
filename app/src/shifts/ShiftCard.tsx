@@ -6,11 +6,13 @@ import type { Shift } from './shiftResponses';
 import { formatRange } from './shiftTime';
 
 interface Props {
-  shift: Shift;
+  /** Only what the card draws, so the saved offline copy (which keeps no assignee, note or break) can use it too. */
+  shift: Pick<Shift, 'title' | 'area' | 'startsAt' | 'endsAt'> & { assignee?: Shift['assignee'] };
   timeZone: string;
   /** Owners and Managers see whose shift it is; Staff only ever see their own, so the line would say nothing. */
   showAssignee: boolean;
-  onPress: () => void;
+  /** Without it the card is plain text, not a button: the saved offline view opens nothing. */
+  onPress?: () => void;
   testID?: string;
 }
 
@@ -23,7 +25,8 @@ export function ShiftCard({ shift, timeZone, showAssignee, onPress, testID }: Pr
   return (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
+      accessibilityRole={onPress ? 'button' : 'text'}
+      disabled={!onPress}
       accessibilityLabel={[range, where, who, scheduleCopy.scheduled].filter(Boolean).join('. ')}
       onPress={onPress}
       style={{ backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, borderRadius: radius[20], padding: space[16], gap: space[8] }}

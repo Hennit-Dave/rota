@@ -5,7 +5,8 @@ import { parseMe } from './authResponses';
 
 /**
  * The signed-in user (GET /auth/me). Seeded at sign-in or restore; refetched when the app returns to the foreground by the focus
- * manager, not on every screen visit (docs/STATE.md).
+ * manager, not on every screen visit (docs/STATE.md). Offline it fails at once like every query (`api/queryDefaults.ts`), so an offline start reaches the
+ * schedule's offline state instead of waiting for ever.
  */
 export function useMe() {
   return useQuery({
