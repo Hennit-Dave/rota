@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 // Everything starting EXPO_PUBLIC_ is bundled into the app and readable by anyone who downloads it
 // (AGENTS.md rule 5). Each name allowed here has a row in docs/SECURITY.md saying why it is safe.
-const ALLOWED = new Set(['EXPO_PUBLIC_API_URL']);
+const ALLOWED = new Set(['EXPO_PUBLIC_API_URL', 'EXPO_PUBLIC_SENTRY_DSN', 'EXPO_PUBLIC_SENTRY_ENVIRONMENT']);
 
 const appRoot = path.resolve(__dirname, '..');
 

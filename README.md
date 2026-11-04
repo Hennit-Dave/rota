@@ -58,6 +58,11 @@ the cache, which is how the k6 "before" run is made with the same build. Each re
 and a `cache_stats` line every 60 seconds gives the counters and the hit rate. A cache failure is logged once and the request is answered from the database. Billing, payment status,
 sessions, permissions and idempotency records are never cached; `server/src/cache/writeSites.unit.test.ts` fails if a new writer of cached data forgets to replace the cache generation.
 
+**Sentry** (ADR 0039): errors only, on the API, the worker and the app, into two EU Sentry projects. `SENTRY_DSN` (the root `.env`, and the deployed API and worker) and `EXPO_PUBLIC_SENTRY_DSN` (`app/.env`, because Expo
+only reads the app's own `.env`) switch it on; with neither, nothing is sent. Both packages strip secrets, emails, card and payment data and `Authorization` headers with **one shared list** (`shared/sentry-scrub.ts`, copied into each package by
+`node shared/sync-sentry-scrub.mjs`; a test fails if a copy differs) and limit what leaves (one event per error per 5 minutes, 50 a day per server process, 20 per app session). `npm run sentry:test-event` (from `server/`) sends one test event; the app's is the "Send Sentry test event" button on the development check screen (`rota:///dev-check`, development builds only). Every event carries the placeholder address `0.0.0.0`, so Sentry cannot infer a user's city and country from the connection's IP (ADR 0039). `X-Load-Test: k6` is honoured only while `LOAD_TEST_MODE=true`, set for the k6 run and at no other time.
+The server runs with `node --enable-source-maps` so stack traces name TypeScript files.
+
 ### Container image (issue #14, ADR 0036)
 
 One image runs both programs. The build context is `server/`:
@@ -65,7 +70,7 @@ One image runs both programs. The build context is `server/`:
 ```
 docker build -t rota-server server
 docker run --rm -p 3000:3000 --env-file .env rota-server                  # the API (default)
-docker run --rm --env-file .env rota-server node dist/worker/main.js      # the worker
+docker run --rm --env-file .env rota-server node --enable-source-maps dist/worker/main.js   # the worker
 curl localhost:3000/health                                                # {"ok":true}
 ```
 

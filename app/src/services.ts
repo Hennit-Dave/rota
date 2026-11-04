@@ -1,10 +1,11 @@
 import NetInfo from '@react-native-community/netinfo';
-import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { AppState } from 'react-native';
 import { createApiClient } from './api/client';
 import { readApiBaseUrl } from './api/config';
 import { type Logger } from './api/errors';
 import { queryClientDefaults } from './api/queryDefaults';
+import { reportQueryError, setSentryTeam, setSentryUser } from './observability/sentry';
 import { createAuthActions } from './auth/authActions';
 import type { AuthUser } from './auth/authResponses';
 import { createRestoreSession } from './auth/restore';
@@ -40,7 +41,20 @@ const logger: Logger = {
 
 export const epoch = new AccountEpoch();
 
-export const queryClient = new QueryClient({ defaultOptions: queryClientDefaults });
+export const queryClient = new QueryClient({
+  defaultOptions: queryClientDefaults,
+  // An unexpected failure (a bug, a server error) goes to Sentry with the failing response's request ID; an ordinary one (offline, a refused request, a session that
+  // ended) does not (observability/reportable.ts, ADR 0039).
+  queryCache: new QueryCache({ onError: reportQueryError }),
+  mutationCache: new MutationCache({ onError: reportQueryError }),
+});
+
+// Sentry's team tag follows the team that is open, and its user is cleared whenever nobody is signed in. Every sign-out path resets this store, so this covers a manual
+// sign-out, a session the server ended, and a failed restore alike; the user is set in `onSignedIn` below.
+useSessionStore.subscribe((state) => {
+  setSentryTeam(state.selectedTeamId);
+  if (state.status === 'signedOut') setSentryUser(null);
+});
 
 // The saved copy must outlive the usual 5 minutes in memory, or a copy put back from the device would be dropped before anyone looked at it (and the next save
 // would then forget it): its gcTime is the maximum age (docs/STATE.md).
@@ -178,6 +192,7 @@ export const meQueryKey = ['me'] as const;
 /** A session now exists (sign-in, sign-up, or a restore): seed the user the server returned and open the signed-in side. */
 function onSignedIn(user: AuthUser | null) {
   if (user) {
+    setSentryUser(user.id); // the ID only, never an email or a name
     queryClient.setQueryData(meQueryKey, user);
     void prefetchSettings(user.id);
     void offlineSaving.begin(user.id);

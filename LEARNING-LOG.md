@@ -253,3 +253,7 @@ I learned that only three selected reads use the replica because those can toler
 ## 2026-11-04 — Caching (PR #70)
 
 I learned that filling the cache means saving a database result for later requests to reuse. The fill reads from the primary because a replica may still have old data, even after a change has been saved. Reading from the primary avoids putting that replica's outdated result back into the cache.
+
+## 2026-11-04 — Sentry (PR #72)
+
+I learned that the request ID should be attached when an error is captured, so it stays linked to the request that caused it. If two requests fail at the same time and overwrite an ID on a shared scope, an error could be labelled with the other request's ID. Keeping that information with each error makes the logs reliable to follow.

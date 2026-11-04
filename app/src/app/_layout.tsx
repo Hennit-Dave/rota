@@ -1,6 +1,8 @@
+// Sentry starts first, before anything else runs (ADR 0039). It is off without EXPO_PUBLIC_SENTRY_DSN.
+import '../observability/init';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -10,7 +12,12 @@ import { useThemeSetting } from '../settings/useSettings';
 import { useSessionStore } from '../state/sessionStore';
 import { fontFiles, ThemePreferenceProvider, useColors, useIsDark } from '../theme';
 import { FocusSinkProvider } from '../ui/FocusSink';
+import { Button } from '../ui/Button';
 import { LaunchGate } from '../ui/LaunchGate';
+import { Screen } from '../ui/Screen';
+import { Text } from '../ui/Text';
+import { requestIdOf } from '../observability/reportable';
+import { reportAppError } from '../observability/sentry';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -86,6 +93,25 @@ function RootContent() {
         </Stack>
       </FocusSinkProvider>
     </LaunchGate>
+  );
+}
+
+/**
+ * Expo Router shows this when a screen throws while rendering. It replaces the whole layout, so it needs nothing the layout provides (colours and text work without a
+ * provider; it brings its own safe-area provider). The error is reported to Sentry (ADR 0039); the screen promises nothing about that, because Sentry may be off.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  useEffect(() => {
+    reportAppError(error, { requestId: requestIdOf(error) });
+  }, [error]);
+  return (
+    <SafeAreaProvider>
+      <Screen>
+        <Text variant="title">Something went wrong</Text>
+        <Text tone="muted">Try again. If it keeps happening, close the app and open it again.</Text>
+        <Button label="Try again" onPress={() => void retry()} />
+      </Screen>
+    </SafeAreaProvider>
   );
 }
 
