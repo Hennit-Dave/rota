@@ -159,6 +159,10 @@ queue-loss recovery depends on already exists (ADR 0004); only its end-to-end pr
 ## Deployment gate — before read-your-own-writes is marked done, and before submission
 
 Feature work may continue locally while this is open. Nothing is described as deployed until it passes:
+- [ ] A real Stripe webhook event is received by the deployed API, its signature verified against the
+      raw body, durably recorded on shard A (deduplicated by event ID), and processed by the deployed
+      worker (ADR 0040 — also the proof that the webhook endpoint's chosen API version, `2026-10-28.endive`,
+      actually matches what the SDK's default-pinned version expects)
 - [ ] Provider approved by Dave and recorded in an ADR
 - [ ] Provider confirmed free; spending blocked, not just alerted
 - [ ] API and worker running on the approved provider
