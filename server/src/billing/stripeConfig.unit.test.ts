@@ -9,8 +9,13 @@ test('a test key and a whsec_ secret load, with the 10 second default timeout', 
   assert.equal(loadStripeConfig({ ...good, STRIPE_TIMEOUT_MS: '2500' }).timeoutMs, 2500);
 });
 
-test('LIVE MODE IS REFUSED: any key that is not sk_test_ stops the API, and the message never contains the key', () => {
-  for (const live of ['sk_live_SECRETVALUE', 'rk_live_SECRETVALUE', 'rk_test_SECRETVALUE', 'pk_test_SECRETVALUE', 'SECRETVALUE', 'SK_TEST_SECRETVALUE']) {
+test('BOTH test-mode prefixes are accepted: a full secret key (sk_test_) and a restricted key (rk_test_, issue: deploy-only restricted key)', () => {
+  assert.equal(loadStripeConfig({ ...good, STRIPE_SECRET_KEY: 'sk_test_abc123' }).secretKey, 'sk_test_abc123');
+  assert.equal(loadStripeConfig({ ...good, STRIPE_SECRET_KEY: 'rk_test_abc123' }).secretKey, 'rk_test_abc123');
+});
+
+test('LIVE MODE IS REFUSED: any key that is not sk_test_ or rk_test_ stops the API, and the message never contains the key', () => {
+  for (const live of ['sk_live_SECRETVALUE', 'rk_live_SECRETVALUE', 'pk_test_SECRETVALUE', 'SECRETVALUE', 'SK_TEST_SECRETVALUE']) {
     assert.throws(
       () => loadStripeConfig({ ...good, STRIPE_SECRET_KEY: live }),
       (err: Error) => /must be a Stripe TEST key/.test(err.message) && !err.message.includes('SECRETVALUE'),

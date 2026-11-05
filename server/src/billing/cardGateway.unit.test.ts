@@ -152,7 +152,9 @@ test('the WORKER gateway holds no webhook secret: it can read from Stripe but ve
 test('loadStripeApiConfig (the worker): a test key only, no value in any message, no webhook secret needed', () => {
   assert.deepEqual(loadStripeApiConfig({ STRIPE_SECRET_KEY: 'sk_test_abc' }), { secretKey: 'sk_test_abc', timeoutMs: 10_000 });
   assert.equal(loadStripeApiConfig({ STRIPE_SECRET_KEY: 'sk_test_abc', STRIPE_TIMEOUT_MS: '2500' }).timeoutMs, 2500);
-  for (const env of [{}, { STRIPE_SECRET_KEY: '' }, { STRIPE_SECRET_KEY: 'sk_live_SECRETVALUE' }, { STRIPE_SECRET_KEY: 'rk_test_SECRETVALUE' }, { STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_TIMEOUT_MS: '0' }]) {
+  // A restricted key (rk_test_) is accepted too (issue: deploy-only restricted key): the worker holds the same key as the API.
+  assert.equal(loadStripeApiConfig({ STRIPE_SECRET_KEY: 'rk_test_abc' }).secretKey, 'rk_test_abc');
+  for (const env of [{}, { STRIPE_SECRET_KEY: '' }, { STRIPE_SECRET_KEY: 'sk_live_SECRETVALUE' }, { STRIPE_SECRET_KEY: 'rk_live_SECRETVALUE' }, { STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_TIMEOUT_MS: '0' }]) {
     assert.throws(() => loadStripeApiConfig(env), (e: Error) => !/SECRETVALUE/.test(e.message));
   }
 });
