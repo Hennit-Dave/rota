@@ -20,14 +20,14 @@ import {
 } from './redact.js';
 import { createWorkProcessor, createWorkWorker, resolvePrismaClient } from './worker.js';
 
-test('verifyNoEviction: verifies noeviction policy and rejects other policies', async () => {
-  // Test 1: valid noeviction via INFO memory
+test('verifyNoEviction: reads the policy from INFO memory only (the deploy ACL denies CONFIG entirely), and rejects anything but noeviction', async () => {
+  // Valid noeviction via INFO memory.
   const mockValidRedis: any = {
     info: async () => 'some_info\r\nmaxmemory_policy:noeviction\r\nother_info',
   };
   await assert.doesNotReject(() => verifyNoEviction(mockValidRedis));
 
-  // Test 2: invalid policy via INFO memory
+  // A different policy throws.
   const mockInvalidRedis: any = {
     info: async () => 'some_info\r\nmaxmemory_policy:allkeys-lru\r\nother_info',
   };
@@ -36,22 +36,12 @@ test('verifyNoEviction: verifies noeviction policy and rejects other policies', 
     /Expected 'noeviction'\. Startup refused\./,
   );
 
-  // Test 3: fallback to CONFIG GET when INFO lacks maxmemory_policy
-  const mockConfigFallback: any = {
+  // INFO memory without the field at all (unexpected shape) also throws: no CONFIG GET fallback is attempted.
+  const mockMissingField: any = {
     info: async () => 'no_policy_here',
-    config: async () => ['maxmemory-policy', 'noeviction'],
-  };
-  await assert.doesNotReject(() => verifyNoEviction(mockConfigFallback));
-
-  // Test 4: unverified policy throws
-  const mockUnverified: any = {
-    info: async () => 'empty',
-    config: async () => {
-      throw new Error('CONFIG GET disabled');
-    },
   };
   await assert.rejects(
-    () => verifyNoEviction(mockUnverified),
+    () => verifyNoEviction(mockMissingField),
     /Expected 'noeviction'\. Startup refused\./,
   );
 });
