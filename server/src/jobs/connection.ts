@@ -96,36 +96,15 @@ export function createWorkerConnection(url?: string, overrides?: RedisOptions): 
 }
 
 /**
- * Read-only verification of Valkey maxmemory-policy (jobs.md, ADR 0003).
- * Reads INFO memory, with fallback to CONFIG GET maxmemory-policy.
- * Refuses startup if the policy cannot be confirmed as 'noeviction'.
- * Never changes the policy (never runs CONFIG SET).
+ * Read-only verification of Valkey maxmemory-policy (jobs.md, ADR 0003), from INFO memory only: the
+ * deploy credential's ACL denies CONFIG entirely (issue: deploy-only Valkey ACL user), and INFO memory
+ * already reports maxmemory_policy, so CONFIG GET is never needed. Refuses startup if the policy cannot
+ * be confirmed as 'noeviction'. Never changes the policy (never runs CONFIG SET; never ran it before either).
  */
 export async function verifyNoEviction(redis: Redis): Promise<void> {
-  let policy: string | null = null;
-
-  try {
-    const memoryInfo = await redis.info('memory');
-    const match = memoryInfo.match(/^maxmemory_policy:([^\r\n]+)/m);
-    if (match && match[1]) {
-      policy = match[1].trim();
-    }
-  } catch {
-    // If INFO memory fails, try CONFIG GET below
-  }
-
-  if (!policy) {
-    try {
-      const configRes = await redis.config('GET', 'maxmemory-policy');
-      if (Array.isArray(configRes) && configRes.length >= 2) {
-        policy = configRes[1];
-      } else if (configRes && typeof configRes === 'object') {
-        policy = (configRes as Record<string, string>)['maxmemory-policy'] ?? null;
-      }
-    } catch {
-      // Permission denied or command restricted
-    }
-  }
+  const memoryInfo = await redis.info('memory');
+  const match = memoryInfo.match(/^maxmemory_policy:([^\r\n]+)/m);
+  const policy = match?.[1]?.trim() ?? null;
 
   if (policy !== 'noeviction') {
     throw new Error(
