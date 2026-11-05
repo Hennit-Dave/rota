@@ -80,7 +80,7 @@ export async function scheduleRenewal(tx: Tx, input: { teamId: string; periodId:
 
 /**
  * Makes sure every subscription has a renewal for its current period. A subscription that activated before this slice has none; the worker runs this when it starts. It
- * is idempotent and only ever ADDS a renewal where none exists.
+ * is idempotent and only ever ADDS a renewal where none exists. Skips a subscription whose team no longer exists (issue #71): a renewal for a gone team has no meaning.
  */
 export async function ensureRenewals(shards: Shards, enqueue?: EnqueueRow, only?: { teamId: string }): Promise<number> {
   let made = 0;
@@ -90,7 +90,9 @@ export async function ensureRenewals(shards: Shards, enqueue?: EnqueueRow, only?
     const onlyTeam = only?.teamId ?? null;
     const missing = await db.$queryRaw<Array<{ team_id: string; period_id: string; ends_on: string }>>`
       SELECT s.team_id::text AS team_id, s.current_period_id::text AS period_id, p.ends_on::text AS ends_on
-      FROM subscriptions s JOIN billing_periods p ON p.id = s.current_period_id
+      FROM subscriptions s
+      JOIN billing_periods p ON p.id = s.current_period_id
+      JOIN teams t ON t.id = s.team_id
       WHERE (${onlyTeam}::uuid IS NULL OR s.team_id = ${onlyTeam}::uuid)
         AND NOT EXISTS (SELECT 1 FROM renewals r WHERE r.team_id = s.team_id AND r.period_id = s.current_period_id)`;
     for (const m of missing) {

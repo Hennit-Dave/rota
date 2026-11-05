@@ -40,6 +40,7 @@
     "db:feed-proof": "tsx --env-file-if-exists=../.env src/db/feed-proof.ts",
     "db:demo-swap": "tsx --env-file-if-exists=../.env src/db/demo-swap.ts",
     "db:check-pooled": "tsx --env-file-if-exists=../.env src/db/check-pooled.ts",
+    "db:cleanup-orphan-subscriptions": "tsx --env-file-if-exists=../.env src/db/cleanup-orphan-subscriptions.ts",
     "jobs:check-valkey": "tsx --env-file-if-exists=../.env src/jobs/scripts/check-valkey.ts",
     "jobs:prove:boxes-4-5": "tsx --env-file-if-exists=../.env src/jobs/scripts/prove-boxes-4-5.ts",
     "jobs:prove:crash": "tsx --env-file-if-exists=../.env src/jobs/scripts/prove-crash-recovery.ts",

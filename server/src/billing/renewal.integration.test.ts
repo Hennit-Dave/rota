@@ -805,6 +805,22 @@ test('every subscription gets a renewal: ensureRenewals adds the missing ones an
   void shard;
 });
 
+test('ensureRenewals skips a subscription whose team no longer exists (issue #71)', async () => {
+  const owner = await app.seedUser('Deleted Team Owner');
+  const { teamId } = await app.seedTeam({ ownerId: owner.id });
+  await seedActiveSubscription(db(teamId), teamId, { plan: 'starter', seats: 3 }, { requestedByUserId: owner.id }); // no renewal (a pre-P6b subscription)
+  assert.equal((await renewalsOf(teamId)).length, 0);
+  // Simulates exactly what issue #71 found: the team row is gone (e.g. test cleanup) but the subscription and ledger survive it.
+  await db(teamId).team.deleteMany({ where: { id: teamId } });
+
+  const made = await ensureRenewals(app.raw, undefined, { teamId });
+  assert.equal(made, 0, 'a subscription with no team gets no renewal');
+  assert.equal((await renewalsOf(teamId)).length, 0);
+
+  // Clean up what the deleted team left behind, so this test does not itself become one of the orphans it is testing for.
+  await db(teamId).$executeRaw`DELETE FROM subscriptions WHERE team_id = ${teamId}::uuid`;
+});
+
 test('ACTIVATION schedules the first renewal in the same transaction: one renewal for the first period, due at its end', async () => {
   const owner = await app.seedUser('Olive Owner');
   const { teamId } = await app.seedTeam({ ownerId: owner.id, name: 'The Olive Room' });
