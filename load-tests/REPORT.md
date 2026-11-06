@@ -4,6 +4,17 @@ Task A requirement: "Load test: 200 virtual users loading the activity feed at o
 times before and after caching." Plan agreed 2026-11-06 (this file is the write-up the load-test
 skill calls for once the runs are done).
 
+## Summary
+
+| | Run 1 (no cache) | Run 2 (cache) | Change |
+|---|---|---|---|
+| Median response time | 2.19s | 1.60s | 27% faster |
+| p95 response time | 3.11s | 2.68s | 14% faster |
+| Throughput | 47.9 req/s | 56.2 req/s | 17% higher |
+| Error rate | 0.08% | 0.03% | lower |
+
+Full numbers, both runs' raw k6 output, the cache hit rate and the Neon budget used are below.
+
 ## Environment
 
 Both runs were against the **real, deployed** stack, not local or test shards:
@@ -125,10 +136,24 @@ screenshots saved):
 | 2 | 3 | 42 | 3 | 0.933 |
 
 Run 1's three `cacheOff` counts confirm caching was genuinely off for that run, not just configured
-off with the counter never incrementing. Run 2's hit rate sits at 93–97% across all three windows;
+off with the counter never incrementing.
+
+**Checked against `server/src/cache/store.ts` and `server/src/activity/routes.ts` rather than
+assumed:** cursor pages are not counted as cache misses, because they never reach the cache at all.
+`routes.ts` only calls `cache.get()` when `cursor === null` (the first page); any page after that
+calls `read(false)` directly and returns, bypassing the cache entirely (`caching.md`: "a page after
+the first is never cached... too specific to be shared"). So `cacheHits`/`cacheMisses` only ever count
+first-page requests - confirmed by the totals: run 2's hits + misses across all three windows
+(1140 + 1445 + 45 = 2630) land almost exactly on its 2632 iterations, i.e. close to one first-page
+call per iteration, not one per request.
+
 `cacheErrors`, `cacheWritesRejected` and `cacheInvalidationFailures` were all 0 throughout, so the
-3-7% that missed were ordinary cursor pages (never cache-eligible by design — see "what changed"
-below), not cache failures.
+3-7% miss rate within that first-page-only count isn't cache failures either. The real cause is TTL
+expiry: `CACHE_TTL_FEED_SECONDS` defaults to 30s, and every VU in this test shares the same team, the
+same `limit=20` and the same (empty) filters, so all 200 VUs' first-page requests land on one shared
+cache entry per generation. Over the run's ~90 seconds of active traffic, that entry expires and gets
+refilled roughly every 30 seconds, producing a short burst of misses right after each expiry and hits
+for the rest of the window - not degraded cache behaviour, just the TTL doing its job.
 
 A further finding from the request logs themselves: some run 2 requests tagged `"cache":"hit"` still
 took 1.2-2.2s, and some of those also carry `"dbRoute":"primary-required"` — inside a writer's 5-second
@@ -148,12 +173,13 @@ per-request session-check cost; see "what I'd change next" below.
 | Cache hit rate | n/a (off) | 93–97% | — |
 
 Caching only covers the feed's **first page** (`caching.md`: "never cacheable between the server and
-the app... the server-side cache of its first page"); every page reached via a cursor is never
-cached, by design. Each VU in this test follows a randomized 1–4 pages, so a meaningful share of
-every VU's requests were never eligible for the cache regardless of `CACHE_ENABLED` — which is
-exactly why the improvement here is real but moderate (~15-20%) rather than a dramatic cliff. The
-cache hit rate above, once pulled, will say precisely what fraction of requests were first-page
-(cache-eligible) versus cursor pages (never cached).
+the app... the server-side cache of its first page"); every page reached via a cursor goes straight
+to the database every time, by design - `routes.ts` never even calls `cache.get()` when a cursor is
+present. Each VU in this test follows a randomized 1-4 pages per iteration, but only the first request
+of each iteration is cache-eligible; the rest always hit the database regardless of `CACHE_ENABLED`.
+That's why the whole-run average improvement is moderate (~15-20%) despite a 93-97% hit rate on the
+requests that are actually eligible: most of this test's total request volume is cursor pages,
+outside the cache's reach entirely, not a weak cache.
 
 ## Neon budget
 
