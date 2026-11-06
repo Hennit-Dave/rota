@@ -11,8 +11,12 @@ complete; the sections linked below have the full write-up, and "Proving tests" 
 | 4 | A stolen refresh token, and reuse | Rotation on every use; presenting an already-used token revokes the whole family before the `401` is sent | [Threat 4](#threat-4-a-stolen-refresh-token-and-reuse): `refresh.integration.test.ts` (rotation, reuse), `concurrency.slow.test.ts` (concurrent refresh and revocation race, 15 repeats), `logout.integration.test.ts` |
 | 5 | Credential stuffing and brute-force login | Fixed-window rate limits in Valkey (never in memory) on login, register and refresh, by IP and by email; Argon2id, a dummy hash on unknown emails so timing doesn't reveal accounts | [Rate limiting](#rate-limiting-threat-5-credential-stuffing-and-brute-force) and [Passwords](#passwords-threat-5-with-rate-limiting): `ratelimit` unit tests, `recovery.integration.test.ts` |
 | 6 | Secrets extracted from the app bundle | One `EXPO_PUBLIC_` variable exists and it is not a secret (table below); every other secret is a server env var only | [Threat 6](#threat-6-secrets-extracted-from-the-app-bundle): `app/src/publicEnv.test.ts` (allowlist), `app/src/api/config.test.ts`. **Still pending:** the bundle search itself (`unzip` the APK, search for `sk_`, `secret`, `password`, `_KEY`) runs on the first preview (release) build and is recorded then — not yet done |
-| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged; live-mode events refused; the inbox is unique by Stripe's event ID; a valid signature is never treated as proof of payment — the job matches amount, currency, team, session and status against the frozen operation (ADR 0027) | `server/src/billing/activation.integration.test.ts`. **A saved card (ADR 0030)** is recorded the same way: the SetupIntent is read from Stripe by the job and must have succeeded, off-session, as a `card`, with our metadata, in test mode. Tests: `server/src/billing/cardSetup.integration.test.ts`. Proven against a **real** Stripe event end to end: deployment-gate check 1, PR #77 |
-| 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens: [Threat 8](#threat-8-invite-tokens-theft-or-reuse-of-an-invitation-link); reset and magic-link tokens: [Threat 8b](#threat-8b-reset-and-magic-link-tokens-theft-reuse-enumeration-and-takeover) | `invites.integration.test.ts`, `invite-links.integration.test.ts`, `recovery.integration.test.ts` |
+| 7 | Theft or reuse of an invitation link | Single use, hashed, 7-day expiry, tied to one email address (or Staff-only and un-addressed for a bearer link); one identical `404` for every unusable link | [Threat 7](#threat-7-theft-or-reuse-of-an-invitation-link): `invites.integration.test.ts`, `invite-links.integration.test.ts` |
+| 8 | Theft, reuse, enumeration and takeover of reset and magic-link tokens | Single use, hashed, short expiry, constant-time no-enumeration answer, a redeemed magic link on an unverified address clears the password and revokes every session | [Threat 8](#threat-8-reset-and-magic-link-tokens-theft-reuse-enumeration-and-takeover): `recovery.integration.test.ts`, `recovery.unit.test.ts` |
+
+Stripe webhook forgery/replay and the deploy credential model are real security controls too, but not part of
+this numbered list — see ["Stripe webhook signature verification"](#stripe-webhook-signature-verification-forged-or-replayed-events)
+and ["Deploy-provider credentials"](#deploy-provider-credentials-and-the-northflank-incident-adr-0040) below.
 
 ## Permissions: the one table (threat 1)
 
@@ -76,7 +80,7 @@ loses access on the next request". `shifts.integration.test.ts`: the same isolat
 
 **What remains.** Nothing sets `deactivated_at` until the renewal slice applies a reduction. Any NEW query on `memberships` must filter `deactivated_at IS NULL`; a reviewer should look for it.
 
-## Threat 8 (invite tokens): theft or reuse of an invitation link
+## Threat 7: theft or reuse of an invitation link
 
 **What it is.** An invitation link is a credential that lets someone join a team in a role. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump.
 
@@ -110,7 +114,7 @@ loses access on the next request". `shifts.integration.test.ts`: the same isolat
 - **Proving tests.** `invite-links.integration.test.ts`: the single-use race, the identical answer for every unusable link, Staff only (API and CHECK), the existing-member case, no address verification, the cap under concurrency, the limits, and the production app serving the route.
 - **Weakness, written down.** Nothing says who a link was meant for; the activity record shows who accepted it. If a link leaks before it is used, whoever uses it first gets in as Staff, until the Owner or Manager revokes it (visible in the pending list) or it expires.
 
-## Threat 8b (reset and magic-link tokens): theft, reuse, enumeration and takeover
+## Threat 8: reset and magic-link tokens — theft, reuse, enumeration and takeover
 
 **What it is.** A reset or magic-link token is a credential that sets a password or starts a session. It travels by email, so it can be forwarded, read by a scanner, or found in a database dump; and the request that asks for it can be used to find out which addresses have accounts.
 
@@ -244,7 +248,7 @@ the app, into two EU-region Sentry projects (`rota-server`, `rota-app`). **One s
 `app/src/observability/sentryScrub.ts`, a parity test in each) strips everything the SDK would otherwise collect by
 default (user identity beyond an ID, cookies, headers, request/response bodies, query strings, local-variable values)
 before an event leaves the process, and scrubs `/invite/`, `/magic/` and `/reset/` tokens from app breadcrumbs (the same
-list threats 8 and 8b rely on). A gate gives one event per error per 5 minutes, 50 a day per server process, 20 per app
+list threats 7 and 8 rely on). A gate gives one event per error per 5 minutes, 50 a day per server process, 20 per app
 session. Every event carries the placeholder IP `0.0.0.0` (Sentry infers a user's city and country from the real one
 even with IP storage turned off — checked against Sentry's own events, not assumed). Tags on each event: `request_id`,
 `team_id`, `route`, `role`, job fields — the same request ID the structured log line carries, which is how "what
@@ -320,6 +324,26 @@ The Sentry DSN joined this table in the Sentry slice (ADR 0039), with the claim 
 
 **Proving tests.** `app/src/publicEnv.test.ts` (allowlist), `app/src/api/config.test.ts` (https only), `app/src/auth/signOut.test.ts` and
 `app/src/api/client.test.ts` (token handling).
+
+## Stripe webhook signature verification (forged or replayed events)
+
+**What it is.** Someone sends a fake Stripe event to the webhook endpoint, or replays a real one, to make
+the server think a payment succeeded (or failed) when it didn't.
+
+**How it is handled.** Signature verified on the raw body before anything is parsed or logged (a bad,
+missing or tampered signature is `400` and records nothing); live-mode events are refused outright; the
+inbox is unique by Stripe's event ID, so a replay writes nothing; a valid signature is never treated as
+proof of payment on its own — the job matches amount, currency, team, session and status against the
+frozen operation we created (ADR 0027). **A saved card (ADR 0030)** is recorded the same way: a setup
+event is matched to the setup we froze (team, session, still open, setup mode), the SetupIntent is READ
+from Stripe by the job and must have succeeded, for off-session use, as a `card`, with the session's
+Customer and our metadata, in test mode; anything else is recorded for review and saves nothing.
+
+**Proven against a real Stripe event end to end:** deployment-gate check 1, PR #77
+(`checkout.session.completed` and `payment_intent.succeeded`, both `200 OK`, verified, durably recorded,
+processed by the deployed worker).
+
+**Proving tests.** `server/src/billing/activation.integration.test.ts`, `server/src/billing/cardSetup.integration.test.ts`.
 
 ## Deploy-provider credentials, and the Northflank incident (ADR 0040)
 

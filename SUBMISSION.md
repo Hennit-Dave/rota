@@ -157,3 +157,4 @@ pool-wait gap noted in the deliverables checklist (row 12) and below.
 3. **LinkedIn post about one technical decision** — Dave is writing this himself.
 4. **Rota pinned on GitHub profile, 2×/week LinkedIn posts, 30-company lead tracker** — not verifiable from the repo; ask Dave directly.
 5. **Portfolio case study and CV/LinkedIn bullet** — not started.
+6. **README GIF of the app running** — pending; will be cut from the demo video once that's recorded.
