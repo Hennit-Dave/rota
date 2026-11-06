@@ -155,6 +155,13 @@ cache entry per generation. Over the run's ~90 seconds of active traffic, that e
 refilled roughly every 30 seconds, producing a short burst of misses right after each expiry and hits
 for the rest of the window - not degraded cache behaviour, just the TTL doing its job.
 
+The ~20 simultaneous misses clustered at each 30s expiry (not spread evenly) are a cache stampede:
+every VU whose request lands in that instant misses the same just-expired key and refills it
+concurrently, rather than one request refilling it for the rest. Harmless at this scale - Valkey
+absorbed it with 0 `cacheErrors`/`cacheWritesRejected` - but the standard mitigation (single-flight
+fill, or an early background refresh before the TTL expires) is not implemented; see "what I'd change
+next".
+
 A further finding from the request logs themselves: some run 2 requests tagged `"cache":"hit"` still
 took 1.2-2.2s, and some of those also carry `"dbRoute":"primary-required"` — inside a writer's 5-second
 consistency window, the per-request session/role check still has to run against the primary even
@@ -237,6 +244,9 @@ requests are included in the reported aggregates, not excluded.
   both exist and likely explain most of the 1.2-2.2s outliers seen among otherwise-fast cache hits.
 - Pull `rota-api`'s logs for run 1's exact failure window, now that it's clear from run 2 what to look
   for (503s from istio), to confirm run 1's 5 failures were the same thing rather than inferring it.
+- Fix the stampede at each TTL expiry: either a single-flight fill (the first miss fills, everyone else
+  waits on that result instead of all refilling) or an early background refresh shortly before the TTL
+  ends, so no request ever has to wait on a fill at all.
 - Investigate issue #79 (the worker's ~5-minute Valkey reconnect pattern) for whether it's related to
   the istio connection-termination 503s seen here - both are intermittent connection-layer blips on
   the same deployed services, found in the same week, and might share a cause.
