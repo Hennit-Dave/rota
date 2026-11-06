@@ -117,8 +117,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'expo-sqlite',
       { useSQLCipher: false, android: { withSQLiteVecExtension: false } },
     ],
-    // Installed now so the first native build includes it. Configured (organization, project) in the Sentry slice.
-    '@sentry/react-native',
+    // ADR 0039. `url` left unset (defaults to sentry.io): the EU-region upload URL is unconfirmed, to be
+    // checked against the first source-map upload, not guessed here.
+    [
+      '@sentry/react-native',
+      {
+        organization: 'davebuilds',
+        project: 'rota-app',
+      },
+    ],
   ],
   // Created with `eas init` on 2026-10-21 under the hennitdave Expo account. An identifier, not a secret; push token registration needs it.
   extra: {
