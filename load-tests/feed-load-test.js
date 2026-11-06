@@ -13,7 +13,13 @@ import { check, sleep } from 'k6';
 
 const BASE_URL = __ENV.BASE_URL || 'https://api.rota.davebuilds.design';
 const TOKENS_FILE = __ENV.TOKENS_FILE || './load-tests/.k6-tokens.json';
-const PAGES_PER_ITERATION = 4; // first page + 3 cursor pages, per the skill's "first page and follows cursors"
+// Randomized per iteration (1-4 pages) rather than fixed: a fixed count would have every VU walk the
+// identical top slice of the feed every time, so most of the 10,000 seeded rows would never be read.
+// Bounded by the REAL configured limit seed-k6-team.ts printed (120 requests/60s per user, confirmed
+// at seed time, not assumed): max 4 pages + sleep(2) keeps even an all-worst-case VU under ~1.9 req/s,
+// safely under the 2 req/s the limit allows. True deep-cursor plan behaviour (row 5000+) is already
+// covered separately by `npm run db:feed-proof -- explain`, not by this load run.
+const MAX_PAGES_PER_ITERATION = 4;
 
 const seed = JSON.parse(open(TOKENS_FILE));
 const TEAM_ID = seed.teamId;
@@ -42,8 +48,9 @@ export default function () {
   const token = TOKENS[(__VU - 1) % TOKENS.length];
   const headers = { Authorization: `Bearer ${token}`, 'X-Load-Test': 'k6' };
 
+  const pagesThisIteration = 1 + Math.floor(Math.random() * MAX_PAGES_PER_ITERATION);
   let cursor = null;
-  for (let page = 0; page < PAGES_PER_ITERATION; page++) {
+  for (let page = 0; page < pagesThisIteration; page++) {
     const url = cursor
       ? `${BASE_URL}/teams/${TEAM_ID}/activity?limit=20&cursor=${encodeURIComponent(cursor)}`
       : `${BASE_URL}/teams/${TEAM_ID}/activity?limit=20`;
@@ -65,5 +72,5 @@ export default function () {
     cursor = body.nextCursor;
   }
 
-  sleep(1);
+  sleep(2);
 }
