@@ -23,18 +23,25 @@ async function main() {
 
   const shards = createShards({ primaryMax: 5 });
   const identity = identityDb(shards);
+  const userIds = tokens.map((t) => t.userId);
+
+  const familiesBefore = await identity.refreshTokenFamily.count({ where: { userId: { in: userIds } } });
+  console.log(`refresh_token_families before cleanup: ${familiesBefore}`);
 
   // Cascades: memberships, activity, invitations, shifts, swap_requests (all onDelete: Cascade on Team).
   const team = await shards[shard].primary.team.deleteMany({ where: { id: teamId } });
   console.log(`deleted team ${teamId} on shard ${shard}: ${team.count}`);
 
-  // Cascades: credentials, user_teams, refresh_token_families -> refresh_tokens (all onDelete: Cascade on User).
-  const users = await identity.user.deleteMany({ where: { id: { in: tokens.map((t) => t.userId) } } });
+  // Deleting the user cascades credentials, user_teams, and refresh_token_families -> refresh_tokens
+  // (all onDelete: Cascade on User in schema.prisma) - a database-level FK cascade, not application
+  // code, so the 200 seeded sessions are revoked by construction, not by remembering to revoke them.
+  const users = await identity.user.deleteMany({ where: { id: { in: userIds } } });
   console.log(`deleted users: ${users.count}`);
 
   const remainingTeam = await shards[shard].primary.team.count({ where: { id: teamId } });
-  const remainingUsers = await identity.user.count({ where: { id: { in: tokens.map((t) => t.userId) } } });
-  console.log(`verified empty: team=${remainingTeam} users=${remainingUsers}`);
+  const remainingUsers = await identity.user.count({ where: { id: { in: userIds } } });
+  const remainingFamilies = await identity.refreshTokenFamily.count({ where: { userId: { in: userIds } } });
+  console.log(`verified empty: team=${remainingTeam} users=${remainingUsers} refresh_token_families=${remainingFamilies}`);
 
   await closeShards(shards);
 
