@@ -1,10 +1,28 @@
 # Rota
 
-Rota is a shift-scheduling mobile app for small teams such as restaurants, clinics and shops.
+Rota is a shift-scheduling mobile app for small teams such as restaurants, clinics and shops: an owner
+creates a team, invites staff and publishes shifts; staff see their shifts, request swaps and get notified.
+
+**GIF of the app running:** pending — not yet recorded.
+
+**Android development build (preview APK):** pending — the first EAS preview build hasn't been run yet.
+
+**Demo video:** pending — not yet recorded.
+
+**Live API:** `https://api.rota.davebuilds.design` (`GET /health` returns `{"ok":true}`; deployed on
+Northflank, ADR 0040).
+
+This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
+
+**Stack:** React Native + Expo (TypeScript, Android) · Node.js + Express + TypeScript · PostgreSQL on two
+Neon shards, Prisma 7 · BullMQ on Aiven Valkey (queue, cache, rate limits) · Stripe test mode · Resend ·
+Sentry · deployed on Northflank.
+
+**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) ·
+[Sharding](docs/SHARDING.md) · [App state](docs/STATE.md) · [Decisions (ADRs)](docs/decisions/) ·
+[k6 load test report](load-tests/REPORT.md)
 
 Design: [Rota screens in Figma](https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY)
-
-Status: in progress
 
 ## Run the server locally
 
