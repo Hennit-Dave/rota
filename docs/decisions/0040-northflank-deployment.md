@@ -99,6 +99,10 @@ by that reasoning alone — see the deployment gate's first check.
 - API live: build `adroit-snails-5405`, commit `f19fcc3`, 1 instance, Recreate, readiness probe
   `/health`, 0 restarts, 146/512 MB idle. `GET /health` on
   `https://p01--rota-api--76m4b9xbxd4k.code.run` returns `{"ok":true}` (screenshot held by Dave).
+- Custom domain confirmed (2026-11-05): `api.rota.davebuilds.design` verified on Northflank's Domains
+  page, Cloudflare CNAME `api.rota` (DNS only, not proxied), routed to `rota-api` port 3000.
+  `GET https://api.rota.davebuilds.design/health` returns `{"ok":true}` (screenshot held by Dave). The
+  app's `EXPO_PUBLIC_API_URL` uses this domain, not the raw `*.code.run` address.
 - Worker live: build `adaptable-drink-6295`, commit `f19fcc3`, 1 instance, Recreate, custom command
   `node --enable-source-maps dist/worker/main.js`, no port, 0 restarts. Logs confirm: Valkey connected
   and `maxmemory-policy` verified as `noeviction`; running against the real shards; Sentry on
