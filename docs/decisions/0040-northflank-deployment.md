@@ -14,8 +14,10 @@ credits.
 ## Options considered
 
 1. **Northflank** — Developer Sandbox, "Free platform plan": $20/mo of free resources, 2 services, 2
-   jobs, 1 addon, no payment method on file (so overage cannot be charged, only blocked). Region Europe
-   West (London).
+   jobs, 1 addon. A payment method is required for verification — Northflank's own wording: "Payment
+   method required ... You will not be charged for this service." Dave added one and froze it; any
+   actual charge needs an explicit "Upgrade to Pay as you go" click, which he will not make. Region
+   Europe West (London).
 2. **Oracle Cloud Always Free** — the brief's usual free-tier fallback. Dave's sign-up attempt was
    rejected with a generic "error creating your account", unrelated to Oracle's idle-reclaim policy.
    Stays documented as the fallback; not an active path while the card used is frozen.
@@ -84,6 +86,8 @@ by that reasoning alone — see the deployment gate's first check.
 
 - Deploying either service always means a full stop-then-start (Recreate), never a rolling swap;
   confirmed available on Northflank's free plan.
+- **Pausing a Northflank service switches its CI and CD off too** (found while pausing `rota-worker`
+  for deployment-gate check 3). Turn both back on after Resume, or the next push won't auto-deploy.
 - The Neon deploy role is not least-privilege (full project access, not scoped to Rota's own tables).
   Revisit if Neon ever offers a narrower role.
 - The `CONFIG` command is fully denied to the deploy Valkey user; any future feature that needs to read
@@ -113,9 +117,18 @@ by that reasoning alone — see the deployment gate's first check.
   reply-to, subject, body and expiry correct), Neon (read/write + recovery-state script, pass on all 4
   strings, no value printed), Valkey (9/9 checks pass including the compiled `verifyNoEviction`, PR
   #75).
-- Stripe webhook API-version proof: pending — this is the first check in the deployment gate
-  (`AGENTS.md`): a real Stripe event received by the deployed webhook, verified, durably recorded, and
-  processed end-to-end by the deployed worker.
+- Stripe webhook API-version proof: **proven** — the deployment gate's first check (`AGENTS.md`, full
+  evidence in PR #77): a real Stripe event (`checkout.session.completed`, `payment_intent.succeeded`,
+  both 200 OK) received by the deployed webhook, verified, durably recorded, and processed end-to-end
+  by the deployed worker (`outcome=applied`, `detail=activation_applied`, `card_inserted`).
+- Deployment-gate checks 2–5, all proven, full evidence in PR #77: stop-then-start (`rota-api`
+  Restart, old pod's `api closed` strictly before the new pod's `api listening`, no overlap);
+  worker-restart recovery (`rota-worker` Pause/Resume, work created during the outage stayed pending
+  until Resume, then was sent); one Resend email from the deployed worker (the same event — sender,
+  reply-to, subject, link and expiry confirmed correct); queue-loss recovery (a delayed job's BullMQ
+  entry deleted from the real Valkey while `rota-worker` kept running untouched, restored and
+  completed by the reconnect-triggered reconciliation sweep — not the 30-minute timer, which ran
+  afterward and found nothing to do).
 - Known, non-blocking follow-up: deployed Postgres connections use `sslmode=require` (TLS, no
   certificate verification); Postgres's own deprecation warning for this appeared in the worker's
   stderr on first boot. Tracked as issue #76 (move to `sslmode=verify-full`).
