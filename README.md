@@ -106,33 +106,51 @@ In rough priority order, all written down as they were found rather than discove
 
 ## In-app purchase rules, and why this app doesn't use them
 
+*Checked 2026-11-06 against Apple's and Google's own current policy pages (quoted below, not from
+memory). Both platforms' rules are moving targets — ongoing antitrust litigation has already changed
+them once and a further revision is pending (see Google, below) — so this is a snapshot, not a
+permanent answer; re-check before ever relying on it.*
+
 Apple and Google each require their own purchase system for most subscriptions bought inside a mobile
 app — this section exists because I'm not publishing Rota to either store, and the README should show I
 know why that would matter if I did.
 
-**Apple (App Store Review Guidelines, read 2026-11-06):** section 3.1.1 is the default — "If you want to
-unlock features or functionality within your app... you must use in-app purchase," and 3.1.2(a) names
-software-as-a-service explicitly as a subscription type this covers. The one plausible exception is
-**3.1.3(c), Enterprise Services:** "If your app is only sold directly by you to organizations or groups
-for their employees or students... you may allow enterprise users to access previously-purchased content
-or subscriptions. Consumer, single-user, or family sales must use in-app purchase." A team subscription
-sold directly to a business could plausibly fit that — but Apple decides case by case, and a single-owner
-sign-up through the app itself looks a lot like the "single-user" case the same sentence excludes. There
-is no general "it's B2B so it's exempt" rule.
+**Apple (App Store Review Guidelines).** Section 3.1.1 is the default — "If you want to unlock features
+or functionality within your app... you must use in-app purchase," and 3.1.2(a) names software-as-a-service
+explicitly as a subscription type this covers. The one plausible exception is **3.1.3(c), Enterprise
+Services:** "If your app is only sold directly by you to organizations or groups for their employees or
+students... you may allow enterprise users to access previously-purchased content or subscriptions.
+Consumer, single-user, or family sales must use in-app purchase." A team subscription sold directly to a
+business could plausibly fit that — but Apple decides case by case, and a single-owner sign-up through
+the app itself looks a lot like the "single-user" case the same sentence excludes. There is no general
+"it's B2B so it's exempt" rule. **US storefront carve-out (post-*Epic v. Apple*):** 3.1.1(a) states the
+external-purchase-link entitlement is "not required... to include buttons, external links, or other
+calls to action in their United States storefront apps" — elsewhere, "this prohibition does not apply"
+only to the US. So a US release could link out to a web checkout without Apple's IAP at all, as an
+alternative to the enterprise exception above. Apple's own page did not state a current commission
+figure for such external-link sales where I could confirm it, so none is given here rather than guessed.
 
-**Google (Play's Payments policy, read 2026-11-06):** section 2 requires Google Play's own billing system
-for "in-app purchases," and its own examples name "business productivity software" directly — so Rota's
-per-seat plan would not obviously qualify for the physical-goods-and-services exceptions in section 3
-(transportation, cleaning, gym memberships, event tickets — real-world services consumed outside the
-app), the way, say, a taxi app's fare does.
+**Google (Play's Payments policy).** Google Play's own billing system is required for "in-app purchases,"
+and its own examples name "business productivity software" directly — so Rota's per-seat plan would not
+obviously qualify for the physical-goods-and-services exceptions (transportation, cleaning, gym
+memberships, event tickets — real-world services consumed outside the app), the way, say, a taxi app's
+fare does. **US allowance (post-*Epic v. Google*):** Google's own page confirms it is still in effect today —
+"Google will not require the use of Google Play Billing in apps distributed on the Google Play Store, or
+prohibit the use of in-app payment methods other than Google Play Billing" for US users — but it is an
+**opt-in program requiring enrollment**, not an automatic exemption, and Google still takes a service fee
+on the alternative-billing transaction: **10% for the first $1M of annual earnings and for recurring
+transactions completed through an alternative billing system**, per Google's own current fee table. A
+revised settlement was filed with the court on 4 March 2026 and a new injunction is pending as of
+Google's most recent update (21 October 2026) — the rule as stated here could change again.
 
 **What this would mean in practice if Rota shipped to the stores:** either plan pricing, seat changes and
 renewals would need to move onto Apple's and Google's own subscription products — losing the exact
 proration engine this build was graded on, since both platforms own the subscription lifecycle, pricing
-tiers and renewal timing themselves — or the app would need to qualify for, and be approved under, the
-enterprise exception, which is a distribution and sales-agreement question as much as a technical one. As
-shipped, none of this applies: Stripe runs in **test mode only**, and the app is not submitted to either
-store, so this is read as the engineering trade-off it would become, not a decision already made.
+tiers and renewal timing themselves — or the app would need to qualify for, and enrol in, one of the
+exceptions above (Apple's enterprise exception or US external link; Google's US alternative-billing
+program, still paying Google a reduced fee). Either path is a real decision to make before a store
+release, not a technicality. As shipped, none of this applies: Stripe runs in **test mode only**, and the
+app is not submitted to either store.
 
 ## Run the server locally
 
