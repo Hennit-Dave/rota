@@ -108,5 +108,6 @@ cross-team or cross-shard query should be added here in the PR that introduces i
 | Read replicas and the read-routing function | Built; tested against the real replicas of the test projects (ADR 0037) |
 | Teams, memberships and the user-to-teams directory (create, get, list, members) | Built, tested on the test shards |
 | Invitations and their email work rows, written together on the team's shard | Built, tested on the test shards, including a lost invite email on shard B recovered by the sweep |
-| Shifts, swaps, activity feed | Not built |
+| Shifts, swaps, activity feed (cursor pagination, the feed index, 10,000-row seed) | Built, tested on both shards (ADR 0021, 0023, 0022); load-tested at 200 VUs against the real shards (`load-tests/REPORT.md`) |
+| Billing: `billing_periods`, `subscriptions`, `payment_operations`, `payment_requests`, `ledger_entries` on the team's own shard; `stripe_events` (the webhook inbox) on shard A | Built, tested on both shards (ADR 0026-0031); see "What lives only on shard A, and why" above for the inbox's placement |
 | Directory override for a very large team | Not built, documented above |

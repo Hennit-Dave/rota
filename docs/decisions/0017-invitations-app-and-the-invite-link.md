@@ -87,7 +87,7 @@ approves separately) are issue #37.
 - The link carries the team ID and the secret; the app never inspects it and the server decides everything (permissions, role, team).
 - **Proven with adb, not with a tapped link.** Until `rota.davebuilds.design` is hosted (issue #35) Android reports the domain as unverified, so a tapped `https` link opens the browser. The adb
   intent (`-p design.davebuilds.rota`) proves the app's handling, not a Gmail tap.
-- **Cold start from a link needs a preview build:** a development build opens the dev launcher first. To be tested once before submission.
+- **Cold start from a link, verified in the preview build (2026-11-06, real device):** tapping a real invite link with the app fully closed opened the app directly to the "You're invited" screen. A development build opens the dev launcher first instead, which is why this needed the preview build.
 - Revisit when: link invitations are built (#37), Sentry is added (scrub route params), the team picker exists (the selection rule), seat limits land (the accept answer may change).
 
 ## Evidence

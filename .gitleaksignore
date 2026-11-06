@@ -1,0 +1,38 @@
+# gitleaks allowlist, reviewed by Dave on 6 Nov 2026 (SUBMISSION.md, "Git history scanned for secrets").
+# `gitleaks git --log-opts="--all"` found 25 hits across the full history; every one below was opened
+# and confirmed to be a test fixture or a documented throwaway value, never a real credential. Re-review
+# before adding to this file - it silences a real finding at that exact fingerprint (commit:path:rule:line)
+# forever, so it should only ever grow when a new false positive has actually been checked, not pasted in
+# to make a scan pass.
+#
+# Stripe test/live key-shaped strings in server/src/billing/stripeConfig.unit.test.ts and
+# cardGateway.unit.test.ts: fixtures testing that the config loader itself REJECTS a live key and only
+# accepts a test key (AGENTS.md: "stripeConfig.ts refuses anything but an sk_test_ key"). Appear at
+# several commits because the file changed across the billing slices.
+d646c44758f050664d3c0a4eed8b78099c00c6f8:server/src/billing/stripeConfig.unit.test.ts:stripe-access-token:13
+d646c44758f050664d3c0a4eed8b78099c00c6f8:server/src/billing/stripeConfig.unit.test.ts:stripe-access-token:18
+d646c44758f050664d3c0a4eed8b78099c00c6f8:server/src/billing/stripeConfig.unit.test.ts:generic-api-key:14
+313d8a1e54ab0c25277cabeb7df8977b87a63caa:server/src/billing/stripeConfig.unit.test.ts:stripe-access-token:13
+f56405eabeb9a617dac1e07b85b2a6d6627ebe2e:server/src/billing/stripeConfig.unit.test.ts:stripe-access-token:18
+f56405eabeb9a617dac1e07b85b2a6d6627ebe2e:server/src/billing/stripeConfig.unit.test.ts:generic-api-key:14
+d646c44758f050664d3c0a4eed8b78099c00c6f8:server/src/billing/cardGateway.unit.test.ts:stripe-access-token:157
+f56405eabeb9a617dac1e07b85b2a6d6627ebe2e:server/src/billing/cardGateway.unit.test.ts:stripe-access-token:157
+4970c7d6a3bf95396e1ad1f735d7217dd9ee78a6:server/src/billing/cardGateway.unit.test.ts:stripe-access-token:155
+
+# Fixture testing that the Sentry/log redaction scrubber catches Stripe-key-shaped strings in error text
+# (app/src/observability/observability.test.ts) - a fake example string is the point of the test.
+49fa2ffa3956ee5bc53b8af3dc0aede4469e777c:app/src/observability/observability.test.ts:stripe-access-token:115
+
+# Documented "throwaway test values" demo passwords, gated to the TEST shards only
+# (TEST_DATABASE_ALLOWED=true, never falls back to real shard URLs - see each file's own header comment).
+de11b9f91905ef12d8be50ac2a06e4c9cae26992:server/src/db/demo-swap.ts:generic-api-key:12
+ed9bbe2e56d1ebf293a85c34e2e4666c00706262:server/src/shifts/proof-seed.ts:generic-api-key:12
+b57ac4d5b14ce55e4b73b09f5a196bf6c5ef61e5:server/src/push/proof-seed.ts:generic-api-key:13
+
+# Fake invite-link tokens in app test fixtures, used only to test URL-parsing logic.
+249a4587ab491a422734536821670b9a71f7dc01:app/src/invites/inviteLink.test.ts:generic-api-key:5
+249a4587ab491a422734536821670b9a71f7dc01:app/src/invites/inviteAuthParams.test.ts:generic-api-key:5
+249a4587ab491a422734536821670b9a71f7dc01:app/src/invites/inviteApi.test.ts:generic-api-key:7
+
+# Fake password in server/src/http/http.unit.test.ts, testing that the logger never emits a password field.
+77cbf2d9c076c6c1f17e93d4be14281aedd01cfb:server/src/http/http.unit.test.ts:generic-api-key:175

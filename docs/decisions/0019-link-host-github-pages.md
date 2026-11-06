@@ -1,6 +1,6 @@
 # 0019: Hosting rota.davebuilds.design on GitHub Pages
 
-- **Status:** proposed (accepted when Dave merges). The proof (below) is pending until the site is deployed and the DNS record is live.
+- **Status:** accepted. Deployed; the device-level proof (below) is done.
 - **Date:** 2026-10-26
 - **Decided by:** Dave
 - **Related:** issue #35, ADR 0009 (App Links), ADR 0015 and 0017 (invite links), `.agents/rules/security.md`, `AGENTS.md` (Stack: free plans only)
@@ -56,11 +56,8 @@ Checked by request against live GitHub Pages sites, not in GitHub's docs: a `.js
 
 ## Evidence
 
-Pending until the site is deployed and the CNAME is live:
+Already shown (this PR): `node --test site/site.test.mjs` passes 4 checks, mutation-checked (removing `assetlinks.json`, or adding a script tag to the page, fails them). Every deploy's own workflow step fetches the live `assetlinks.json` afterward and fails the deploy unless it answers `200`, `application/json`, with no redirect (see "Hidden-folder trap" above) — the standing equivalent of the first `curl` check below, run on every deploy rather than once.
 
-- `curl -sI https://rota.davebuilds.design/.well-known/assetlinks.json` shows `200`, `content-type: application/json` and no `location` header.
-- `curl -sI https://rota.davebuilds.design/invite/anything` shows the `404.html` page.
-- `adb shell pm verify-app-links --re-verify design.davebuilds.rota`, then `adb shell pm get-app-links design.davebuilds.rota` shows `rota.davebuilds.design` as verified.
-- Tapping a real invite link in Gmail opens the app.
+**Proven on a real device (2026-11-06, preview build, Tecno Pop 20):** a cold-started tap on a real invite link opened the app directly to the "You're invited" screen — Android reported `rota.davebuilds.design` verified (the same outcome `adb shell pm get-app-links design.davebuilds.rota` would show), confirming the domain, the `assetlinks.json` fingerprint and the app's intent filters all agree outside any emulator or adb-driven test.
 
-Already shown (this PR): `node --test site/site.test.mjs` passes 4 checks, mutation-checked (removing `assetlinks.json`, or adding a script tag to the page, fails them).
+**Not yet run manually** (lower priority now the device proof above exists): `curl -sI https://rota.davebuilds.design/invite/anything` showing the `404.html` page for a dead link opened without the app.

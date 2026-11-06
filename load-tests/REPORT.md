@@ -155,6 +155,13 @@ cache entry per generation. Over the run's ~90 seconds of active traffic, that e
 refilled roughly every 30 seconds, producing a short burst of misses right after each expiry and hits
 for the rest of the window - not degraded cache behaviour, just the TTL doing its job.
 
+The ~20 simultaneous misses clustered at each 30s expiry (not spread evenly) are a cache stampede:
+every VU whose request lands in that instant misses the same just-expired key and refills it
+concurrently, rather than one request refilling it for the rest. Harmless at this scale - Valkey
+absorbed it with 0 `cacheErrors`/`cacheWritesRejected` - but the standard mitigation (single-flight
+fill, or an early background refresh before the TTL expires) is not implemented; see "what I'd change
+next".
+
 A further finding from the request logs themselves: some run 2 requests tagged `"cache":"hit"` still
 took 1.2-2.2s, and some of those also carry `"dbRoute":"primary-required"` — inside a writer's 5-second
 consistency window, the per-request session/role check still has to run against the primary even
@@ -197,6 +204,26 @@ About 0.4% of each project's monthly allowance for both runs combined. Each repl
 CU max only for the run window and lowered back to 0.25 CU immediately after run 2 — confirmed, not
 left raised.
 
+## Pool limits (`data.md` test 11)
+
+Checked against Neon Monitoring's own "Last day" view for `neondb` on both shards (screenshots saved;
+this view is minute-averaged, not per-request):
+
+| | Shard A (`ep-red-butterfly`) | Shard B (`ep-jolly-smoke`) |
+|---|---|---|
+| Rows | one ~11.4K insert spike (the seed) | two ~10.2K spikes (one seed per run) |
+| Postgres connections | ~0, against a max of 905 | ~0, against a max of 905 |
+| Pooler server connections (peak) | 1-2 | 1 |
+| Pooler client max wait | 0.00s | 0.00s |
+
+**Active connections never approached the configured maximums** (`.agents/rules/data.md`: API 5 per
+shard primary + 5 per replica, worker 3 per shard primary) - Neon's own transaction-mode pooler folded
+all 200 VUs' traffic down to 1-2 actual Postgres server connections per shard, with zero pooler wait.
+This confirms the first half of test 11 (connections stayed within limits) but not the second: **the
+app's own Prisma pool wait and database-vs-API time split were not measured** - Neon's pooler-side view
+shows its own queue, not time spent inside the API process waiting for a client from the pg `Pool`.
+Tracked as a documented gap with a non-blocking follow-up: [issue #83](https://github.com/Hennit-Dave/rota/issues/83).
+
 ## Cleanup
 
 Both runs' seeded data were deleted immediately after use, verified empty by the cleanup script
@@ -237,6 +264,9 @@ requests are included in the reported aggregates, not excluded.
   both exist and likely explain most of the 1.2-2.2s outliers seen among otherwise-fast cache hits.
 - Pull `rota-api`'s logs for run 1's exact failure window, now that it's clear from run 2 what to look
   for (503s from istio), to confirm run 1's 5 failures were the same thing rather than inferring it.
+- Fix the stampede at each TTL expiry: either a single-flight fill (the first miss fills, everyone else
+  waits on that result instead of all refilling) or an early background refresh shortly before the TTL
+  ends, so no request ever has to wait on a fill at all.
 - Investigate issue #79 (the worker's ~5-minute Valkey reconnect pattern) for whether it's related to
   the istio connection-termination 503s seen here - both are intermittent connection-layer blips on
   the same deployed services, found in the same week, and might share a cause.

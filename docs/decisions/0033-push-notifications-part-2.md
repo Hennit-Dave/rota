@@ -46,7 +46,7 @@ Part 1 built the engine and used it for the two failed-renewal pushes. A shift t
 - **Not covered by a push:** a shift that **starts soon** (nothing is urgent in this slice), a cancelled swap (no activity row), and a person's own actions (never told).
 - **No grouping beyond channels:** Android's own stacking of notifications from one channel is the system's; Rota sets no group keys.
 - **A change that tells more than 50 people** is not possible today (a shift has one assignee, a swap request has at most the approvers plus one); the event payload caps recipients at 50 (ADR 0032).
-- Still open from ADR 0032: no TTL on a message, no cap on devices per person, enhanced push security off, the cold-start tap to verify in the preview build.
+- Still open from ADR 0032: no TTL on a message, no cap on devices per person, enhanced push security off. (The cold-start tap is now verified in the preview build, ADR 0032.)
 
 ## Tests
 

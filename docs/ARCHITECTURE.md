@@ -14,6 +14,60 @@ Rota is a shift-scheduling mobile app for small teams (restaurants, clinics, ret
 - **Email:** Resend HTTP API, sent from background worker jobs only.
 - **Payments:** Stripe test mode, Checkout/PaymentIntent in payment mode. No Stripe Subscriptions; our server calculates proration.
 
+## Architecture diagram
+
+```mermaid
+flowchart TD
+    subgraph Device["Android device"]
+        App["Rota app<br/>React Native + Expo<br/>TanStack Query, expo-secure-store"]
+    end
+
+    subgraph NF["Northflank (ADR 0040)"]
+        API["rota-api<br/>Express + TypeScript"]
+        Worker["rota-worker<br/>BullMQ consumer"]
+    end
+
+    subgraph Neon["Neon - two projects, one per shard"]
+        subgraph ShardA["Shard A"]
+            APrimary[("Primary<br/>identity + shard A teams")]
+            AReplica[("Read replica<br/>0.25 CU")]
+        end
+        subgraph ShardB["Shard B"]
+            BPrimary[("Primary<br/>shard B teams")]
+            BReplica[("Read replica<br/>0.25 CU")]
+        end
+    end
+
+    Valkey[("Aiven Valkey<br/>queue, cache, rate limits<br/>noeviction")]
+    Stripe["Stripe<br/>test mode<br/>Checkout / PaymentIntent"]
+    Resend["Resend<br/>email HTTP API"]
+    ExpoPush["Expo Push Service"]
+    FCM["Firebase Cloud Messaging"]
+    Sentry["Sentry (EU)<br/>rota-server + rota-app<br/>errors only"]
+    Pages["GitHub Pages (site/)<br/>App Links host + landing page"]
+
+    App -- "HTTPS, bearer access token" --> API
+    API -- "Zod + auth + role + rate limit, then query" --> APrimary
+    API -- "opted-in reads only<br/>(roster, calendar, feed)" --> AReplica
+    API --> BPrimary
+    API --> BReplica
+    API -- "rate limits, cache, enqueue work rows" --> Valkey
+    API -- "one bounded call: create a Checkout / PaymentIntent session" --> Stripe
+    Stripe -- "signed webhook event" --> API
+
+    Worker -- "BullMQ consume" --> Valkey
+    Worker --> APrimary
+    Worker --> BPrimary
+    Worker -- "invite / reset / billing email" --> Resend
+    Worker -- "send push" --> ExpoPush --> FCM --> App
+
+    App -. "errors only" .-> Sentry
+    API -. "errors only" .-> Sentry
+    Worker -. "errors only" .-> Sentry
+
+    App -. "invite / magic / reset link<br/>(App Links; browser fallback)" .-> Pages
+```
+
 ---
 
 ## Infrastructure substitutions and choices

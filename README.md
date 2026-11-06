@@ -1,10 +1,156 @@
 # Rota
 
-Rota is a shift-scheduling mobile app for small teams such as restaurants, clinics and shops.
+Rota is a shift-scheduling mobile app for small teams such as restaurants, clinics and shops: an owner
+creates a team, invites staff and publishes shifts; staff see their shifts, request swaps and get notified.
+
+**GIF of the app running:** pending — not yet recorded.
+
+**Android preview (release) build:** [download the preview build](https://expo.dev/accounts/hennitdave/projects/rota/builds/a7d7a16c-6699-493a-b139-c7ce640d1c9f)
+(public EAS build page, no sign-in needed — Install button). Tested on a real device and an emulator
+against the live API: sign-in, push notifications (including a cold start), invite links (including a
+cold start, App Links verified), theme switching.
+
+**Demo video:** pending — not yet recorded.
+
+**Live API:** `https://api.rota.davebuilds.design` (`GET /health` returns `{"ok":true}`; deployed on
+Northflank, ADR 0040).
+
+This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
+
+**Stack:** React Native + Expo (TypeScript, Android) · Node.js + Express + TypeScript · PostgreSQL on two
+Neon shards, Prisma 7 · BullMQ on Aiven Valkey (queue, cache, rate limits) · Stripe test mode · Resend ·
+Sentry · deployed on Northflank.
+
+**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) ·
+[Sharding](docs/SHARDING.md) · [App state](docs/STATE.md) · [Decisions (ADRs)](docs/decisions/) ·
+[k6 load test report](load-tests/REPORT.md)
 
 Design: [Rota screens in Figma](https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY)
 
-Status: in progress
+## The problem
+
+A small team — a café, a clinic, a shop — runs its rota out of a group chat and a shared spreadsheet.
+Shifts get posted as a photo of a whiteboard. A swap gets agreed in the chat and someone forgets to tell
+the manager, so two people show up for one shift and nobody does the other. A change happens at 11pm and
+whoever's phone is on buzzes, whether it's urgent to them or not. None of it is wrong exactly, it's just
+manual: every rule ("has the manager approved this swap?", "is this person even still on the team?",
+"did billing actually go through this month?") lives in someone's head instead of being enforced
+anywhere. Rota moves those rules onto a server that enforces them on every request, not just in the UI.
+
+## Tech stack, and why
+
+| Layer | Choice | Why |
+|---|---|---|
+| Mobile app | React Native + Expo, TypeScript, Android | One codebase, EAS Build for native builds without owning build infrastructure; Android only because an iOS device build needs a paid Apple Developer account |
+| Server state | TanStack Query | Cache times, retries and refetch-on-foreground come for free, documented per-query in `STATE.md` |
+| Client state | Zustand | One small store for session status, selected team and UI flags — explained in [ADR 0008](docs/decisions/0008-client-state-zustand.md) |
+| Tokens | `expo-secure-store` | Encrypted, excluded from Android's own backup — AsyncStorage is unencrypted |
+| API | Node.js + Express + TypeScript | Whole-request Zod validation (body, query and route params) on every route |
+| Database | PostgreSQL on two Neon projects (shards), Prisma 7 | Sharding is simulated per the brief, hashed by `team_id` — [SHARDING.md](docs/SHARDING.md) |
+| Queue, cache, rate limits | BullMQ on Aiven Valkey | A substitution for the brief's Redis — [ADR 0003](docs/decisions/0003-queue-worker-and-recovery.md) |
+| Payments | Stripe, test mode only | Checkout/PaymentIntent, never Stripe Subscriptions — proration is ours, calculated on the server |
+| Email | Resend | Sent only from a background job, never inside a request |
+| Deployment | Northflank | [ADR 0040](docs/decisions/0040-northflank-deployment.md) — free plan, no payment method charged |
+| Errors | Sentry (EU) | Errors only, one shared redaction list between server and app — [ADR 0039](docs/decisions/0039-sentry.md) |
+
+## How to run it locally
+
+Covered in full below: ["Run the server locally"](#run-the-server-locally) and ["Run the app"](#run-the-app-android-development-build).
+Short version: `cd server && npm ci && npm run build` then `npm run start:api` / `npm run start:worker`
+(needs a root `.env`, copied from `.env.example`), and the Expo app against either your own local API or
+the deployed one at `https://api.rota.davebuilds.design`.
+
+## Architecture summary
+
+App, API and worker are three separate processes; the API and worker share one Docker image (different
+start commands, [ADR 0036](docs/decisions/0036-container-image.md)) and both run on Northflank. Data is
+split across two independent Postgres databases ("shards"), each team routed to one by a hash of its ID,
+with a read replica per shard for read-heavy endpoints. One Valkey instance is the queue, the cache and
+the rate limiter. The Stripe webhook, email and push notifications all go through the queue — nothing
+slow or unreliable runs inside a request. Full diagram and detail: [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Key decisions
+
+- **Valkey instead of Redis** ([ADR 0003](docs/decisions/0003-queue-worker-and-recovery.md)): an
+  open-source, API-compatible fork, after Redis's own license change — Aiven offers it free with no card.
+- **We calculate proration, never Stripe** ([ARCHITECTURE.md §5h](docs/ARCHITECTURE.md)): plan, seats and
+  period live in our own database so the exact brief's rounding rule is testable in isolation, with no
+  Stripe Subscriptions object standing between us and what a customer is actually charged.
+- **Sharding by `team_id`, not by user** ([SHARDING.md](docs/SHARDING.md)): keeps one team's data on one
+  database so its own dashboard needs one query, not a fan-out — at the cost of a hot shard if one team
+  ever gets very large, a trade-off written down rather than hidden.
+- **Deploying through Northflank mid-build, after a real security incident on the provider**
+  ([ADR 0040](docs/decisions/0040-northflank-deployment.md)): the account held no secrets yet when it
+  happened, so the risk was accepted with every deploy credential made new, least-privilege where
+  possible, and separately rotatable from local dev — rather than treated as a reason to stall the whole
+  deployment gate.
+
+## What I'd do next
+
+In rough priority order, all written down as they were found rather than discovered now:
+
+1. **Make read-your-own-writes and the team cache safe for more than one API instance.** Both currently
+   rely on one process's in-memory 5-second marker; running two instances needs a position-based design
+   instead (comparing replica replay position to the write's commit LSN) — [ARCHITECTURE.md, "What
+   changes in production"](docs/ARCHITECTURE.md).
+2. **Measure the k6 load test's database time and pool wait separately**, not just whole-request latency
+   — [issue #83](https://github.com/Hennit-Dave/rota/issues/83).
+3. **Turn on Expo's enhanced push security** (an unauthenticated send endpoint today) and add a TTL to
+   billing push notifications — [ADR 0032](docs/decisions/0032-push-notifications-part-1.md).
+4. **Fill in the password blocklist** NIST SP 800-63B-4 asks for — the mechanism exists, the list is
+   empty, pending a data source with a confirmed licence — [ADR 0005](docs/decisions/0005-authentication-tokens-and-sessions.md).
+5. **A narrower Neon role for the deploy credential** (it currently has full project access because
+   Neon's Console offers nothing narrower) — [ADR 0040](docs/decisions/0040-northflank-deployment.md).
+6. **Queue clustering** (Valkey HA/Sentinel) once a single node's periodic-snapshot durability stops
+   being enough — Postgres stays the source of truth either way.
+
+## In-app purchase rules, and why this app doesn't use them
+
+*Checked 2026-11-06 against Apple's and Google's own current policy pages (quoted below, not from
+memory). Both platforms' rules are moving targets — ongoing antitrust litigation has already changed
+them once and a further revision is pending (see Google, below) — so this is a snapshot, not a
+permanent answer; re-check before ever relying on it.*
+
+Apple and Google each require their own purchase system for most subscriptions bought inside a mobile
+app — this section exists because I'm not publishing Rota to either store, and the README should show I
+know why that would matter if I did.
+
+**Apple (App Store Review Guidelines).** Section 3.1.1 is the default — "If you want to unlock features
+or functionality within your app... you must use in-app purchase," and 3.1.2(a) names software-as-a-service
+explicitly as a subscription type this covers. The one plausible exception is **3.1.3(c), Enterprise
+Services:** "If your app is only sold directly by you to organizations or groups for their employees or
+students... you may allow enterprise users to access previously-purchased content or subscriptions.
+Consumer, single-user, or family sales must use in-app purchase." A team subscription sold directly to a
+business could plausibly fit that — but Apple decides case by case, and a single-owner sign-up through
+the app itself looks a lot like the "single-user" case the same sentence excludes. There is no general
+"it's B2B so it's exempt" rule. **US storefront carve-out (post-*Epic v. Apple*):** 3.1.1(a) states the
+external-purchase-link entitlement is "not required... to include buttons, external links, or other
+calls to action in their United States storefront apps" — elsewhere, "this prohibition does not apply"
+only to the US. So a US release could link out to a web checkout without Apple's IAP at all, as an
+alternative to the enterprise exception above. Apple's own page did not state a current commission
+figure for such external-link sales where I could confirm it, so none is given here rather than guessed.
+
+**Google (Play's Payments policy).** Google Play's own billing system is required for "in-app purchases,"
+and its own examples name "business productivity software" directly — so Rota's per-seat plan would not
+obviously qualify for the physical-goods-and-services exceptions (transportation, cleaning, gym
+memberships, event tickets — real-world services consumed outside the app), the way, say, a taxi app's
+fare does. **US allowance (post-*Epic v. Google*):** Google's own page confirms it is still in effect today —
+"Google will not require the use of Google Play Billing in apps distributed on the Google Play Store, or
+prohibit the use of in-app payment methods other than Google Play Billing" for US users — but it is an
+**opt-in program requiring enrollment**, not an automatic exemption, and Google still takes a service fee
+on the alternative-billing transaction: **10% for the first $1M of annual earnings and for recurring
+transactions completed through an alternative billing system**, per Google's own current fee table. A
+revised settlement was filed with the court on 4 March 2026 and a new injunction is pending as of
+Google's most recent update (21 October 2026) — the rule as stated here could change again.
+
+**What this would mean in practice if Rota shipped to the stores:** either plan pricing, seat changes and
+renewals would need to move onto Apple's and Google's own subscription products — losing the exact
+proration engine this build was graded on, since both platforms own the subscription lifecycle, pricing
+tiers and renewal timing themselves — or the app would need to qualify for, and enrol in, one of the
+exceptions above (Apple's enterprise exception or US external link; Google's US alternative-billing
+program, still paying Google a reduced fee). Either path is a real decision to make before a store
+release, not a technicality. As shipped, none of this applies: Stripe runs in **test mode only**, and the
+app is not submitted to either store.
 
 ## Run the server locally
 
@@ -129,7 +275,7 @@ Optional: `SHIFTS_MAX_RANGE_DAYS` (42). The app's home is now the Schedule, with
 
 **Billing engine and schema** (slices P1 + P2, ADR 0026): no endpoint yet. `server/src/billing/` is the pure proration engine (integer cents, the brief's example is 2000; a charge under Stripe's 50-cent minimum is applied free) and the ledger functions; one migration, `20261028190000_add_billing`: run `npm run db:deploy:a` and `npm run db:deploy:b` from `server/`, then `npm run db:parity`, before using a real shard. Unit tests: `npm test`; schema tests against the TEST shards: `node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 src/billing/billing-schema.integration.test.ts`. This integration uses Stripe test mode only. Live-payment eligibility has not been verified. Stripe itself arrives with the next slice.
 
-**Activation: Stripe Checkout, the webhook and seat limits** (slice P3, ADR 0027): an Owner picks a plan and seats in the app, the server calculates the first period's charge, freezes it, and opens Stripe Checkout; only a signature-verified webhook, processed in a background job, activates the team. No schema change. Set `STRIPE_SECRET_KEY` (**must start with `sk_test_`**: the API refuses to start otherwise) and `STRIPE_WEBHOOK_SECRET` (the `whsec_` secret that `stripe listen` prints) in the root `.env`; names only are in `.env.example`. Locally: install the Stripe CLI, `stripe login`, then `stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired --forward-to localhost:3100/webhooks/stripe (the API port: set `PORT=3100` in the root `.env`, which is also where `app/.env` points)` while the API and the worker run. Tests: `npm test` (unit), and against the TEST shards `node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 src/billing/activation.integration.test.ts src/billing/seats.integration.test.ts`. For a manual proof (the app, the Stripe CLI, the SQL) run `npm run proof:api` and `npm run proof:worker` from `server/` (after `npm run build`): they use the TEST shards and their own queue; the plain `start:*` scripts use the real shards. A team on Starter (or not yet activated) holds five seats; the server refuses the sixth. This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
+**Activation: Stripe Checkout, the webhook and seat limits** (slice P3, ADR 0027): an Owner picks a plan and seats in the app, the server calculates the first period's charge, freezes it, and opens Stripe Checkout; only a signature-verified webhook, processed in a background job, activates the team. No schema change. Set `STRIPE_SECRET_KEY` (**`sk_test_` or a restricted `rk_test_` key — live keys refused**, PR #74) and `STRIPE_WEBHOOK_SECRET` (the `whsec_` secret that `stripe listen` prints) in the root `.env`; names only are in `.env.example`. Locally: install the Stripe CLI, `stripe login`, then `stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired --forward-to localhost:3100/webhooks/stripe (the API port: set `PORT=3100` in the root `.env`, which is also where `app/.env` points)` while the API and the worker run. Tests: `npm test` (unit), and against the TEST shards `node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 src/billing/activation.integration.test.ts src/billing/seats.integration.test.ts`. For a manual proof (the app, the Stripe CLI, the SQL) run `npm run proof:api` and `npm run proof:worker` from `server/` (after `npm run build`): they use the TEST shards and their own queue; the plain `start:*` scripts use the real shards. A team on Starter (or not yet activated) holds five seats; the server refuses the sixth. This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
 
 **Plan and seat changes and billing history** (slice P4, ADR 0028): an active team's Owner can add seats or move to a higher plan from "Plan & billing" in the app. The server quotes the change with the proration engine (`GET /teams/:id/billing/change-quote`), a change that costs nothing applies at once, and a paid one goes through Stripe Checkout and is applied only by the verified webhook, against the subscription version it was quoted against. Reductions arrive with the next slice. No schema change. Tests against the TEST shards: `node --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 src/billing/changes.integration.test.ts`. To prove a paid change against Stripe's sandbox on any day, `npm run proof:seed-subscription -- <teamId> team 15 12` (TEST shards only) gives a team a Team plan with 15 seats and 12 days left in a 30-day period; Team 15 to 18 is then $3.60. This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
 
