@@ -5,7 +5,10 @@ creates a team, invites staff and publishes shifts; staff see their shifts, requ
 
 **GIF of the app running:** pending — not yet recorded.
 
-**Android development build (preview APK):** pending — the first EAS preview build hasn't been run yet.
+**Android development build:** [download the preview build](https://expo.dev/accounts/hennitdave/projects/rota/builds/a7d7a16c-6699-493a-b139-c7ce640d1c9f)
+(public EAS build page, no sign-in needed — Install button). Tested on a real device and an emulator
+against the live API: sign-in, push notifications (including a cold start), invite links (including a
+cold start, App Links verified), theme switching.
 
 **Demo video:** pending — not yet recorded.
 
@@ -23,6 +26,113 @@ Sentry · deployed on Northflank.
 [k6 load test report](load-tests/REPORT.md)
 
 Design: [Rota screens in Figma](https://www.figma.com/design/scojjuqq2W5nWs7M1i6GrY)
+
+## The problem
+
+A small team — a café, a clinic, a shop — runs its rota out of a group chat and a shared spreadsheet.
+Shifts get posted as a photo of a whiteboard. A swap gets agreed in the chat and someone forgets to tell
+the manager, so two people show up for one shift and nobody does the other. A change happens at 11pm and
+whoever's phone is on buzzes, whether it's urgent to them or not. None of it is wrong exactly, it's just
+manual: every rule ("has the manager approved this swap?", "is this person even still on the team?",
+"did billing actually go through this month?") lives in someone's head instead of being enforced
+anywhere. Rota moves those rules onto a server that enforces them on every request, not just in the UI.
+
+## Tech stack, and why
+
+| Layer | Choice | Why |
+|---|---|---|
+| Mobile app | React Native + Expo, TypeScript, Android | One codebase, EAS Build for native builds without owning build infrastructure; Android only because an iOS device build needs a paid Apple Developer account |
+| Server state | TanStack Query | Cache times, retries and refetch-on-foreground come for free, documented per-query in `STATE.md` |
+| Client state | Zustand | One small store for session status, selected team and UI flags — explained in [ADR 0008](docs/decisions/0008-client-state-zustand.md) |
+| Tokens | `expo-secure-store` | Encrypted, excluded from Android's own backup — AsyncStorage is unencrypted |
+| API | Node.js + Express + TypeScript | Whole-request Zod validation (body, query and route params) on every route |
+| Database | PostgreSQL on two Neon projects (shards), Prisma 7 | Sharding is simulated per the brief, hashed by `team_id` — [SHARDING.md](docs/SHARDING.md) |
+| Queue, cache, rate limits | BullMQ on Aiven Valkey | A substitution for the brief's Redis — [ADR 0003](docs/decisions/0003-queue-worker-and-recovery.md) |
+| Payments | Stripe, test mode only | Checkout/PaymentIntent, never Stripe Subscriptions — proration is ours, calculated on the server |
+| Email | Resend | Sent only from a background job, never inside a request |
+| Deployment | Northflank | [ADR 0040](docs/decisions/0040-northflank-deployment.md) — free plan, no payment method charged |
+| Errors | Sentry (EU) | Errors only, one shared redaction list between server and app — [ADR 0039](docs/decisions/0039-sentry.md) |
+
+## How to run it locally
+
+Covered in full below: ["Run the server locally"](#run-the-server-locally) and ["Run the app"](#run-the-app-android-development-build).
+Short version: `cd server && npm ci && npm run build` then `npm run start:api` / `npm run start:worker`
+(needs a root `.env`, copied from `.env.example`), and the Expo app against either your own local API or
+the deployed one at `https://api.rota.davebuilds.design`.
+
+## Architecture summary
+
+App, API and worker are three separate processes; the API and worker share one Docker image (different
+start commands, [ADR 0036](docs/decisions/0036-container-image.md)) and both run on Northflank. Data is
+split across two independent Postgres databases ("shards"), each team routed to one by a hash of its ID,
+with a read replica per shard for read-heavy endpoints. One Valkey instance is the queue, the cache and
+the rate limiter. The Stripe webhook, email and push notifications all go through the queue — nothing
+slow or unreliable runs inside a request. Full diagram and detail: [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Key decisions
+
+- **Valkey instead of Redis** ([ADR 0003](docs/decisions/0003-queue-worker-and-recovery.md)): an
+  open-source, API-compatible fork, after Redis's own license change — Aiven offers it free with no card.
+- **We calculate proration, never Stripe** ([ARCHITECTURE.md §5h](docs/ARCHITECTURE.md)): plan, seats and
+  period live in our own database so the exact brief's rounding rule is testable in isolation, with no
+  Stripe Subscriptions object standing between us and what a customer is actually charged.
+- **Sharding by `team_id`, not by user** ([SHARDING.md](docs/SHARDING.md)): keeps one team's data on one
+  database so its own dashboard needs one query, not a fan-out — at the cost of a hot shard if one team
+  ever gets very large, a trade-off written down rather than hidden.
+- **Deploying through Northflank mid-build, after a real security incident on the provider**
+  ([ADR 0040](docs/decisions/0040-northflank-deployment.md)): the account held no secrets yet when it
+  happened, so the risk was accepted with every deploy credential made new, least-privilege where
+  possible, and separately rotatable from local dev — rather than treated as a reason to stall the whole
+  deployment gate.
+
+## What I'd do next
+
+In rough priority order, all written down as they were found rather than discovered now:
+
+1. **Make read-your-own-writes and the team cache safe for more than one API instance.** Both currently
+   rely on one process's in-memory 5-second marker; running two instances needs a position-based design
+   instead (comparing replica replay position to the write's commit LSN) — [ARCHITECTURE.md, "What
+   changes in production"](docs/ARCHITECTURE.md).
+2. **Measure the k6 load test's database time and pool wait separately**, not just whole-request latency
+   — [issue #83](https://github.com/Hennit-Dave/rota/issues/83).
+3. **Turn on Expo's enhanced push security** (an unauthenticated send endpoint today) and add a TTL to
+   billing push notifications — [ADR 0032](docs/decisions/0032-push-notifications-part-1.md).
+4. **Fill in the password blocklist** NIST SP 800-63B-4 asks for — the mechanism exists, the list is
+   empty, pending a data source with a confirmed licence — [ADR 0005](docs/decisions/0005-authentication-tokens-and-sessions.md).
+5. **A narrower Neon role for the deploy credential** (it currently has full project access because
+   Neon's Console offers nothing narrower) — [ADR 0040](docs/decisions/0040-northflank-deployment.md).
+6. **Queue clustering** (Valkey HA/Sentinel) once a single node's periodic-snapshot durability stops
+   being enough — Postgres stays the source of truth either way.
+
+## In-app purchase rules, and why this app doesn't use them
+
+Apple and Google each require their own purchase system for most subscriptions bought inside a mobile
+app — this section exists because I'm not publishing Rota to either store, and the README should show I
+know why that would matter if I did.
+
+**Apple (App Store Review Guidelines, read 2026-11-06):** section 3.1.1 is the default — "If you want to
+unlock features or functionality within your app... you must use in-app purchase," and 3.1.2(a) names
+software-as-a-service explicitly as a subscription type this covers. The one plausible exception is
+**3.1.3(c), Enterprise Services:** "If your app is only sold directly by you to organizations or groups
+for their employees or students... you may allow enterprise users to access previously-purchased content
+or subscriptions. Consumer, single-user, or family sales must use in-app purchase." A team subscription
+sold directly to a business could plausibly fit that — but Apple decides case by case, and a single-owner
+sign-up through the app itself looks a lot like the "single-user" case the same sentence excludes. There
+is no general "it's B2B so it's exempt" rule.
+
+**Google (Play's Payments policy, read 2026-11-06):** section 2 requires Google Play's own billing system
+for "in-app purchases," and its own examples name "business productivity software" directly — so Rota's
+per-seat plan would not obviously qualify for the physical-goods-and-services exceptions in section 3
+(transportation, cleaning, gym memberships, event tickets — real-world services consumed outside the
+app), the way, say, a taxi app's fare does.
+
+**What this would mean in practice if Rota shipped to the stores:** either plan pricing, seat changes and
+renewals would need to move onto Apple's and Google's own subscription products — losing the exact
+proration engine this build was graded on, since both platforms own the subscription lifecycle, pricing
+tiers and renewal timing themselves — or the app would need to qualify for, and be approved under, the
+enterprise exception, which is a distribution and sales-agreement question as much as a technical one. As
+shipped, none of this applies: Stripe runs in **test mode only**, and the app is not submitted to either
+store, so this is read as the engineering trade-off it would become, not a decision already made.
 
 ## Run the server locally
 
