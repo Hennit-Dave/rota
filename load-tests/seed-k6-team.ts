@@ -6,6 +6,13 @@
 // - 10,000 activity rows for that team, same shape as server/src/db/feed-proof.ts's proof data, so
 //   cursor paging is real, not a handful of rows that all fit on one page.
 //
+// Signs with K6_DEPLOY_AUTH_JWT_SECRET, never AUTH_JWT_SECRET: the deployed rota-api verifies tokens
+// against its OWN secret, which is deliberately different from local dev's (Dave, 2026-11-06, found
+// the hard way - a first run signed locally and every request came back 401). K6_DEPLOY_AUTH_JWT_SECRET
+// is the deployed value, pasted into root .env by Dave for this run only, never printed here, and
+// never synced into AUTH_JWT_SECRET itself. This script refuses to run without it - it never falls
+// back to signing with the local secret against the real shards.
+//
 // Real shards. Nothing else on them is touched. Run from server/ so tsx resolves its own node_modules:
 //   cd server && npx tsx --env-file-if-exists=../.env ../load-tests/seed-k6-team.ts
 import { randomUUID } from 'node:crypto';
@@ -22,10 +29,25 @@ const USER_COUNT = 200;
 const ACTIVITY_ROWS = 10_000;
 const OUTPUT_FILE = new URL('.k6-tokens.json', import.meta.url);
 
+function loadDeploySecret(): Uint8Array {
+  const raw = process.env.K6_DEPLOY_AUTH_JWT_SECRET;
+  if (!raw) {
+    throw new Error(
+      'K6_DEPLOY_AUTH_JWT_SECRET is not set. This script seeds the REAL shards and mints tokens the ' +
+        'DEPLOYED API must verify, so it refuses to fall back to the local AUTH_JWT_SECRET - they are ' +
+        'deliberately different. Paste the deployed value into root .env as K6_DEPLOY_AUTH_JWT_SECRET ' +
+        'yourself (never AUTH_JWT_SECRET, which stays local-only).',
+    );
+  }
+  // Reuses loadJwtSecret's own base64/length validation (RFC 7518 3.2) rather than re-implementing it,
+  // just pointed at the deploy secret instead of AUTH_JWT_SECRET.
+  return loadJwtSecret({ AUTH_JWT_SECRET: raw });
+}
+
 async function main() {
   const shards = createShards({ primaryMax: 5 });
   const authConfig = loadAuthConfig();
-  const tokens = createTokenService({ secret: loadJwtSecret(), config: authConfig });
+  const tokens = createTokenService({ secret: loadDeploySecret(), config: authConfig });
   const identity = identityDb(shards);
 
   console.log(`feed rate limit actually configured: ${authConfig.rateLimits.feedUser.max} requests / ${authConfig.rateLimits.feedUser.windowSeconds}s per user`);

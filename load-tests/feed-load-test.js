@@ -12,7 +12,8 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 const BASE_URL = __ENV.BASE_URL || 'https://api.rota.davebuilds.design';
-const TOKENS_FILE = __ENV.TOKENS_FILE || './load-tests/.k6-tokens.json';
+// k6's open() resolves relative to THIS file's own directory, not the invoking shell's cwd.
+const TOKENS_FILE = __ENV.TOKENS_FILE || './.k6-tokens.json';
 // Randomized per iteration (1-4 pages) rather than fixed: a fixed count would have every VU walk the
 // identical top slice of the feed every time, so most of the 10,000 seeded rows would never be read.
 // Bounded by the REAL configured limit seed-k6-team.ts printed (120 requests/60s per user, confirmed
