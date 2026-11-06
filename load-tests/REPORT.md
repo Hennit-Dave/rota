@@ -204,6 +204,26 @@ About 0.4% of each project's monthly allowance for both runs combined. Each repl
 CU max only for the run window and lowered back to 0.25 CU immediately after run 2 — confirmed, not
 left raised.
 
+## Pool limits (`data.md` test 11)
+
+Checked against Neon Monitoring's own "Last day" view for `neondb` on both shards (screenshots saved;
+this view is minute-averaged, not per-request):
+
+| | Shard A (`ep-red-butterfly`) | Shard B (`ep-jolly-smoke`) |
+|---|---|---|
+| Rows | one ~11.4K insert spike (the seed) | two ~10.2K spikes (one seed per run) |
+| Postgres connections | ~0, against a max of 905 | ~0, against a max of 905 |
+| Pooler server connections (peak) | 1-2 | 1 |
+| Pooler client max wait | 0.00s | 0.00s |
+
+**Active connections never approached the configured maximums** (`.agents/rules/data.md`: API 5 per
+shard primary + 5 per replica, worker 3 per shard primary) - Neon's own transaction-mode pooler folded
+all 200 VUs' traffic down to 1-2 actual Postgres server connections per shard, with zero pooler wait.
+This confirms the first half of test 11 (connections stayed within limits) but not the second: **the
+app's own Prisma pool wait and database-vs-API time split were not measured** - Neon's pooler-side view
+shows its own queue, not time spent inside the API process waiting for a client from the pg `Pool`.
+Tracked as a documented gap with a non-blocking follow-up: [issue #83](https://github.com/Hennit-Dave/rota/issues/83).
+
 ## Cleanup
 
 Both runs' seeded data were deleted immediately after use, verified empty by the cleanup script
