@@ -112,8 +112,29 @@ Run 2's 2 failures, exact cause captured this time: both `HTTP 503`,
 `upstream connect error or disconnect/reset before headers, reset reason: connection termination` —
 an istio-envoy-level blip on Northflank's own ingress, not an application error.
 
-**Cache hit rate** (`cache_stats` log line, `rota-api`, during/after run 2): *pending — not yet
-pulled from the deployed logs.*
+**Cache hit rate** (`cache_stats` log line, `rota-api`, read directly from the deployed logs,
+screenshots saved):
+
+| Run | 60s window | cacheHits | cacheMisses | cacheHitRate |
+|---|---|---|---|---|
+| 1 (`CACHE_ENABLED=false`) | 1 | 0 | 0 | n/a — `cacheOff`: 814 requests logged |
+| 1 | 2 | 0 | 0 | n/a — `cacheOff`: 1359 |
+| 1 | 3 | 0 | 0 | n/a — `cacheOff`: 54 |
+| 2 (`CACHE_ENABLED=true`) | 1 | 1095 | 45 | 0.961 |
+| 2 | 2 | 1396 | 49 | 0.966 |
+| 2 | 3 | 42 | 3 | 0.933 |
+
+Run 1's three `cacheOff` counts confirm caching was genuinely off for that run, not just configured
+off with the counter never incrementing. Run 2's hit rate sits at 93–97% across all three windows;
+`cacheErrors`, `cacheWritesRejected` and `cacheInvalidationFailures` were all 0 throughout, so the
+3-7% that missed were ordinary cursor pages (never cache-eligible by design — see "what changed"
+below), not cache failures.
+
+A further finding from the request logs themselves: some run 2 requests tagged `"cache":"hit"` still
+took 1.2-2.2s, and some of those also carry `"dbRoute":"primary-required"` — inside a writer's 5-second
+consistency window, the per-request session/role check still has to run against the primary even
+though the feed payload itself came from cache. Caching the feed's first page does not remove that
+per-request session-check cost; see "what I'd change next" below.
 
 ## What changed, and why
 
@@ -124,6 +145,7 @@ pulled from the deployed logs.*
 | p95 | 3.11s | 2.68s | 14% faster |
 | Throughput (`http_reqs`/s) | 47.92 | 56.19 | 17% higher |
 | Error rate | 0.08% | 0.03% | lower |
+| Cache hit rate | n/a (off) | 93–97% | — |
 
 Caching only covers the feed's **first page** (`caching.md`: "never cacheable between the server and
 the app... the server-side cache of its first page"); every page reached via a cursor is never
@@ -165,6 +187,10 @@ user delete, not application code). Nothing else on the real shards was touched 
   average (see "what I'd change next").
 - Two istio-envoy `503`s per run at this concurrency (Northflank's own ingress, not the app) - a
   small (<0.1%) but real tail worth watching if load ever increases.
+- The per-request session/role check still hits the primary on a cache hit when the request falls
+  inside a writer's 5-second consistency window (`"dbRoute":"primary-required"` alongside
+  `"cache":"hit"` in the request logs) - caching the feed payload itself doesn't remove this cost,
+  which is why some cache hits still took 1.2-2.2s.
 
 ## Cold-start effects
 
@@ -180,6 +206,9 @@ requests are included in the reported aggregates, not excluded.
   cache's effect much more precisely than the current whole-run numbers.
 - Expose cache hit/miss as something k6 can see directly (a response header, for example), instead of
   needing a separately-pulled server log line after the fact.
+- Separate the latency of a true cache hit (no primary involved) from a cache hit that still pays the
+  primary-required session check, instead of one blended "cache hit" bucket - the request logs show
+  both exist and likely explain most of the 1.2-2.2s outliers seen among otherwise-fast cache hits.
 - Pull `rota-api`'s logs for run 1's exact failure window, now that it's clear from run 2 what to look
   for (503s from istio), to confirm run 1's 5 failures were the same thing rather than inferring it.
 - Investigate issue #79 (the worker's ~5-minute Valkey reconnect pattern) for whether it's related to
