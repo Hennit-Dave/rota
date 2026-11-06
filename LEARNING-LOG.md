@@ -257,3 +257,7 @@ I learned that filling the cache means saving a database result for later reques
 ## 2026-11-04 — Sentry (PR #72)
 
 I learned that the request ID should be attached when an error is captured, so it stays linked to the request that caused it. If two requests fail at the same time and overwrite an ID on a shared scope, an error could be labelled with the other request's ID. Keeping that information with each error makes the logs reliable to follow.
+
+## 2026-11-06 — Northflank deploy (PR #77)
+
+I learned that the queue can lose a job without losing the record that the work still needs doing, because Postgres is the source of truth. The sweep checks Postgres for unfinished work that is eligible to run and puts it back in the queue. This lets Rota recover missing jobs instead of relying on the queue as the only record.

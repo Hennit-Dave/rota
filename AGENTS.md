@@ -45,7 +45,8 @@ expiring trial credits. If something can't be free, say so plainly.**
 - Tokens: `expo-secure-store` only.
 - API: Node.js + Express + TypeScript. Validation: Zod on the **whole request** (body, query, route params).
 - Database: PostgreSQL on two Neon projects (one per shard), pooled `-pooler` strings, read replicas.
-- ORM: Prisma 7 with `@prisma/adapter-pg`. Deployment provider: **pending approval** (Northflank candidate, Oracle Always Free fallback).
+- ORM: Prisma 7 with `@prisma/adapter-pg`. Deployment provider: **Northflank** (ADR 0040; Oracle Always Free
+  stays documented as the inactive fallback).
 - Queue, cache, rate limits: BullMQ on **one Aiven for Valkey instance**. Valkey is a substitution for the
   Redis the brief names. It must be recorded in `ARCHITECTURE.md` and an ADR. Facilitator sign-off pending.
 - Payments: Stripe **test mode**, Checkout in payment mode or a PaymentIntent. **No Stripe Subscriptions.**
@@ -148,9 +149,13 @@ passes, the infrastructure is a plan, not a verified stack:
 
 These stay required before submission but no longer hold up feature work. The reconciliation sweep that
 queue-loss recovery depends on already exists (ADR 0004); only its end-to-end proof is deferred.
-- [ ] Queue-loss recovery: delete disposable queued jobs from Valkey; the independent reconciliation
-      process restores them from Postgres. A worker restart alone doesn't prove this.
-- [ ] Queue-loss recovery repeated with the deployed worker
+- [x] Queue-loss recovery: delete disposable queued jobs from Valkey; the independent reconciliation
+      process restores them from Postgres. A worker restart alone doesn't prove this. Proven PR #77,
+      directly on the deployed worker (see the next box).
+- [x] Queue-loss recovery repeated with the deployed worker. Proven PR #77: a delayed `test` row was
+      written to the real shard and its BullMQ job deleted from the real Valkey; `rota-worker` never
+      restarted; the reconnect-triggered sweep (not the 30-minute timer — it fired first) restored
+      and completed it 3 minutes later. The timed sweep ran afterward too, 0 rows to restore.
 - [x] One email from the worker through Resend. Proven with the invite feature (2026-10-23, PR #36; Dave confirmed it arrived, not in spam, sender, reply-to, subject, body and expiry correct).
 - [ ] Password blocklist data: bundle a list of common/compromised passwords whose data licence is confirmed (or write our
       own), with its source and licence notice. The mechanism exists but the list is empty, so NIST SP 800-63B-4 3.1.1.2's
@@ -159,13 +164,21 @@ queue-loss recovery depends on already exists (ADR 0004); only its end-to-end pr
 ## Deployment gate — before read-your-own-writes is marked done, and before submission
 
 Feature work may continue locally while this is open. Nothing is described as deployed until it passes:
-- [ ] Provider approved by Dave and recorded in an ADR
-- [ ] Provider confirmed free; spending blocked, not just alerted
-- [ ] API and worker running on the approved provider
-- [ ] Stop-then-start deploys confirmed: the old API process stops before the new one starts (`data.md`,
-      one-process rule). If the provider can't do this, stop and ask; the read-your-own-writes design changes.
-- [ ] Worker-restart recovery repeated with the deployed worker
-- [ ] One email from the deployed worker through Resend
+- [x] A real Stripe webhook event is received by the deployed API, its signature verified against the
+      raw body, durably recorded on shard A (deduplicated by event ID), and processed by the deployed
+      worker (ADR 0040 — also the proof that the webhook endpoint's chosen API version, `2026-10-28.endive`,
+      actually matches what the SDK's default-pinned version expects). Proven PR #77.
+- [x] Provider approved by Dave and recorded in an ADR (ADR 0040)
+- [x] Provider confirmed free; spending blocked, not just alerted (ADR 0040: no payment method on file)
+- [x] API and worker running on the approved provider (ADR 0040)
+- [x] Stop-then-start deploys confirmed: the old API process stops before the new one starts (`data.md`,
+      one-process rule). Proven PR #77: `rota-api` Restart (Recreate), old pod's `api closed` log line
+      timestamped before the new pod's `api listening` line, no overlap.
+- [x] Worker-restart recovery repeated with the deployed worker. Proven PR #77: `rota-worker`
+      Pause (0 instances) then Resume, work created during the outage stayed `pending` until
+      Resume, then was picked up and sent.
+- [x] One email from the deployed worker through Resend. Proven PR #77, same event: an invite
+      email, sender/reply-to/subject/link/expiry confirmed correct by Dave.
 
 ## Repo map
 
