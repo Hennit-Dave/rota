@@ -170,8 +170,11 @@ Feature work may continue locally while this is open. Nothing is described as de
 - [x] Stop-then-start deploys confirmed: the old API process stops before the new one starts (`data.md`,
       one-process rule). Proven PR #77: `rota-api` Restart (Recreate), old pod's `api closed` log line
       timestamped before the new pod's `api listening` line, no overlap.
-- [ ] Worker-restart recovery repeated with the deployed worker
-- [ ] One email from the deployed worker through Resend
+- [x] Worker-restart recovery repeated with the deployed worker. Proven PR #77: `rota-worker`
+      Pause (0 instances) then Resume, work created during the outage stayed `pending` until
+      Resume, then was picked up and sent.
+- [x] One email from the deployed worker through Resend. Proven PR #77, same event: an invite
+      email, sender/reply-to/subject/link/expiry confirmed correct by Dave.
 
 ## Repo map
 
