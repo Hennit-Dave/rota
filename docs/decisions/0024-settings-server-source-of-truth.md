@@ -58,8 +58,9 @@ Three changes from the SQL Dave approved, each tightening it:
 - **Interview question 6** (quiet hours changed offline on the phone, then on the tablet; which wins?): the phone's offline change never reaches the server, because it is not queued: it fails at once and rolls back. The tablet's change is the only one the server saw, so it stands. Had we queued the phone's change, it would arrive later and, being the last arrival, would overwrite the tablet's.
 - A device whose clock is wrong does not matter: no client time is ever used.
 - **Switching the theme repaints the whole tree**, including re-reading every icon's artwork. On the emulator, in a development build, the colours followed the
-  optimistic value after about 0.8 s (to Light) and 2.5 s (to System): the row already shows the new value, the page catches up. Not measured on a release
-  build.
+  optimistic value after about 0.8 s (to Light) and 2.5 s (to System): the row already shows the new value, the page catches up. **Measured on the release
+  (preview) build, 2026-11-06:** the repaint is instant — the lag was a development-build artefact (Metro/the dev client), not something the shipped app
+  does.
 - Quiet-hours and time-zone enforcement are not in this PR (they land with push). Until then the settings are stored and shown but nothing is held back.
 - The launch screen can now last as long as the settings request (at most the API client's 15 s timeout, the same ceiling as the session check); in practice it overlaps with the check of the session.
 - The Billing row appears for an Owner of any team, whichever team is selected; the value is one per person. It is hidden until the team list has loaded.

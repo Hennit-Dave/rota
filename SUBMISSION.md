@@ -10,9 +10,9 @@ here is ticked without a link behind it. **Pending** means not yet proven; it is
 | # | Deliverable | Status | Evidence |
 |---|---|---|---|
 | 1 | Public GitHub repo | ✅ | [Hennit-Dave/rota](https://github.com/Hennit-Dave/rota) — public, description and topic tags set |
-| 2 | **Android development build download link** | ⏳ Pending | No build has produced a shareable link yet. The `preview` EAS profile exists ([PR #78](https://github.com/Hennit-Dave/rota/pull/78)); the build itself hasn't been run |
+| 2 | **Android development build download link** | ⏳ Pending link only | The preview (release) build exists and passed full device testing on 2026-11-06 — real Tecno Pop 20 (Staff) + emulator (Owner) against the deployed API: sign-in both accounts, push delivered and opened to the right screen from a cold start, invite link opened to the right screen from a cold start (App Links verified on the real device), instant theme repaint (ADR 0024), issue #41's package bump shipped with no issues. The EAS build page link itself isn't pasted into the README yet |
 | 3 | **Deployed backend** | ✅ | `https://api.rota.davebuilds.design` on Northflank ([ADR 0040](docs/decisions/0040-northflank-deployment.md)); all 5 deployment-gate checks proven, [PR #77](https://github.com/Hennit-Dave/rota/pull/77) |
-| 4 | `README.md` | ✅ | This repo's [README.md](README.md). First-screen order per the brief: one-liner, then GIF/APK/demo-video (all still pending, marked as such), live API, Stripe wording, stack, doc links |
+| 4 | `README.md` | ✅ | This repo's [README.md](README.md). First-screen order per the brief: one-liner, then GIF/APK/demo-video (APK build exists and is tested, pending its link; GIF and demo video still pending, marked as such), live API, Stripe wording, stack, doc links |
 | 5 | `ARCHITECTURE.md` | ✅ | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), including the diagram (row 10) |
 | 6 | `STATE.md` | ✅ | [docs/STATE.md](docs/STATE.md) |
 | 7 | `SECURITY.md` (8 threats) | ✅ | [docs/SECURITY.md](docs/SECURITY.md) — all 8, each with mitigation and proving tests |
@@ -20,7 +20,7 @@ here is ticked without a link behind it. **Pending** means not yet proven; it is
 | 9 | `LEARNING-LOG.md` | ✅ | [LEARNING-LOG.md](LEARNING-LOG.md) — all 7 self-study topics ticked |
 | 10 | **Architecture diagram** (Excalidraw or Mermaid) | ✅ | Mermaid, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#architecture-diagram) |
 | 11 | **Test results for permissions, team isolation and proration** | ✅ | Permissions/isolation: `server/src/teams/permissions.unit.test.ts`, `server/src/teams/team-security.integration.test.ts`, `server/src/shifts/shifts.integration.test.ts`. Proration: `server/src/billing/proration.unit.test.ts` (24 cases, the brief's numbered 8 among them) |
-| 12 | **Load test report** (200 VUs, before/after caching) | ✅ | [load-tests/REPORT.md](load-tests/REPORT.md), [PR #81](https://github.com/Hennit-Dave/rota/pull/81). **Partial gap:** reports whole-request latency only; `data.md` test 11 also asks for database time and pool wait reported separately, and confirmation that active connections stayed within the configured pool maximums during the run — neither was captured. See "Known gaps" below |
+| 12 | **Load test report** (200 VUs, before/after caching) | ✅ | [load-tests/REPORT.md](load-tests/REPORT.md), [PR #81](https://github.com/Hennit-Dave/rota/pull/81). **Partial gap:** reports whole-request latency only; `data.md` test 11 also asks for database time and pool wait reported separately, and confirmation that active connections stayed within the configured pool maximums during the run — neither was captured. Tracked as [issue #83](https://github.com/Hennit-Dave/rota/issues/83) |
 | 13 | **Demo video** (under 3 minutes, product first) | ⏳ Pending | Not recorded |
 | 14 | **A LinkedIn post about one technical decision** | ⏳ Pending | Not written. Dave's call which decision |
 | 15 | Before-and-after recordings of problems fixed | ⚠️ Partial | Process has been followed since it was corrected (see `LEARNING-LOG.md`, 2026-10-22). Clips are held by Dave, not in the repo — ask him which bugs have both clips |
@@ -48,7 +48,7 @@ here is ticked without a link behind it. **Pending** means not yet proven; it is
 | 3 | Shift calendar + paginated activity feed | ✅ | [ADR 0021](docs/decisions/0021-shifts-calendar-and-activity-rows.md), [ADR 0022](docs/decisions/0022-activity-feed-cursor-index-and-fail-closed.md); [PR #47](https://github.com/Hennit-Dave/rota/pull/47), [#49](https://github.com/Hennit-Dave/rota/pull/49) |
 | 4 | Shift swaps with manager approval | ✅ | [ADR 0023](docs/decisions/0023-swaps-with-manager-approval.md); [PR #50](https://github.com/Hennit-Dave/rota/pull/50) |
 | 5 | Seat-based subscriptions, upgrades/downgrades, proration | ✅ | [ADR 0026](docs/decisions/0026-billing-engine-and-schema.md)-[0031](docs/decisions/0031-renewals-and-failed-renewals.md); [PR #56](https://github.com/Hennit-Dave/rota/pull/56)-[#61](https://github.com/Hennit-Dave/rota/pull/61) |
-| 6 | Push notifications | ✅ | [ADR 0032](docs/decisions/0032-push-notifications-part-1.md), [ADR 0033](docs/decisions/0033-push-notifications-part-2.md); [PR #63](https://github.com/Hennit-Dave/rota/pull/63), [#65](https://github.com/Hennit-Dave/rota/pull/65). **Partial:** cold-start tap-to-open is verified warm/backgrounded; cold-start (app not running) still needs the preview build to verify (ADR 0032, "What remains") |
+| 6 | Push notifications | ✅ | [ADR 0032](docs/decisions/0032-push-notifications-part-1.md), [ADR 0033](docs/decisions/0033-push-notifications-part-2.md); [PR #63](https://github.com/Hennit-Dave/rota/pull/63), [#65](https://github.com/Hennit-Dave/rota/pull/65). Cold start now verified too, 2026-11-06, real device (ADR 0032) |
 | 7 | Settings synced across devices | ✅ | [ADR 0024](docs/decisions/0024-settings-server-source-of-truth.md); [PR #51](https://github.com/Hennit-Dave/rota/pull/51) |
 | 8 | Offline viewing of upcoming shifts | ✅ | [ADR 0034](docs/decisions/0034-offline-upcoming-shifts.md); [PR #66](https://github.com/Hennit-Dave/rota/pull/66) |
 
@@ -131,7 +131,7 @@ Covered in full above ("Deliverables checklist" row 7 and `docs/SECURITY.md` its
 | Register device token after login, linked to user; multiple devices | ✅ | [ADR 0032](docs/decisions/0032-push-notifications-part-1.md); `device_tokens` table |
 | Sent from a background job, never in the request | ✅ | `push/jobs.ts`; `AGENTS.md` rule 10 |
 | Invalid tokens deleted | ✅ | `push_receipts` sweep, ~15 min later, deletes `DeviceNotRegistered` |
-| Tapping opens the exact screen (deep link) | ⚠️ Partial | Verified with the app open/backgrounded; cold start (app not running) not yet verified — needs the preview build (ADR 0032, "What remains") |
+| Tapping opens the exact screen (deep link) | ✅ | Verified with the app open/backgrounded, and from a cold start too, 2026-11-06, real device (ADR 0032) |
 | Grouped notification types, each togglable | ✅ | `notifyShiftChanges`, `notifySwapUpdates`, `notifyBilling` settings; one Android channel per type, [ADR 0033](docs/decisions/0033-push-notifications-part-2.md) |
 | Quiet hours + time zone respected on the server | ✅ | `settings/quietHours.ts`, called from the push job when it runs |
 
@@ -152,11 +152,11 @@ pool-wait gap noted in the deliverables checklist (row 12) and below.
 
 ## Known gaps — not yet proven (do not tick these)
 
-1. **Android development build / preview APK download link** — no build run yet.
-2. **k6 report doesn't separately measure database time and pool wait, or confirm connections stayed within the configured pool maximums** (`data.md` test 11). The report only has whole-request `http_req_duration`. Would need either Northflank/Neon-side timing broken out, or in-process instrumentation added to the API before a re-run.
+1. **Android preview APK download link** — the build itself is done and passed full device testing (2026-11-06); only the EAS build page link isn't pasted into the README yet.
+2. **k6 report doesn't separately measure database time and pool wait, or confirm connections stayed within the configured pool maximums** (`data.md` test 11). The report only has whole-request `http_req_duration`. Tracked as [issue #83](https://github.com/Hennit-Dave/rota/issues/83) — not blocking submission; Dave is screenshotting Neon Monitoring's connections graph as a stand-in proof that the ceiling wasn't exceeded (it won't show wait time).
 3. **Demo video** — not recorded.
 4. **LinkedIn post about one technical decision** — not written.
-5. **Cold-start push notification tap** — only verified warm/backgrounded; needs the preview build.
+5. **Keyboard bug #52** — Dave reports it does not reproduce in the release build (a development-build artefact). [Issue #52](https://github.com/Hennit-Dave/rota/issues/52) asks for an "after" recording to match the "before" frames already captured, per the standing rule (record broken, then fixed); not yet confirmed one exists, so the issue stays open until it does.
 6. **A comprehensive git-history secret scan** — individual leaks were found and rotated as they came up; no single pass (e.g. `gitleaks`) has been run and recorded end to end.
 7. **Rota pinned on GitHub profile, 2×/week LinkedIn posts, 30-company lead tracker** — not verifiable from the repo; ask Dave directly.
 8. **Portfolio case study and CV/LinkedIn bullet** — not started.
