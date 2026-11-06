@@ -95,6 +95,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     'expo-router',
     'expo-secure-store',
+    // Required by expo-web-browser as of SDK 58's patch bump (issue #41); added by `expo install --fix`'s own instruction.
+    'expo-web-browser',
     [
       'expo-notifications',
       {
