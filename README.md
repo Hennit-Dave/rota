@@ -263,3 +263,23 @@ Notes:
 - If the app is already signed in as someone else, use Settings, then Account & sessions, then Log out first.
 - When typing with `adb shell input text`, tap the field first and check it has focus. With no field focused, a double `r` in the text reloads the app (React Native's dev shortcut) and the rest of the text is lost.
 - To use the API from the host instead of the emulator, replace `10.0.2.2` with `127.0.0.1`.
+
+## Load testing (k6)
+
+`load-tests/` holds the Task A load test: 200 virtual users loading the activity feed at once, run
+against the **real, deployed** shards, never local or test ones. Full write-up, both runs' results and
+the cache hit rate: [`load-tests/REPORT.md`](load-tests/REPORT.md).
+
+```sh
+# From the repo root. Needs K6_DEPLOY_AUTH_JWT_SECRET in .env (the deployed AUTH_JWT_SECRET, pasted in
+# for the run only, never the local one - the seeded tokens must verify against the deployed API).
+cd server && npx tsx --env-file-if-exists=../.env ../load-tests/seed-k6-team.ts   # seed 200 users + 10k activity rows
+k6 run load-tests/feed-load-test.js                                              # the actual run
+cd server && npx tsx ../load-tests/cleanup-k6-team.ts                            # delete everything the seed created
+```
+
+Notes:
+- Seed fresh immediately before each run (`seed-k6-team.ts` prints the configured access-token
+  lifetime, and tokens expire); clean up immediately after.
+- Raise each Neon shard's read replica cap before a real run and lower it back afterward - never leave
+  it raised (`load-tests/REPORT.md`'s Neon budget section has the actual CU-hours used).

@@ -9,7 +9,7 @@ The seven self-study topics (a graded requirement). Tick a topic only when its e
 - [x] Refresh-token rotation and reuse detection
 - [x] Idempotency (2026-10-21)
 - [x] Observability
-- [ ] Load testing
+- [x] Load testing (2026-11-06)
 - [x] Architecture Decision Records (2026-10-16)
  
 ## 2026-10-15 — Agent instruction setup
@@ -261,3 +261,7 @@ I learned that the request ID should be attached when an error is captured, so i
 ## 2026-11-06 — Northflank deploy (PR #77)
 
 I learned that the queue can lose a job without losing the record that the work still needs doing, because Postgres is the source of truth. The sweep checks Postgres for unfinished work that is eligible to run and puts it back in the queue. This lets Rota recover missing jobs instead of relying on the queue as the only record.
+
+## 2026-11-06 — k6 load test (PR #81) · Self-study: Load testing
+
+I learned that a 96% cache hit rate means most requests reused cached data, reducing the time spent fetching it again. It did not make every request fast because the session check still queries the database on every request. The cache speeds up one part of the request, but other work can still cause delays.

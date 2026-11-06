@@ -129,6 +129,18 @@ by that reasoning alone — see the deployment gate's first check.
   entry deleted from the real Valkey while `rota-worker` kept running untouched, restored and
   completed by the reconnect-triggered reconciliation sweep — not the 30-minute timer, which ran
   afterward and found nothing to do).
+- **`AUTH_JWT_SECRET` rotated early (2026-11-06), ahead of the general post-submission rotation this
+  ADR already planned.** Reason: the k6 load test (`load-tests/`) needed 200 pre-issued, locally-minted
+  sessions whose access tokens the *deployed* API would actually verify — the first attempt minted
+  them with local dev's own `AUTH_JWT_SECRET` and every one of 200 VUs got a 401 (confirmed by
+  decoding the rejected token: `iss`/`aud`/`exp`/`sub`/`sid` all correct, session active in Postgres —
+  the signature itself was the only thing that could still be wrong, and local dev's secret is
+  deliberately different from the deployed one, matching this ADR's own per-deploy-credential
+  philosophy). Fix: Dave pasted the deployed value into a new, local-only `K6_DEPLOY_AUTH_JWT_SECRET`
+  env var for the run's duration — never synced with local `AUTH_JWT_SECRET`, never printed, deleted
+  from `.env` once the runs finished. Northflank's `AUTH_JWT_SECRET` was then rotated to a fresh
+  `openssl rand -base64 32` value and `rota-api` restarted and confirmed healthy. Full k6 results:
+  `load-tests/REPORT.md`.
 - Known, non-blocking follow-up: deployed Postgres connections use `sslmode=require` (TLS, no
   certificate verification); Postgres's own deprecation warning for this appeared in the worker's
   stderr on first boot. Tracked as issue #76 (move to `sslmode=verify-full`).
