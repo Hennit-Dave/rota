@@ -67,7 +67,12 @@ export default function () {
         }
       },
     });
-    if (!ok || res.status !== 200) break;
+    if (!ok || res.status !== 200) {
+      // Logged here because X-Load-Test: k6 keeps these off Sentry by design (LOAD_TEST_MODE) - this
+      // is the only place a failure's actual status/body gets recorded, not just a count.
+      console.error(`FAILED vu=${__VU} status=${res.status} page=${page} body=${res.body?.slice(0, 300)}`);
+      break;
+    }
     const body = res.json();
     if (!body.nextCursor) break;
     cursor = body.nextCursor;
