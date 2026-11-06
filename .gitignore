@@ -28,3 +28,6 @@ credentials.json
 
 # Generated Prisma client
 server/src/generated/
+
+# k6 load test: live bearer tokens for 200 real seeded users (load-tests/seed-k6-team.ts). Never commit.
+load-tests/.k6-tokens.json
