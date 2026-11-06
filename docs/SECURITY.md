@@ -1,18 +1,18 @@
 # Security
 
-Status: **partial**, written as slices land (PR A server authentication, PR B app scaffold). The eight-threat list (brief, Requirement 4) is
-completed in later slices; sections below are added by the slice that builds the control.
+The brief's eight-threat list (Requirement 4), each with its mitigation and where it is tested or proven. All eight are
+complete; the sections linked below have the full write-up, and "Proving tests" under each names the exact test files.
 
-| # | Threat | Status |
-|---|---|---|
-| 1 | Staff calling Manager-only endpoints directly | Written below (Teams and roles); the brief's delete-shift test is in `shifts.integration.test.ts` (slice C1) |
-| 2 | Reading another team's data by changing an ID | Written below (Teams and roles) |
-| 3 | A stolen access token | Written below (PR A) |
-| 4 | A stolen refresh token, and reuse | Written below (PR A) |
-| 5 | Credential stuffing and brute-force login | Written below: rate limiting and passwords (PR A) |
-| 6 | Secrets extracted from the app bundle | Written below (PR B); the bundle check on a release build comes with the preview build |
-| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged (a bad, missing or tampered signature is 400 and records nothing); live-mode events refused; the inbox is unique by Stripe's event ID, so a replay writes nothing; a valid signature is never treated as proof of payment: the job matches amount, currency, team, session and status against the frozen operation (ADR 0027). Tests: `server/src/billing/activation.integration.test.ts`. **A saved card (ADR 0030)** is recorded by the same path: a setup event is matched to the setup we froze (team, session, still open, setup mode), the SetupIntent is READ from Stripe by the job and must have succeeded, for off-session use, as a `card`, with the session's Customer and our metadata, in test mode; anything else is recorded for review and saves nothing. Tests: `server/src/billing/cardSetup.integration.test.ts` |
-| 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens written below (Invites, slice 2a); reset and magic-link tokens in "Threat 8b" (slice 2b) |
+| # | Threat | Mitigation, in short | Proven in |
+|---|---|---|---|
+| 1 | Staff calling Manager-only endpoints directly | One permission table (`server/src/teams/permissions.ts`), role read from the database on every request, never from the token | [Threat 1](#threat-1-staff-calling-manager-only-endpoints-directly): `shifts.integration.test.ts` ("THE BRIEF": delete-shift as Staff is `403`, nothing deleted), `team-security.integration.test.ts`, `permissions.unit.test.ts` |
+| 2 | Reading another team's data by changing an ID | Team ID only from the validated route param; membership checked on that team's own shard; unknown team and someone else's team both answer identical `404` | [Threat 2](#threat-2-reading-another-teams-data-by-changing-an-id): `team-security.integration.test.ts` ("TEAM ISOLATION", two users on different shards), `shifts.integration.test.ts` |
+| 3 | A stolen access token | 15-minute token carries no role or team; every authenticated request re-checks the session on shard A's primary, so logout stops it on the very next request | [Threat 3](#threat-3-a-stolen-access-token): `session-check.integration.test.ts`, `tokens.unit.test.ts`, `middleware.unit.test.ts` |
+| 4 | A stolen refresh token, and reuse | Rotation on every use; presenting an already-used token revokes the whole family before the `401` is sent | [Threat 4](#threat-4-a-stolen-refresh-token-and-reuse): `refresh.integration.test.ts` (rotation, reuse), `concurrency.slow.test.ts` (concurrent refresh and revocation race, 15 repeats), `logout.integration.test.ts` |
+| 5 | Credential stuffing and brute-force login | Fixed-window rate limits in Valkey (never in memory) on login, register and refresh, by IP and by email; Argon2id, a dummy hash on unknown emails so timing doesn't reveal accounts | [Rate limiting](#rate-limiting-threat-5-credential-stuffing-and-brute-force) and [Passwords](#passwords-threat-5-with-rate-limiting): `ratelimit` unit tests, `recovery.integration.test.ts` |
+| 6 | Secrets extracted from the app bundle | One `EXPO_PUBLIC_` variable exists and it is not a secret (table below); every other secret is a server env var only | [Threat 6](#threat-6-secrets-extracted-from-the-app-bundle): `app/src/publicEnv.test.ts` (allowlist), `app/src/api/config.test.ts`. **Still pending:** the bundle search itself (`unzip` the APK, search for `sk_`, `secret`, `password`, `_KEY`) runs on the first preview (release) build and is recorded then — not yet done |
+| 7 | Forged or replayed Stripe webhooks | Signature verified on the raw body before anything is parsed or logged; live-mode events refused; the inbox is unique by Stripe's event ID; a valid signature is never treated as proof of payment — the job matches amount, currency, team, session and status against the frozen operation (ADR 0027) | `server/src/billing/activation.integration.test.ts`. **A saved card (ADR 0030)** is recorded the same way: the SetupIntent is read from Stripe by the job and must have succeeded, off-session, as a `card`, with our metadata, in test mode. Tests: `server/src/billing/cardSetup.integration.test.ts`. Proven against a **real** Stripe event end to end: deployment-gate check 1, PR #77 |
+| 8 | Theft or reuse of invite, reset and magic-link tokens | Invite tokens: [Threat 8](#threat-8-invite-tokens-theft-or-reuse-of-an-invitation-link); reset and magic-link tokens: [Threat 8b](#threat-8b-reset-and-magic-link-tokens-theft-reuse-enumeration-and-takeover) | `invites.integration.test.ts`, `invite-links.integration.test.ts`, `recovery.integration.test.ts` |
 
 ## Permissions: the one table (threat 1)
 
@@ -237,7 +237,20 @@ The app-wide invite cap exists because Resend's free plan sends 100 emails per U
   database route. UTC ISO 8601 timestamps.
 - The logger only accepts a fixed list of fields and primitive values. It cannot be handed a request body, a header, an
   email, a password or a token, so none of them can reach a log line. Error text passes through the shared redaction.
-- This is the minimum. The logger library and Sentry are chosen at build step 3.
+
+**Sentry (ADR 0039).** Errors only — no tracing, profiling, logs, metrics or session replay — on the API, the worker and
+the app, into two EU-region Sentry projects (`rota-server`, `rota-app`). **One shared redaction list**
+(`shared/sentry-scrub.ts`, copied byte for byte into both `server/src/observability/sentryScrub.ts` and
+`app/src/observability/sentryScrub.ts`, a parity test in each) strips everything the SDK would otherwise collect by
+default (user identity beyond an ID, cookies, headers, request/response bodies, query strings, local-variable values)
+before an event leaves the process, and scrubs `/invite/`, `/magic/` and `/reset/` tokens from app breadcrumbs (the same
+list threats 8 and 8b rely on). A gate gives one event per error per 5 minutes, 50 a day per server process, 20 per app
+session. Every event carries the placeholder IP `0.0.0.0` (Sentry infers a user's city and country from the real one
+even with IP storage turned off — checked against Sentry's own events, not assumed). Tags on each event: `request_id`,
+`team_id`, `route`, `role`, job fields — the same request ID the structured log line carries, which is how "what
+happened to this user's payment at 3:14pm" is answered from the two together. Tests: `sentryScrub.unit.test.ts` (both
+packages), `sentry.unit.test.ts`, `app/src/observability/observability.test.ts`. Full write-up: `docs/ARCHITECTURE.md`
+section 5r.
 
 ## Passwords (threat 5, with rate limiting)
 
@@ -300,10 +313,45 @@ variable would let a stranger issue refunds (brief, Requirement 4).
 | `EXPO_PUBLIC_SENTRY_DSN` | The address and public key of the `rota-app` Sentry project (EU data storage), for example `https://<key>@o<org>.ingest.de.sentry.io/<project>` | **Checked against Sentry's own page (docs.sentry.io/concepts/key-terms/dsn-explainer, read 2026-11-04):** "DSNs are safe to keep public because they only allow submission of new events and related event data; they do not allow read access to any information." It is a different project, and a different key, from the server's DSN, so it cannot reach the server's events. **The residual risk, stated on the same page:** anyone who reads it from the app can *send* events with whatever content they like, which could use up the shared 5,000-error quota. The controls are Sentry's IP blocking and rotating (or revoking) the key in the project's Client Keys settings; the app's own limit of 20 events a session does not stop someone who is not using the app. Nothing it can send can read, change or delete anything. |
 | `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | A label such as `development` or `production`, shown on each event | It is a word, not an address or a key. |
 
-The Sentry DSN joined this table in the Sentry slice (ADR 0039), with the claim checked against Sentry's own page (see its row). **The Sentry auth token (source-map upload) is a different thing and is never public:** it is an EAS build secret, never `EXPO_PUBLIC_`, never in the repo, and it is not created until the deploy slice.
+The Sentry DSN joined this table in the Sentry slice (ADR 0039), with the claim checked against Sentry's own page (see its row). **The Sentry auth token (source-map upload) is a different thing and is never public:** it is an EAS build secret (`eas env:set --visibility secret`), never `EXPO_PUBLIC_`, never in the repo; Dave creates and sets it himself. Not yet confirmed done.
 
 **What remains.** A debug build loads its JavaScript from the development server and does not contain the bundle, so the bundle search
 (`unzip` the APK and search for `sk_`, `secret`, `password`, `_KEY`) is run on the first preview (release) build and recorded then.
 
 **Proving tests.** `app/src/publicEnv.test.ts` (allowlist), `app/src/api/config.test.ts` (https only), `app/src/auth/signOut.test.ts` and
 `app/src/api/client.test.ts` (token handling).
+
+## Deploy-provider credentials, and the Northflank incident (ADR 0040)
+
+**What happened.** Northflank, the deployment provider (ADR 0040), disclosed a security incident beginning 30 October
+2026 (status "Monitoring" as of 2 November): an attacker targeted secrets held in Northflank's own control plane, and
+customers were told to assume their environment variables had been decrypted. Northflank says it was contained within
+an hour and rotated its own keys. Dave has screenshots of the disclosure.
+
+**Checked before accepting the risk.** Rota's Northflank account held no secrets at the time of the incident: the
+Secrets page was empty, and the audit log showed only two project-setup events from 16 October, before any credential
+existed. The deploy wasn't created until after the incident. The residual risk is also bounded by what Rota exposes:
+Stripe test mode only, demo data only, every dependency on a free plan. Dave accepted the risk on this basis.
+
+**Mitigation: every deploy credential is new, least-privilege where the provider allows it, and separately rotatable
+from local dev** — a different threat model from "one `.env` for everything," because a single leaked deploy secret
+never also compromises what a developer uses locally, and each provider's credential can be rotated on its own:
+
+- **Stripe:** a restricted test-mode key (`rota-deploy-api`), Checkout Sessions/Payment Intents (Write), Setup
+  Intents/Payment Methods (Read) only. A separate webhook signing secret from the local one.
+- **Resend:** a sending-only key, restricted to the `rota.davebuilds.design` sending domain.
+- **Neon:** a new role per shard (`rota_deploy_api`), separate from Dave's own role — full project access (the Neon
+  Console's own default; it offers no narrower one), so this is separation for rotation, not least privilege.
+- **Valkey (Aiven):** a new ACL user (`rota_deploy`), `+@all -@admin` with the `@dangerous` commands individually
+  denied and `CONFIG` denied outright (ADR 0040 has the detail on why `-@admin` alone wasn't enough).
+- **`AUTH_JWT_SECRET`:** a value only the deployed API holds, deliberately different from local dev's — proven the
+  hard way when the k6 load test's first seed attempt signed tokens with the *local* secret and got 401s against the
+  deployed API from every one of 200 users (`load-tests/REPORT.md`). Rotated once already (2026-11-06, after the k6
+  run used a temporary `K6_DEPLOY_AUTH_JWT_SECRET` to mint tokens the deployed API would accept) with no code change
+  needed: there is a single key and no key ID, so every token signed with the old key is refused from the first
+  request on the restarted process (see "Signing secret" above for what rotation costs users).
+- **GitHub:** Northflank's GitHub App access is limited to this one repository.
+- All of the above are rotated again after submission, or sooner if Northflank's root-cause report warrants it.
+
+**What remains.** The Neon deploy role is not least-privilege (no narrower role exists today); revisit if Neon offers
+one. Full detail, options considered and the Stripe webhook API-version proof: `docs/decisions/0040-northflank-deployment.md`.
