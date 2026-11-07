@@ -12,7 +12,7 @@ here is ticked without a link behind it. **Pending** means not yet proven; it is
 | 1 | Public GitHub repo | ✅ | [Hennit-Dave/rota](https://github.com/Hennit-Dave/rota) — public, description and topic tags set |
 | 2 | **Android development build download link** | ✅ | [EAS build page](https://expo.dev/accounts/hennitdave/projects/rota/builds/a7d7a16c-6699-493a-b139-c7ce640d1c9f) (public, no sign-in, Install button), linked from [README.md](README.md). Passed full device testing on 2026-11-06 — real Tecno Pop 20 (Staff) + emulator (Owner) against the deployed API: sign-in both accounts, push delivered and opened to the right screen from a cold start, invite link opened to the right screen from a cold start (App Links verified on the real device), instant theme repaint (ADR 0024), issue #41's package bump shipped with no issues |
 | 3 | **Deployed backend** | ✅ | `https://api.rota.davebuilds.design` on Northflank ([ADR 0040](docs/decisions/0040-northflank-deployment.md)); all 5 deployment-gate checks proven, [PR #77](https://github.com/Hennit-Dave/rota/pull/77) |
-| 4 | `README.md` | ✅ | This repo's [README.md](README.md). First-screen order per the brief: one-liner, then GIF (pending)/APK (linked, tested)/demo video (pending), live API, Stripe wording, stack, doc links. "Further down" sections all present: the problem it solves, tech stack and why, how to run it locally, architecture summary, key decisions, what I'd do next, and the Apple/Google in-app-purchase section |
+| 4 | `README.md` | ✅ | This repo's [README.md](README.md). First-screen order per the brief: one-liner, then GIF (embedded)/APK (linked, tested)/demo video (linked), live API, Stripe wording, stack, doc links. "Further down" sections all present: the problem it solves, tech stack and why, how to run it locally, architecture summary, key decisions, what I'd do next, and the Apple/Google in-app-purchase section |
 | 5 | `ARCHITECTURE.md` | ✅ | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), including the diagram (row 10) |
 | 6 | `STATE.md` | ✅ | [docs/STATE.md](docs/STATE.md) |
 | 7 | `SECURITY.md` (8 threats) | ✅ | [docs/SECURITY.md](docs/SECURITY.md) — all 8, each with mitigation and proving tests |
@@ -21,8 +21,8 @@ here is ticked without a link behind it. **Pending** means not yet proven; it is
 | 10 | **Architecture diagram** (Excalidraw or Mermaid) | ✅ | Mermaid, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#architecture-diagram) |
 | 11 | **Test results for permissions, team isolation and proration** | ✅ | Permissions/isolation: `server/src/teams/permissions.unit.test.ts`, `server/src/teams/team-security.integration.test.ts`, `server/src/shifts/shifts.integration.test.ts`. Proration: `server/src/billing/proration.unit.test.ts` (24 cases, the brief's numbered 8 among them) |
 | 12 | **Load test report** (200 VUs, before/after caching) | ✅ | [load-tests/REPORT.md](load-tests/REPORT.md), [PR #81](https://github.com/Hennit-Dave/rota/pull/81). `data.md` test 11's two halves: connections-stayed-within-limits is now proven (Neon Monitoring, both shards: 1-2 actual Postgres server connections for all 200 VUs, against a configured ceiling of 8 per shard primary — 5 API + 3 worker — and 5 per shard replica; 0.00s pooler wait), but the app-side Prisma pool-wait/database-time split still isn't measured. Tracked as [issue #83](https://github.com/Hennit-Dave/rota/issues/83) |
-| 13 | **Demo video** (under 3 minutes, product first) | ⏳ Pending | Not recorded |
-| 14 | **A LinkedIn post about one technical decision** | ⏳ Pending | Not written. Dave's call which decision |
+| 13 | **Demo video** (under 3 minutes, product first) | ✅ | [LinkedIn post](https://lnkd.in/p/dn2k73bD) (2:51), linked from [README.md](README.md) |
+| 14 | **A LinkedIn post about one technical decision** | ✅ | Same [LinkedIn post](https://lnkd.in/p/dn2k73bD) — the Northflank incident and deploy-credential rotation |
 | 15 | Before-and-after recordings of problems fixed | ✅ (ongoing) | Process has been followed since it was corrected (see `LEARNING-LOG.md`, 2026-10-22). Clips are held by Dave, not in the repo. [Issue #52](https://github.com/Hennit-Dave/rota/issues/52) (keyboard reappears on resume) is the most recent example: before frames at the time it was found, after recording attached to the closing comment, 2026-11-06, release build |
 | 16 | Written self-study notes, every self-study topic | ✅ | [LEARNING-LOG.md](LEARNING-LOG.md) — EAS Build, AsyncStorage, refresh rotation/reuse, idempotency, observability, load testing, ADRs: all 7 entries, all ticked |
 | 17 | GitHub description and topic tags | ✅ | Set on the repo (checked live via `gh repo view`) |
@@ -153,8 +153,5 @@ pool-wait gap noted in the deliverables checklist (row 12) and below.
 ## Known gaps — not yet proven (do not tick these)
 
 1. **k6 report doesn't separately measure database time and pool wait** (`data.md` test 11, second half). The report only has whole-request `http_req_duration`; Neon's pooler-side view shows its own queue, not time spent inside the API process waiting for a client from the pg `Pool`. Tracked as [issue #83](https://github.com/Hennit-Dave/rota/issues/83) — not blocking submission. (The first half of test 11, connections staying within the configured maximums, is now proven: Neon Monitoring shows 1-2 actual Postgres server connections per shard for all 200 VUs, against an 8-per-shard-primary ceiling, with 0.00s pooler wait — see `load-tests/REPORT.md`.)
-2. **Demo video** — Dave is recording this himself.
-3. **LinkedIn post about one technical decision** — Dave is writing this himself.
-4. **Rota pinned on GitHub profile, 2×/week LinkedIn posts, 30-company lead tracker** — not verifiable from the repo; ask Dave directly.
-5. **Portfolio case study and CV/LinkedIn bullet** — not started.
-6. **README GIF of the app running** — pending; will be cut from the demo video once that's recorded.
+2. **Rota pinned on GitHub profile, 2×/week LinkedIn posts, 30-company lead tracker** — not verifiable from the repo; ask Dave directly.
+3. **Portfolio case study and CV/LinkedIn bullet** — not started.
