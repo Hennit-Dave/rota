@@ -3,14 +3,18 @@
 Rota is a shift-scheduling mobile app for small teams such as restaurants, clinics and shops: an owner
 creates a team, invites staff and publishes shifts; staff see their shifts, request swaps and get notified.
 
-**GIF of the app running:** pending — not yet recorded.
+**GIF of the app running:**
+
+![Rota push notification tap opens the exact shift](docs/media/rota-push.gif)
+
+Push notification with Rota closed; tapping it opens the exact shift (release build, real Tecno phone).
 
 **Android preview (release) build:** [download the preview build](https://expo.dev/accounts/hennitdave/projects/rota/builds/a7d7a16c-6699-493a-b139-c7ce640d1c9f)
 (public EAS build page, no sign-in needed — Install button). Tested on a real device and an emulator
 against the live API: sign-in, push notifications (including a cold start), invite links (including a
 cold start, App Links verified), theme switching.
 
-**Demo video:** pending — not yet recorded.
+**Demo video:** [LinkedIn post](https://lnkd.in/p/dn2k73bD) (2:51).
 
 **Live API:** `https://api.rota.davebuilds.design` (`GET /health` returns `{"ok":true}`; deployed on
 Northflank, ADR 0040).
