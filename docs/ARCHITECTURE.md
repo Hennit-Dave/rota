@@ -80,7 +80,7 @@ The graduation task brief names Redis for background queueing, caching, and rate
 - **Why:** Valkey is an open-source, API-compatible fork of Redis created by the Linux Foundation after Redis switched license models. Aiven provides a managed free-tier Valkey service without payment card requirements, matching Rota's zero-cost infrastructure mandate.
 - **Client library:** `ioredis` pinned to `5.11.1` and `bullmq` pinned to `6.3.17`.
 - **Policy enforcement:** Configured with `maxmemory-policy: noeviction` (required by `AGENTS.md` and `jobs.md`). Worker refuses startup if `noeviction` cannot be verified.
-- **Status:** Recorded in `docs/decisions/0003-queue-worker-and-recovery.md` (ADR 0003). Facilitator sign-off pending.
+- **Status:** Recorded in `docs/decisions/0003-queue-worker-and-recovery.md` (ADR 0003). Facilitator sign-off not requested; substitution documented there for the reviewer.
 
 ### 2. Decoupled Producer and Consumer Connection Policies
 

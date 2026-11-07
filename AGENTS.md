@@ -48,7 +48,8 @@ expiring trial credits. If something can't be free, say so plainly.**
 - ORM: Prisma 7 with `@prisma/adapter-pg`. Deployment provider: **Northflank** (ADR 0040; Oracle Always Free
   stays documented as the inactive fallback).
 - Queue, cache, rate limits: BullMQ on **one Aiven for Valkey instance**. Valkey is a substitution for the
-  Redis the brief names. It must be recorded in `ARCHITECTURE.md` and an ADR. Facilitator sign-off pending.
+  Redis the brief names. It must be recorded in `ARCHITECTURE.md` and an ADR. Facilitator sign-off: not
+  requested; substitution and one-variable switch-back documented in ADR 0003.
 - Payments: Stripe **test mode**, Checkout in payment mode or a PaymentIntent. **No Stripe Subscriptions.**
 - Email: Resend HTTP API, sent from a background job only. Sender: `Rota <notification@rota.davebuilds.design>`.
   Reply-To: `rota@davebuilds.design`. Server env vars: `RESEND_API_KEY`, `MAIL_FROM`, `MAIL_REPLY_TO`.
