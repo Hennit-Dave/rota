@@ -1,7 +1,7 @@
 # 0003: Queue and worker foundation, Valkey substitution, and durable claims
 
 - **Status:** Accepted
-- **Facilitator sign-off on Valkey replacing Redis:** pending
+- **Facilitator sign-off:** not requested. Substitution documented here for the reviewer.
 - **Date:** 2026-10-19
 - **Decided by:** Dave
 - **Related:** issue #13 (Refs), PR `feat/queue-worker`, `.agents/rules/jobs.md`, `docs/ARCHITECTURE.md`
@@ -12,9 +12,10 @@ The infrastructure gate requires background job processing, delayed execution, r
 
 ## Options considered
 
-1. **Redis vs Valkey:**
-   - *Redis:* Proprietary dual-license (RSALv2/SSPL). Managed options often require credit card validation or have expiring trials.
-   - *Valkey:* Linux Foundation BSD-3-Clause open-source fork. Fully wire-compatible with Redis 7.2 APIs. Available on Aiven Free-1 plan without credit card requirement, keeping infrastructure completely free.
+1. **Redis vs Valkey, and which free managed tier:**
+   - *Redis, licensing:* when this ADR was first decided (2026-10-19), Redis Community Edition was still under the dual RSALv2/SSPLv1 license — source-available, not OSI open source. Checked again today (2026-11-07) against Redis's own licensing page (redis.io/legal/licenses/): Redis Open Source 8+ is now tri-licensed — RSALv2, SSPLv1, or AGPLv3, the user's choice. Redis's own page states "RSALv2 is not an open source license" and "SSPLv1 is not an open source license," while "AGPLv3 is an OSI-approved open source license." So an open-source option exists now that didn't when we chose Valkey, but it's AGPLv3, with its own network-use copyleft obligations — not a return to the old permissive BSD-3 terms Redis dropped in 2024. The managed-service restriction RSALv2/SSPLv1 impose is still there for anyone who doesn't pick AGPLv3.
+   - *Redis, free managed tiers:* Redis's own pricing page (redis.io/pricing/) lists a free "Always" tier, $0, up to 30 MB, shared cloud deployment, best-effort SLA. Upstash's Redis-compatible free tier is metered by command count (500K commands/month, per Upstash's own pricing) rather than by a card requirement, and Upstash's own BullMQ integration doc warns it's a poor match for BullMQ specifically: "BullMQ accesses Redis regularly, even when there is no queue activity. This can incur extra costs because Upstash charges per request on the Pay-As-You-Go plan" — Upstash recommends a paid Fixed plan for BullMQ use instead. BullMQ's own compatibility page doesn't list Upstash among the vendors it tests against at all.
+   - *Valkey:* Linux Foundation governance, BSD-3-Clause, unchanged since the 2024 fork. Wire-compatible with the Redis protocol, so `ioredis`/BullMQ work identically against either backend. Available on Aiven's Valkey Free-1 plan: no credit card, no expiry ("Free services do not have any time limitations," per Aiven's own docs, checked 2026-11-07), and a single dedicated node (1 CPU, 1 GB RAM) we control directly — unlike a shared or command-metered free tier, that lets us actually set and verify `maxmemory-policy noeviction` ourselves (Decision #5), which BullMQ's durability depends on.
 2. **Client libraries:**
    - *ioredis 5.11.1* pinned exactly: robust TLS support, independent producer/consumer configurations.
    - *bullmq 6.3.17* pinned exactly: full compatibility with ioredis `>=5.0.0`, mature delayed job scheduling and stalled-job recovery.
@@ -51,6 +52,8 @@ The infrastructure gate requires background job processing, delayed execution, r
 ## Why
 
 - Aiven Valkey fulfills the assignment's caching/queuing requirements while honoring the zero-cost rule without expiring trial credits.
+- Valkey stays BSD-3-Clause under Linux Foundation governance — unconditional open source, no managed-service carve-out — so Redis 8's new AGPLv3 option doesn't change the calculus here.
+- **Reversibility:** Valkey speaks the same Redis wire protocol, so `ioredis`/BullMQ connect to either backend identically. Switching to Redis would need only a new `VALKEY_URL` value pointed at a Redis connection string (`server/src/jobs/connection.ts`); no application code changes. This is why no facilitator sign-off is being requested on this substitution: the reasoning is fully documented here, and switching back is a one-variable change if a reviewer ever requires it.
 - Decoupling producer and consumer connection policies ensures database durability is preserved even during total cache outages without degrading API availability.
 - Multi-field ownership checks and atomic claim queries guarantee database fencing: only the execution holding the matching claim token, generation, and `status='claimed'` can update or complete the row in Postgres. Claim tokens fence database mutations, not external side effects or all overlapping in-flight execution if a process hangs beyond its lease; idempotency with external services requires provider idempotency keys (`jobs.md`).
 
