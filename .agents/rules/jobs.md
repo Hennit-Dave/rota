@@ -125,6 +125,12 @@ effects** — that is the job of the idempotency rules below.
 for at least 5 minutes; Free gives 100 CU-hours per project across all computes:
 730 × 5/30 × 0.25 ≈ 30 CU-hours per primary. A 10-minute timer is ≈ 91. Health checks never touch Postgres.
 
+**The reconnect trigger assumes reconnects are rare, so idle connections must not be closed.** Aiven closes a
+client that has sent nothing for `valkey_timeout` seconds (300 on our instance, measured). The idle sweep
+connection was reopened every 5 minutes, each reopening ran a pass on both shards, and Neon never scaled to zero
+(ADR 0040, incident). Every producer connection therefore sends `PING` every `VALKEY_KEEPALIVE_MS` (15 s), which
+**must stay below Aiven's timeout** (ADR 0041). Skipping timed sweeps when nothing is due: issue #87, not done.
+
 | Case (services up) | Recovery delay |
 |---|---|
 | Normal path | Seconds, plus backoff |

@@ -47,8 +47,9 @@ after(async () => {
   await valkey.dispose();
 });
 
-function connect(): Redis {
-  const redis = createProducerConnection(proxy.url);
+/** `keepAliveMs` left out means the production keep-alive (ADR 0041). */
+function connect(keepAliveMs?: number): Redis {
+  const redis = createProducerConnection(proxy.url, undefined, keepAliveMs);
   redis.on('error', () => {}); // expected during an outage; keep the output quiet
   opened.push(redis);
   return redis;
@@ -124,7 +125,9 @@ test('an outage that outlasts the first recycle: the replacement connects into t
 });
 
 test('without the recovery the same half-open connection stays dead (this is the bug in #39)', { skip }, async () => {
-  const redis = connect();
+  // The keep-alive (ADR 0041) would also replace this connection at its first unanswered PING. It is pushed out of the window so
+  // this test keeps showing the old behaviour: no recovery of any kind.
+  const redis = connect(3_600_000);
   await redis.connect();
   const limiter = createRateLimiter(redis, { prefix: `rl-test-${randomUUID()}` }); // no onUnavailable hook: the old behaviour
 

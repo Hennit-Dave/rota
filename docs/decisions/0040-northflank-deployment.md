@@ -170,6 +170,8 @@ by that reasoning alone — see the deployment gate's first check.
   (`load-tests/REPORT.md`) and reached 100 fourteen days later, about 6.4 CU-hours a day. A 0.25 CU
   compute awake for 24 hours uses 6. The 30-minute timed sweep was budgeted (about 30 CU-hours a month,
   `jobs.md`). The reconnect trigger was not, because reconnects were assumed to be rare.
-- **Fix.** Planned, not yet made: keep the sweep's Valkey connection from going idle, and stop the
-  timed sweep from waking Neon when no work is due. Tracked in issue #79. Until the fix is deployed,
-  resuming `rota-worker` would spend the allowance the same way.
+- **Fix.** ADR 0041 (issue #79): every long-lived Valkey connection sends a `PING` every 15 seconds,
+  so Aiven never closes it for being idle. Built and tested locally; deployed after the reset, then
+  proven with a Neon monitoring screenshot showing the primary suspends after 5 idle minutes. Until it
+  is deployed, resuming `rota-worker` would spend the allowance the same way. Making the 30-minute
+  timed sweep skip when no work is due is issue #87, not done.

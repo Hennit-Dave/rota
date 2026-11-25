@@ -3,6 +3,7 @@ import {
   PRODUCER_COMMAND_TIMEOUT_MS,
   PRODUCER_CONNECT_TIMEOUT_MS,
   PRODUCER_MAX_RETRIES,
+  VALKEY_KEEPALIVE_MS,
 } from './config.js';
 
 export function getValkeyUrl(): string {
@@ -16,10 +17,13 @@ export function getValkeyUrl(): string {
 /**
  * Producer connection policy (enqueue path):
  * Strict timeouts, no offline queueing, limited retries so an unreachable Valkey cannot hang callers.
+ *
+ * Every producer connection the processes hold is long-lived (the rate limiter, the team cache, the API's queue, the worker's sweep
+ * and cache), so each one gets the keep-alive below (ADR 0041). `keepAliveMs` exists for tests; production uses the default.
  */
-export function createProducerConnection(url?: string, overrides?: RedisOptions): Redis {
+export function createProducerConnection(url?: string, overrides?: RedisOptions, keepAliveMs: number = VALKEY_KEEPALIVE_MS): Redis {
   const connectionUrl = url ?? getValkeyUrl();
-  return new Redis(connectionUrl, {
+  const redis = new Redis(connectionUrl, {
     connectTimeout: PRODUCER_CONNECT_TIMEOUT_MS,
     commandTimeout: PRODUCER_COMMAND_TIMEOUT_MS,
     maxRetriesPerRequest: PRODUCER_MAX_RETRIES,
@@ -27,6 +31,45 @@ export function createProducerConnection(url?: string, overrides?: RedisOptions)
     lazyConnect: true,
     ...overrides,
   });
+  startKeepAlive(redis, keepAliveMs);
+  return redis;
+}
+
+/** The part of an ioredis connection the keep-alive needs. `ping` and `once` let unit tests pass a small fake. */
+export type KeepAliveConnection = RecyclableConnection & {
+  ping(): Promise<unknown>;
+  once(event: 'close' | 'end', listener: () => void): unknown;
+};
+
+/**
+ * Keep a long-lived connection from going idle (ADR 0041, issue #79).
+ *
+ * In plain words: Aiven closes a client connection that has sent nothing for `valkey_timeout` seconds. ioredis opens a new one at once,
+ * so nothing fails outright, but every reopening is a `close` then a `ready`, and the worker's reconciliation sweep runs a full pass on
+ * both shards after every one (ADR 0004). The sweep's connection is idle between sweeps, so it was closed and reopened all day, and
+ * Neon never had the 5 idle minutes it needs to scale to zero (ADR 0040, incident).
+ *
+ * Every `intervalMs` a PING goes over a `ready` connection, so it is never idle for long. A connection that is not `ready` is left
+ * alone: one that was never opened (`lazyConnect`) is not opened by this, and one that is reconnecting is ioredis's to handle. A PING
+ * that gets no reply on a `ready` connection is the half-open case of issue #39, so it goes to `recycleIfStale`, which replaces the
+ * connection. A PING answered with an error is not silence and changes nothing. Valkey only: nothing here touches Postgres.
+ *
+ * TCP keepalive (ioredis `keepAlive`) would not do this: Valkey's idle timer is reset by commands, and TCP keepalive probes never reach
+ * Valkey as commands.
+ *
+ * Stops by itself when the connection ends for good (`quit()` or `disconnect()`), and when the returned function is called.
+ */
+export function startKeepAlive(redis: KeepAliveConnection, intervalMs: number = VALKEY_KEEPALIVE_MS): () => void {
+  const timer = setInterval(() => {
+    if (redis.status !== 'ready') return;
+    redis.ping().catch((err: unknown) => {
+      if (recycleIfStale(redis, err)) console.warn('[valkey:keepalive_recycled] reason=no_reply_to_ping');
+    });
+  }, intervalMs);
+  timer.unref?.();
+  const stop = () => clearInterval(timer);
+  redis.once('end', stop);
+  return stop;
 }
 
 /** A bounded Valkey call (the enqueue) ran out of its time budget. Treated like a command timeout (see recycleIfStale). */
