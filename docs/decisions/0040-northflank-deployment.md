@@ -144,3 +144,32 @@ by that reasoning alone — see the deployment gate's first check.
 - Known, non-blocking follow-up: deployed Postgres connections use `sslmode=require` (TLS, no
   certificate verification); Postgres's own deprecation warning for this appeared in the worker's
   stderr on first boot. Tracked as issue #76 (move to `sslmode=verify-full`).
+
+## Incident: Neon Free compute allowance exhausted (20 November 2026)
+
+- **What happened.** Shard A's Neon project used 100% of its Free plan's 100 CU-hour monthly compute
+  allowance on 20 November 2026, and Neon suspended its compute until the allowance resets (expected
+  around 1 December 2026). Shard B's project read 110.13 CU-hours on 25 November, also past the
+  allowance. Dave paused `rota-api` and `rota-worker` on Northflank and did not upgrade.
+  **The live API (`https://api.rota.davebuilds.design`) is unavailable until the reset.**
+- **Not the cause: the health check.** Northflank's readiness probe calls `GET /health` every 5 seconds.
+  That route answers from memory and touches neither Postgres nor Valkey (`server/src/api/app.ts`).
+- **The cause: the worker's reconnect-triggered reconciliation sweep (ADR 0004).**
+  1. The sweep has its own Valkey connection, and it sits idle between sweeps.
+  2. Aiven closes a Valkey client connection after it has been idle for `valkey_timeout` seconds
+     (Aiven's documented default: 300). Measured on our instance on 25 November 2026: a connection
+     that sent nothing after its handshake was closed after 300.0 seconds.
+  3. ioredis reconnects at once, and every reconnect starts a full reconciliation pass on both shard
+     primaries (`jobs.md`, Recovery triggers). Issue #79 recorded these passes 5 minutes apart on the
+     deployed worker.
+  4. On Free, Neon suspends a compute only after 5 minutes with no activity. A query every 5 minutes
+     never leaves that gap, so the primary ran around the clock. `data.md` puts that at about
+     182 CU-hours a month at 0.25 CU, nearly twice the allowance.
+
+  The numbers fit. Shard A stood at 9.77 CU-hours after the k6 run on 6 November
+  (`load-tests/REPORT.md`) and reached 100 fourteen days later, about 6.4 CU-hours a day. A 0.25 CU
+  compute awake for 24 hours uses 6. The 30-minute timed sweep was budgeted (about 30 CU-hours a month,
+  `jobs.md`). The reconnect trigger was not, because reconnects were assumed to be rare.
+- **Fix.** Planned, not yet made: keep the sweep's Valkey connection from going idle, and stop the
+  timed sweep from waking Neon when no work is due. Tracked in issue #79. Until the fix is deployed,
+  resuming `rota-worker` would spend the allowance the same way.

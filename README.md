@@ -16,8 +16,11 @@ cold start, App Links verified), theme switching.
 
 **Demo video:** [LinkedIn post](https://lnkd.in/p/dn2k73bD) (2:51).
 
-**Live API:** `https://api.rota.davebuilds.design` (`GET /health` returns `{"ok":true}`; deployed on
-Northflank, ADR 0040).
+**Live API:** `https://api.rota.davebuilds.design` (deployed on Northflank, ADR 0040). **Unavailable
+until about 1 December 2026.** The Neon Free plan's monthly compute allowance ran out on 20 November,
+and the API and worker are paused until it resets. Cause:
+[ADR 0040, incident](docs/decisions/0040-northflank-deployment.md#incident-neon-free-compute-allowance-exhausted-20-november-2026).
+Fix: [issue #79](https://github.com/Hennit-Dave/rota/issues/79). When it is up, `GET /health` returns `{"ok":true}`.
 
 This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
 
@@ -62,7 +65,8 @@ anywhere. Rota moves those rules onto a server that enforces them on every reque
 Covered in full below: ["Run the server locally"](#run-the-server-locally) and ["Run the app"](#run-the-app-android-development-build).
 Short version: `cd server && npm ci && npm run build` then `npm run start:api` / `npm run start:worker`
 (needs a root `.env`, copied from `.env.example`), and the Expo app against either your own local API or
-the deployed one at `https://api.rota.davebuilds.design`.
+the deployed one at `https://api.rota.davebuilds.design` (unavailable until about 1 December 2026; see the
+first screen).
 
 ## Architecture summary
 
