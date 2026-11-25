@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { EnqueueTimeoutError, isStaleConnectionSignal, recycleIfStale, type RecyclableConnection } from './connection.js';
+import { EnqueueTimeoutError, isStaleConnectionSignal, recycleIfStale, startKeepAlive, type RecyclableConnection } from './connection.js';
 
 function fakeConnection(status = 'ready') {
   const calls: Array<boolean | undefined> = [];
@@ -54,4 +54,98 @@ test('recycleIfStale: does nothing when the connection is not ready, the failure
 
   assert.equal(recycleIfStale(undefined, new Error('Command timed out')), false);
   assert.equal(recycleIfStale(null, new Error('Command timed out')), false);
+});
+
+// Keep-alive (ADR 0041, issue #79). A fake connection and mocked timers: no Valkey, no waiting.
+function fakeKeepAliveConnection(status: string, reply: () => Promise<unknown> = async () => 'PONG') {
+  let pings = 0;
+  const disconnects: Array<boolean | undefined> = [];
+  const listeners = new Map<string, Array<() => void>>();
+  const conn = {
+    status,
+    ping: () => {
+      pings++;
+      return reply();
+    },
+    disconnect: (reconnect?: boolean) => void disconnects.push(reconnect),
+    once: (event: string, listener: () => void) => void listeners.set(event, [...(listeners.get(event) ?? []), listener]),
+  };
+  return {
+    conn,
+    pings: () => pings,
+    disconnects,
+    emit: (event: string) => (listeners.get(event) ?? []).splice(0).forEach((l) => l()),
+  };
+}
+
+/** Let the PING's promise settle after a timer tick. */
+const settle = () => new Promise((r) => setImmediate(r));
+
+test('keep-alive: one PING per interval while the connection is ready', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const fake = fakeKeepAliveConnection('ready');
+  const stop = startKeepAlive(fake.conn, 1_000);
+  t.mock.timers.tick(999);
+  assert.equal(fake.pings(), 0, 'nothing before the first interval');
+  t.mock.timers.tick(1);
+  t.mock.timers.tick(1_000);
+  t.mock.timers.tick(1_000);
+  assert.equal(fake.pings(), 3);
+  stop();
+});
+
+test('keep-alive: sends nothing on a connection that is not ready, and never opens one', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  // `wait` is a lazy connection nobody has opened yet: the fake has no connect(), so opening it would throw.
+  for (const status of ['wait', 'connecting', 'connect', 'reconnecting', 'close', 'end']) {
+    const fake = fakeKeepAliveConnection(status);
+    const stop = startKeepAlive(fake.conn, 1_000);
+    t.mock.timers.tick(5_000);
+    assert.equal(fake.pings(), 0, `status ${status}`);
+    stop();
+  }
+});
+
+test('keep-alive: a PING with no reply on a ready connection replaces the connection once (issue #39 half-open)', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  t.mock.method(console, 'warn', () => {});
+  const fake = fakeKeepAliveConnection('ready', async () => {
+    throw new Error('Command timed out');
+  });
+  const stop = startKeepAlive(fake.conn, 1_000);
+  t.mock.timers.tick(1_000);
+  await settle();
+  t.mock.timers.tick(1_000);
+  await settle();
+  assert.deepEqual(fake.disconnects, [true], 'one replacement, even though two PINGs went unanswered before the old socket closed');
+  stop();
+});
+
+test('keep-alive: a PING answered with an error changes nothing', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const fake = fakeKeepAliveConnection('ready', async () => {
+    throw new Error('OOM command not allowed when used memory > maxmemory.');
+  });
+  const stop = startKeepAlive(fake.conn, 1_000);
+  t.mock.timers.tick(1_000);
+  await settle();
+  assert.equal(fake.pings(), 1);
+  assert.deepEqual(fake.disconnects, []);
+  stop();
+});
+
+test('keep-alive: stops when the connection ends for good, and when told to', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const ended = fakeKeepAliveConnection('ready');
+  startKeepAlive(ended.conn, 1_000);
+  t.mock.timers.tick(1_000);
+  ended.emit('end');
+  t.mock.timers.tick(5_000);
+  assert.equal(ended.pings(), 1, 'no PING after `end`');
+
+  const stopped = fakeKeepAliveConnection('ready');
+  const stop = startKeepAlive(stopped.conn, 1_000);
+  stop();
+  t.mock.timers.tick(5_000);
+  assert.equal(stopped.pings(), 0);
 });

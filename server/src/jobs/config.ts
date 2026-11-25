@@ -19,6 +19,11 @@ export const BULLMQ_STALLED_INTERVAL_MS = Number(process.env.BULLMQ_STALLED_INTE
 export const BULLMQ_MAX_STALLED_COUNT = Number(process.env.BULLMQ_MAX_STALLED_COUNT) || 2;
 export const BULLMQ_JOB_ATTEMPTS = Number(process.env.BULLMQ_JOB_ATTEMPTS) || 5;
 
+// Keep-alive for every long-lived producer connection (ADR 0041, issue #79): a PING this often. Aiven closes a client that has sent
+// nothing for `valkey_timeout` seconds, so this MUST stay below that value. It reuses the stalled-check interval (15 s, ADR 0003), as
+// the consumer watchdog does (ADR 0018): no new number.
+export const VALKEY_KEEPALIVE_MS = BULLMQ_STALLED_INTERVAL_MS;
+
 // Reconciliation sweep (jobs.md, Recovery triggers; ADR 0004). 30 minutes and 100 rows are approved
 // demo trade-offs, not brief requirements. The interval is about Neon compute hours (jobs.md).
 export const RECONCILE_INTERVAL_MS = Number(process.env.RECONCILE_INTERVAL_MS) || 1_800_000;

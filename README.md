@@ -20,7 +20,7 @@ cold start, App Links verified), theme switching.
 until about 1 December 2026.** The Neon Free plan's monthly compute allowance ran out on 20 November,
 and the API and worker are paused until it resets. Cause:
 [ADR 0040, incident](docs/decisions/0040-northflank-deployment.md#incident-neon-free-compute-allowance-exhausted-20-november-2026).
-Fix: [issue #79](https://github.com/Hennit-Dave/rota/issues/79). When it is up, `GET /health` returns `{"ok":true}`.
+Fix: [ADR 0041](docs/decisions/0041-valkey-keepalive.md), deployed after the reset. When it is up, `GET /health` returns `{"ok":true}`.
 
 This integration uses Stripe test mode only. Live-payment eligibility has not been verified.
 

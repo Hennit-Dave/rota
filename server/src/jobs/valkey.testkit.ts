@@ -49,14 +49,23 @@ export interface LocalValkey {
   dispose(): Promise<void>;
 }
 
-export async function startLocalValkey(): Promise<LocalValkey> {
+export interface LocalValkeyOptions {
+  /**
+   * Valkey's own `timeout`: close a client that has sent nothing for this many seconds (Aiven calls it `valkey_timeout`). Left out, the
+   * server's default applies (0, never). Tests set a short one to reproduce issue #79 in a few seconds.
+   */
+  idleTimeoutSeconds?: number;
+}
+
+export async function startLocalValkey(options: LocalValkeyOptions = {}): Promise<LocalValkey> {
   const port = await freePort();
   const dir = mkdtempSync(path.join(tmpdir(), 'rota-valkey-test-'));
   let child: ChildProcess | null = null;
+  const timeoutArgs = options.idleTimeoutSeconds === undefined ? [] : ['--timeout', String(options.idleTimeoutSeconds)];
 
   const start = async () => {
     // --save "" and --appendonly no: nothing is written to disk. The default policy is noeviction, as on Aiven.
-    child = spawn(VALKEY_BIN, ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no', '--dir', dir], {
+    child = spawn(VALKEY_BIN, ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no', '--dir', dir, ...timeoutArgs], {
       stdio: 'ignore',
     });
     for (let i = 0; i < 100; i++) {
